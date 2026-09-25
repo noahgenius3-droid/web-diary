@@ -41,6 +41,16 @@
         <symbol id="i-user" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></g></symbol>
         <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 21h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
         <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M16.5 3.5l4 4L8 20l-5 1 1-5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+        <symbol id="i-feed" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/></g></symbol>
+        <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.9A8 8 0 1 1 21 12z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+        <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9zM19 15l.9 2.1 2.1.9-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z" fill="currentColor"/></symbol>
+        <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-2.5-6.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+        <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20.5s-8-4.6-8-10.4A4.4 4.4 0 0 1 12 7.4a4.4 4.4 0 0 1 8 2.7c0 5.8-8 10.4-8 10.4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+        <symbol id="i-heart-fill" viewBox="0 0 24 24"><path d="M12 20.5s-8-4.6-8-10.4A4.4 4.4 0 0 1 12 7.4a4.4 4.4 0 0 1 8 2.7c0 5.8-8 10.4-8 10.4z" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+        <symbol id="i-logout" viewBox="0 0 24 24"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l-5-5 5-5M5 12h11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+        <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+        <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.4 1 1.1 1 1.8V16h5v-.3c0-.7.4-1.4 1-1.8A6 6 0 0 0 12 3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+        <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9zM8 8h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
         <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
     </svg>
 
@@ -62,6 +72,9 @@
             <nav class="side-nav" aria-label="Views">
                 <button class="nav-item" data-view="home"><svg class="i"><use href="#i-notes"/></svg>Notes</button>
                 <button class="nav-item" data-view="calendar"><svg class="i"><use href="#i-calendar"/></svg>Calendar</button>
+                <button class="nav-item" data-view="feed"><svg class="i"><use href="#i-feed"/></svg>Feed</button>
+                <button class="nav-item" data-view="messages"><svg class="i"><use href="#i-chat"/></svg>Messages<span class="nav-count badge" id="messages-count"></span></button>
+                <button class="nav-item companion-link" id="companion-nav"><svg class="i"><use href="#i-sparkle"/></svg>Companion</button>
                 <button class="nav-item" data-view="archive"><svg class="i"><use href="#i-archive"/></svg>Archive<span class="nav-count" id="archive-count"></span></button>
                 <button class="nav-item" data-view="trash"><svg class="i"><use href="#i-trash"/></svg>Trash<span class="nav-count" id="trash-count"></span></button>
             </nav>
@@ -94,6 +107,9 @@
                     <span id="user-name"></span>
                     <span class="avatar" id="avatar"></span>
                 </button>
+                <button class="icon-btn companion-btn" id="companion-btn" aria-label="Open writing companion" title="Writing companion">
+                    <svg class="i"><use href="#i-sparkle"/></svg>
+                </button>
                 <button class="icon-btn" id="menu-btn" aria-label="Menu" aria-haspopup="menu">
                     <svg class="i"><use href="#i-menu"/></svg>
                 </button>
@@ -116,10 +132,21 @@
             <div class="editor-meta">
                 <span class="editor-date" id="editor-date"></span>
                 <select id="editor-folder" aria-label="Folder"></select>
+                <label class="share-toggle" title="Friends will see this entry in their feed">
+                    <input type="checkbox" id="editor-share">
+                    <span class="switch" aria-hidden="true"></span>
+                    Share with friends
+                </label>
                 <div class="moods" id="editor-moods" role="radiogroup" aria-label="Mood"></div>
             </div>
             <textarea id="editor-text" placeholder="What’s on your mind today?"></textarea>
+            <div class="ai-panel" id="ai-panel" hidden>
+                <div class="ai-panel-head"><svg class="i"><use href="#i-sparkle"/></svg><span id="ai-panel-label"></span></div>
+                <div class="ai-output" id="ai-output" aria-live="polite"></div>
+                <div class="ai-actions" id="ai-actions"></div>
+            </div>
             <div class="editor-foot">
+                <button type="button" class="chip ai-chip" id="editor-ai"><svg class="i"><use href="#i-sparkle"/></svg><span>Assist</span></button>
                 <button type="button" class="chip" id="editor-archive"><svg class="i"><use href="#i-archive"/></svg><span>Archive</span></button>
                 <button type="button" class="chip danger" id="editor-delete"><svg class="i"><use href="#i-trash"/></svg><span>Delete</span></button>
                 <span class="word-count" id="editor-words">0 words</span>
@@ -142,6 +169,48 @@
         </form>
     </dialog>
 
+    <!-- Sign in / create account -->
+    <dialog class="ask auth" id="auth">
+        <form id="auth-form" novalidate>
+            <h3 id="auth-title">Sign in</h3>
+            <p class="ask-text" id="auth-reason" hidden></p>
+            <div class="tabs auth-tabs" role="tablist">
+                <button type="button" class="tab" role="tab" data-mode="signin">Sign in</button>
+                <button type="button" class="tab" role="tab" data-mode="signup">Create account</button>
+            </div>
+            <label class="field signup-only"><span>Your name</span><input id="auth-name" maxlength="40" autocomplete="name"></label>
+            <label class="field signup-only"><span>Username</span><input id="auth-username" maxlength="20" autocomplete="username" placeholder="3–20 lowercase letters, numbers or _"></label>
+            <label class="field"><span>Email</span><input id="auth-email" type="email" autocomplete="email"></label>
+            <label class="field"><span>Password</span><input id="auth-password" type="password" autocomplete="current-password"></label>
+            <p class="auth-message" id="auth-message" hidden></p>
+            <div class="ask-actions">
+                <button type="button" class="ghost-btn" id="auth-cancel">Cancel</button>
+                <button type="submit" class="primary-btn" id="auth-submit">Sign in</button>
+            </div>
+        </form>
+    </dialog>
+
+    <!-- AI companion -->
+    <aside class="companion" id="companion" aria-label="Writing companion" hidden>
+        <header class="companion-head">
+            <span class="companion-mark"><svg class="i"><use href="#i-sparkle"/></svg></span>
+            <div class="companion-title"><strong>Companion</strong><small>Your AI writing buddy</small></div>
+            <button class="icon-btn" id="companion-new" aria-label="Start a new chat" title="New chat"><svg class="i"><use href="#i-refresh"/></svg></button>
+            <button class="icon-btn" id="companion-close" aria-label="Close companion"><svg class="i"><use href="#i-close"/></svg></button>
+        </header>
+        <div class="companion-thread" id="companion-thread"></div>
+        <form class="companion-compose" id="companion-form">
+            <label class="context-toggle">
+                <input type="checkbox" id="companion-context">
+                Let it read my 10 most recent entries
+            </label>
+            <div class="compose-row">
+                <textarea id="companion-input" rows="1" maxlength="4000" placeholder="Ask anything…" aria-label="Message the companion"></textarea>
+                <button type="submit" class="primary-btn send-btn" id="companion-send" aria-label="Send"><svg class="i"><use href="#i-send"/></svg></button>
+            </div>
+        </form>
+    </aside>
+
     <div class="popover" id="popover" role="menu" hidden></div>
 
     <div id="toast" class="toast" role="status" aria-live="polite">
@@ -149,6 +218,10 @@
         <button id="toast-undo" class="toast-undo">Undo</button>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="config.js"></script>
     <script src="script.js"></script>
+    <script src="social.js"></script>
+    <script src="ai.js"></script>
 </body>
 </html>

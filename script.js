@@ -4,6 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const RANGES = [['all', 'All'], ['today', 'Today'], ['week', 'This Week'], ['month', 'This Month']];
     const TRASH_DAYS = 30;
     const DAY_MS = 86400000;
+    const hooks = { displayName: null, profileClick: null, menuItems: null, afterRender: null, shareToggle: null, rename: null };
 
     const $ = id => document.getElementById(id);
     const content = $('content');
@@ -22,6 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const edWords = $('editor-words');
     const edArchive = $('editor-archive');
     const edDelete = $('editor-delete');
+    const edShare = $('editor-share');
 
     const askDialog = $('ask');
     const askInput = $('ask-input');
@@ -43,6 +45,11 @@ document.addEventListener('DOMContentLoaded', () => {
         calDay: dayKey(new Date()),
         query: ''
     };
+
+    // Extension points for social.js and ai.js
+    const views = { home: renderHome, folder: renderFolder, calendar: renderCalendar, archive: renderArchive, trash: renderTrash };
+    const actions = {};
+    const listeners = {};
 
     let editing = null;
     let undoFn = null;
@@ -85,12 +92,13 @@ document.addEventListener('DOMContentLoaded', () => {
             moods.append(b);
         });
 
-        document.querySelectorAll('.nav-item').forEach(b =>
+        document.querySelectorAll('.nav-item[data-view]').forEach(b =>
             b.addEventListener('click', () => setView(b.dataset.view)));
         $('add-new-btn').addEventListener('click', () => openEditor(null));
         $('write-today').addEventListener('click', () => openEditor(null));
         $('fab').addEventListener('click', () => openEditor(null, newNoteDefaults()));
-        $('profile-btn').addEventListener('click', renameUser);
+        $('profile-btn').addEventListener('click', e =>
+            hooks.profileClick ? hooks.profileClick(e.currentTarget) : renameUser());
         $('menu-btn').addEventListener('click', e => openMainMenu(e.currentTarget));
     }
 
@@ -121,14 +129,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     searchInput.addEventListener('input', () => {
         state.query = searchInput.value.trim().toLowerCase();
-        if (state.view === 'calendar') state.view = 'home';
+        if (!['home', 'folder', 'archive', 'trash'].includes(state.view)) state.view = 'home';
         render();
     });
 
     // ---------- Rendering ----------
     function render() {
         const navView = state.view === 'folder' ? 'home' : state.view;
-        document.querySelectorAll('.nav-item').forEach(b =>
+        document.querySelectorAll('.nav-item[data-view]').forEach(b =>
             b.classList.toggle('active', b.dataset.view === navView));
 
         const archived = notes.filter(n => n.archived && !n.trashedAt).length;
@@ -141,13 +149,19 @@ document.addEventListener('DOMContentLoaded', () => {
         $('stat-words').textContent = live.reduce((s, n) => s + countWords(n.title + ' ' + n.text), 0).toLocaleString();
         $('stat-streak').textContent = calcStreak();
 
-        $('user-name').textContent = userName || 'Add your name';
-        $('avatar').innerHTML = userName
-            ? escapeHTML(initials(userName))
+        const name = displayName();
+        $('user-name').textContent = name || 'Add your name';
+        $('avatar').innerHTML = name
+            ? escapeHTML(initials(name))
             : '<svg class="i" style="width:16px;height:16px"><use href="#i-user"/></svg>';
 
-        const views = { home: renderHome, folder: renderFolder, calendar: renderCalendar, archive: renderArchive, trash: renderTrash };
-        content.innerHTML = views[state.view]();
+        document.body.dataset.view = state.view;
+        content.innerHTML = (views[state.view] || renderHome)();
+        if (hooks.afterRender) hooks.afterRender(state.view);
+    }
+
+    function displayName() {
+        return (hooks.displayName && hooks.displayName()) || userName;
     }
 
     function setTitle(text) {
@@ -180,7 +194,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return `
             <div class="welcome">
                 <p class="welcome-date">${now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
-                <p class="welcome-greeting">${greeting()}${userName ? `, ${escapeHTML(userName.split(' ')[0])}` : ''}. What’s on your mind today?</p>
+                <p class="welcome-greeting">${greeting()}${displayName() ? `, ${escapeHTML(displayName().split(' ')[0])}` : ''}. What’s on your mind today?</p>
             </div>
             <section class="section">
                 <h2>Recent Folders</h2>
@@ -412,6 +426,8 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'empty-trash':
                 emptyTrash();
                 break;
+            default:
+                if (actions[action]) actions[action](el, e);
         }
     });
 
@@ -438,9 +454,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 const t = new Date();
                 createdAt = new Date(y, m, d, t.getHours(), t.getMinutes()).getTime();
             }
-            editing = { id: null, color: defaults.color || COLORS[notes.length % COLORS.length], mood: null, createdAt };
+            editing = { id: null, color: defaults.color || COLORS[notes.length % COLORS.length], mood: null, shared: false, createdAt };
         } else {
-            editing = { id: note.id, color: note.color, mood: note.mood, createdAt: note.createdAt };
+            editing = { id: note.id, color: note.color, mood: note.mood, shared: note.shared, createdAt: note.createdAt };
         }
 
         edTitle.value = note ? note.title : '';
@@ -468,7 +484,17 @@ document.addEventListener('DOMContentLoaded', () => {
         paintSwatches($('editor-colors'), editing.color);
         editor.querySelectorAll('.mood').forEach(b =>
             b.setAttribute('aria-checked', String(b.dataset.mood === editing.mood)));
+        edShare.checked = editing.shared;
     }
+
+    edShare.addEventListener('change', () => {
+        // social.js may veto sharing (e.g. when signed out)
+        if (edShare.checked && hooks.shareToggle && !hooks.shareToggle()) {
+            edShare.checked = false;
+            return;
+        }
+        editing.shared = edShare.checked;
+    });
 
     function updateWords() {
         const count = countWords(edTitle.value + ' ' + edText.value);
@@ -520,19 +546,23 @@ document.addEventListener('DOMContentLoaded', () => {
             const n = notes.find(x => x.id === session.id);
             if (!n) return;
             const changed = n.title !== title || n.text !== text || n.color !== session.color ||
-                n.mood !== session.mood || n.folderId !== folderId;
+                n.mood !== session.mood || n.folderId !== folderId || n.shared !== session.shared;
             if (!changed) return;
-            Object.assign(n, { title, text, color: session.color, mood: session.mood, folderId, updatedAt: Date.now() });
-            if (!quiet) showToast('Entry updated');
+            Object.assign(n, { title, text, color: session.color, mood: session.mood, folderId, shared: session.shared, updatedAt: Date.now() });
+            persist();
+            emit('note', n);
+            if (!quiet) showToast(n.shared ? 'Entry updated and shared' : 'Entry updated');
         } else {
-            notes.push({
-                id: uid(), title, text, mood: session.mood, color: session.color, folderId,
+            const n = {
+                id: uid(), title, text, mood: session.mood, color: session.color, folderId, shared: session.shared,
                 archived: false, trashedAt: null, createdAt: session.createdAt, updatedAt: Date.now()
-            });
+            };
+            notes.push(n);
             sortNotes();
-            if (!quiet) showToast('Entry saved');
+            persist();
+            emit('note', n);
+            if (!quiet) showToast(n.shared ? 'Entry saved and shared with friends' : 'Entry saved');
         }
-        persist();
         render();
     }
 
@@ -561,10 +591,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!n) return;
         n.trashedAt = Date.now();
         persist();
+        emit('note', n);
         render();
         showToast('Moved to trash', () => {
             n.trashedAt = null;
             persist();
+            emit('note', n);
             render();
         });
     });
@@ -575,6 +607,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!n) return;
         n.trashedAt = null;
         persist();
+        emit('note', n);
         render();
         showToast('Entry restored');
     }
@@ -582,6 +615,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function destroyNote(id) {
         const ok = await ask({ title: 'Delete forever?', text: 'This entry will be permanently deleted. This can’t be undone.', ok: 'Delete', danger: true });
         if (!ok) return;
+        notes.filter(n => n.id === id).forEach(n => emit('note-removed', n));
         notes = notes.filter(n => n.id !== id);
         persist();
         render();
@@ -592,6 +626,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const count = notes.filter(n => n.trashedAt).length;
         const ok = await ask({ title: 'Empty trash?', text: `${count} ${count === 1 ? 'entry' : 'entries'} will be permanently deleted. This can’t be undone.`, ok: 'Empty trash', danger: true });
         if (!ok) return;
+        notes.filter(n => n.trashedAt).forEach(n => emit('note-removed', n));
         notes = notes.filter(n => !n.trashedAt);
         persist();
         render();
@@ -646,6 +681,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Profile & menu ----------
     async function renameUser() {
+        if (hooks.rename) return hooks.rename();
         const r = await ask({ title: 'Your name', value: userName, placeholder: 'e.g. Alex', ok: 'Save', allowEmpty: true });
         if (!r) return;
         userName = r.value;
@@ -659,11 +695,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function openMainMenu(anchor) {
-        const nav = [['home', 'Notes', 'i-notes'], ['calendar', 'Calendar', 'i-calendar'], ['archive', 'Archive', 'i-archive'], ['trash', 'Trash', 'i-trash']]
+        const nav = [['home', 'Notes', 'i-notes'], ['calendar', 'Calendar', 'i-calendar'], ['feed', 'Feed', 'i-feed'],
+            ['messages', 'Messages', 'i-chat'], ['archive', 'Archive', 'i-archive'], ['trash', 'Trash', 'i-trash']]
             .map(([view, label, icon]) => ({ label, icon, cls: 'mobile-only', onClick: () => setView(view) }));
         openPopover(anchor, [
             ...nav,
             { sep: true, cls: 'mobile-only' },
+            ...(hooks.menuItems ? hooks.menuItems() : []),
             {
                 label: isDark() ? 'Light mode' : 'Dark mode',
                 icon: isDark() ? 'i-sun' : 'i-moon',
@@ -693,6 +731,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const wasSame = !popover.hidden && popoverAnchor === anchor;
         closePopover();
         if (wasSame) return;
+
+        // Inside a modal dialog the rest of the page is inert, so the menu has to live in the dialog
+        const host = anchor.closest('dialog') || document.body;
+        if (popover.parentElement !== host) host.append(popover);
 
         items.forEach(item => {
             if (item.sep) {
@@ -810,6 +852,19 @@ document.addEventListener('DOMContentLoaded', () => {
         if (fn) fn();
     });
 
+    // ---------- Public API for social.js / ai.js ----------
+    function emit(type, payload) {
+        (listeners[type] || []).forEach(fn => fn(payload));
+    }
+
+    window.diaryApp = {
+        views, actions, hooks, state,
+        on(type, fn) { (listeners[type] = listeners[type] || []).push(fn); },
+        getNotes: () => notes,
+        render, setView, setTitle, showToast, ask, openPopover, closePopover,
+        escapeHTML, initials, shortDate, dayLabel, dayKey, renameUser
+    };
+
     // ---------- Data ----------
     function load(key, fallback) {
         try {
@@ -844,6 +899,7 @@ document.addEventListener('DOMContentLoaded', () => {
             color: COLORS.includes(n.color) ? n.color : COLORS[i % COLORS.length],
             folderId: n.folderId ?? null,
             archived: !!n.archived,
+            shared: !!n.shared,
             trashedAt: n.trashedAt ?? null,
             createdAt,
             updatedAt: n.updatedAt ?? createdAt
