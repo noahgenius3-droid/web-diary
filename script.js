@@ -20,7 +20,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const TRASH_DAYS = 30;
     const DAY_MS = 86400000;
     const MAX_FILE = 25 * 1048576;
-    const hooks = { displayName: null, profileClick: null, menuItems: null, afterRender: null, shareToggle: null, rename: null };
+    const hooks = {
+        displayName: null, profileClick: null, menuItems: null, afterRender: null, shareToggle: null, rename: null,
+        friendAvatars: null, invite: null
+    };
 
     const $ = id => document.getElementById(id);
     const content = $('content');
@@ -65,8 +68,11 @@ document.addEventListener('DOMContentLoaded', () => {
         noteRange: 'all',
         calMonth: firstOfMonth(new Date()),
         calDay: dayKey(new Date()),
-        query: ''
+        query: '',
+        homeTab: 'board',
+        boardFolders: []
     };
+    const STATUSES = [['todo', 'To do', 'red'], ['doing', 'Doing', 'amber'], ['done', 'Complete', 'green']];
 
     // Extension points for social.js and ai.js
     const views = {
@@ -244,26 +250,205 @@ document.addEventListener('DOMContentLoaded', () => {
         document.title = text === 'My Diary' ? 'My Diary' : `${text} · My Diary`;
     }
 
+    // ---------- Notes: board workspace ----------
     function renderHome() {
         setTitle('My Diary');
+        if (state.query) return renderSearch();
+        const tabs = { board: renderBoard, tasks: renderTasks, timeline: renderTimeline, files: renderFiles, overview: renderOverview };
+        return boardHead() + (tabs[state.homeTab] || renderBoard)();
+    }
 
-        if (state.query) {
-            const results = activeNotes().filter(matches);
-            return `
-                <section class="section">
-                    <div class="section-head">
-                        <h2>Search results</h2>
-                        <span class="muted">${results.length} ${results.length === 1 ? 'entry' : 'entries'} for “${escapeHTML(searchInput.value.trim())}”</span>
+    function boardHead() {
+        const first = (displayName() || '').split(' ')[0];
+        const openGoals = boardNotes().flatMap(n => n.goals).filter(g => !g.done && g.text.trim()).length;
+        const tab = ([key, label, count]) => `
+            <button class="board-tab" role="tab" aria-selected="${state.homeTab === key}" data-action="home-tab" data-tab="${key}">
+                ${label}${count ? `<span class="count-dot">${count}</span>` : ''}
+            </button>`;
+        return `
+            <div class="board-head">
+                <div class="board-title-row">
+                    <h2 class="board-title"><span aria-hidden="true">📔</span> ${escapeHTML(first ? `${first}’s Journal` : 'My Journal')}</h2>
+                    <button class="icon-btn ghost" data-action="board-menu" aria-label="Journal options"><svg class="i"><use href="#i-down"/></svg></button>
+                    <span class="board-star" aria-hidden="true">⭐</span>
+                </div>
+                <div class="board-crumbs">
+                    ${folders.map(f => `
+                        <label class="crumb"><input type="checkbox" data-action="board-folder" data-id="${escapeHTML(f.id)}"${state.boardFolders.includes(f.id) ? ' checked' : ''}> ${escapeHTML(f.name)}</label>`
+                    ).join('<span class="crumb-sep" aria-hidden="true">/</span>')}
+                    <button class="crumb add" data-action="new-folder">+ Folder</button>
+                </div>
+                <div class="board-tabs-row">
+                    <div class="board-tabs" role="tablist">
+                        ${[['board', 'Board'], ['tasks', 'Tasks', openGoals], ['timeline', 'Timeline'], ['files', 'Files'], ['overview', 'Overview']].map(tab).join('')}
                     </div>
-                    <div style="height:22px"></div>
-                    ${notesGrid(results, { newTile: false, empty: 'Nothing matches your search.' })}
-                </section>`;
-        }
+                    <div class="board-people">
+                        ${hooks.friendAvatars ? hooks.friendAvatars() : ''}
+                        <button class="invite-btn" data-action="board-invite">Invite</button>
+                    </div>
+                </div>
+            </div>`;
+    }
 
+    function boardNotes() {
+        return activeNotes().filter(n => !state.boardFolders.length || state.boardFolders.includes(n.folderId));
+    }
+
+    // An explicit status (set by dragging) wins; otherwise goals decide
+    function statusOf(n) {
+        if (n.status) return n.status;
+        const goals = n.goals.filter(g => g.text.trim());
+        if (!goals.length) return 'done';
+        const done = goals.filter(g => g.done).length;
+        return done === goals.length ? 'done' : done ? 'doing' : 'todo';
+    }
+
+    function renderBoard() {
+        const list = boardNotes();
+        return `
+            <div class="board">
+                ${STATUSES.map(([key, label, tone]) => {
+                    const items = list.filter(n => statusOf(n) === key);
+                    return `
+                        <section class="board-col" aria-label="${label}">
+                            <header class="col-head">
+                                <span class="col-dot ${tone}"></span><strong>${label}</strong>
+                                <span class="col-count">${items.length}</span>
+                                <button class="icon-btn ghost" data-action="col-new" data-status="${key}" aria-label="New entry in ${label}"><svg class="i"><use href="#i-plus"/></svg></button>
+                            </header>
+                            <div class="col-cards" data-drop="${key}">
+                                ${items.map(taskCard).join('') || `<p class="col-empty">${key === 'todo' ? 'Entries with goals to start land here.' : key === 'doing' ? 'Drag entries here while you work on them.' : 'Finished entries show up here.'}</p>`}
+                            </div>
+                        </section>`;
+                }).join('')}
+            </div>`;
+    }
+
+    function taskCard(n) {
+        const hidden = n.private && !privateUnlocked;
+        const lines = n.text.split('\n');
+        const title = hidden ? '🔒 Private entry'
+            : n.title || lines[0].trim() || (n.kind !== 'free' ? `${KINDS[n.kind].label} journal` : 'Untitled');
+        let desc = hidden ? 'Open to read this entry.' : (n.title ? n.text : lines.slice(1).join(' ')).trim();
+        if (!desc && !hidden) desc = Object.values(n.sections).find(v => v.trim()) || '';
+        const cover = !hidden && n.attachments.find(a => a.kind === 'image' || a.kind === 'drawing');
+        const goals = n.goals.filter(g => g.text.trim());
+        const done = goals.filter(g => g.done).length;
+        const folder = folders.find(f => f.id === n.folderId);
+        const tag = folder ? folder.name : n.kind !== 'free' ? `${KINDS[n.kind].icon} ${KINDS[n.kind].label}` : 'Journal';
+        const files = n.attachments.length;
+        const id = escapeHTML(n.id);
+
+        return `
+            <article class="task-card" draggable="true" data-action="open-note" data-id="${id}" tabindex="0" role="button">
+                ${cover ? `<img class="task-cover" data-media="${escapeHTML(cover.id)}" alt="">` : ''}
+                <div class="task-top">
+                    <h3>${escapeHTML(title)}</h3>
+                    <button class="more-btn" data-action="card-menu" data-id="${id}" aria-label="Entry options"><svg class="i"><use href="#i-more"/></svg></button>
+                </div>
+                ${desc ? `<p class="task-desc">${escapeHTML(desc)}</p>` : ''}
+                ${!hidden && goals.length ? `
+                    <ul class="task-checks">
+                        ${goals.slice(0, 4).map(g => `
+                            <li><label><input type="checkbox" data-action="toggle-goal" data-note="${id}" data-goal="${escapeHTML(g.id)}"${g.done ? ' checked' : ''}>
+                            <span>${escapeHTML(g.text)}</span></label></li>`).join('')}
+                        ${goals.length > 4 ? `<li class="muted small">+${goals.length - 4} more</li>` : ''}
+                    </ul>
+                    <div class="task-progress"><span>Progress</span><span>${done}/${goals.length}</span></div>
+                    <div class="progress"><span style="width:${Math.round((done / goals.length) * 100)}%"></span></div>` : ''}
+                <div class="task-foot">
+                    <span class="task-tag c-${n.color}">${escapeHTML(tag)}</span>
+                    <span class="task-meta">
+                        ${n.mood && !hidden ? `<span title="${MOOD_LABELS[n.mood]}">${MOODS[n.mood]}</span>` : ''}
+                        ${files && !hidden ? `<span title="${files} attachment${files === 1 ? '' : 's'}"><svg class="i"><use href="#i-paperclip"/></svg>${files}</span>` : ''}
+                        <span title="Written ${new Date(n.createdAt).toLocaleString()}"><svg class="i"><use href="#i-clock"/></svg>${new Date(n.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                    </span>
+                </div>
+            </article>`;
+    }
+
+    function renderTasks() {
+        const withGoals = boardNotes().filter(n => n.goals.some(g => g.text.trim()) && !(n.private && !privateUnlocked));
+        if (!withGoals.length) {
+            return `<div class="empty">
+                <p class="empty-title">No goals yet</p>
+                <p>Morning journals come with a Daily goals list — or add goals to any entry.</p>
+                <button class="primary-btn" style="margin-top:16px" data-action="journal" data-kind="morning">Start a morning journal</button>
+            </div>`;
+        }
+        return `<div class="task-groups">${withGoals.map(n => {
+            const goals = n.goals.filter(g => g.text.trim());
+            const done = goals.filter(g => g.done).length;
+            return `
+                <section class="task-group">
+                    <header class="c-${n.color}">
+                        <span class="col-dot" style="background:var(--card)"></span>
+                        <button class="link-btn" data-action="open-note" data-id="${escapeHTML(n.id)}">${escapeHTML(n.title || `${KINDS[n.kind].label} journal`)}</button>
+                        <span class="muted small">${shortDate(new Date(n.createdAt))} · ${done}/${goals.length} done</span>
+                    </header>
+                    <div class="progress"><span style="width:${Math.round((done / goals.length) * 100)}%"></span></div>
+                    <ul class="goal-list">${goals.map(g => `
+                        <li><label><input type="checkbox" data-action="toggle-goal" data-note="${escapeHTML(n.id)}" data-goal="${escapeHTML(g.id)}"${g.done ? ' checked' : ''}>
+                        <span>${escapeHTML(g.text)}</span></label></li>`).join('')}</ul>
+                </section>`;
+        }).join('')}</div>`;
+    }
+
+    function renderTimeline() {
+        const list = boardNotes();
+        if (!list.length) return '<div class="empty"><p class="empty-title">Nothing on your timeline yet</p><p>Write your first entry to start it.</p></div>';
+        const groups = new Map();
+        list.forEach(n => {
+            const key = dayKey(new Date(n.createdAt));
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(n);
+        });
+        return `<div class="timeline">${[...groups.entries()].map(([key, items]) => `
+            <section class="timeline-day">
+                <div class="timeline-date"><strong>${dayLabel(key)}</strong><span>${items.length} ${items.length === 1 ? 'entry' : 'entries'}</span></div>
+                <div class="timeline-items">${items.map(n => {
+                    const hidden = n.private && !privateUnlocked;
+                    return `
+                        <button class="timeline-item c-${n.color}" data-action="open-note" data-id="${escapeHTML(n.id)}">
+                            <time>${new Date(n.createdAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</time>
+                            <span class="timeline-body">
+                                <strong>${hidden ? '🔒 Private entry' : escapeHTML(n.title || n.text.split('\n')[0] || 'Untitled')}</strong>
+                                ${hidden ? '' : `<span>${escapeHTML(n.text.slice(0, 140))}</span>`}
+                            </span>
+                            <span class="timeline-mood">${n.mood && !hidden ? MOODS[n.mood] : ''}</span>
+                        </button>`;
+                }).join('')}</div>
+            </section>`).join('')}</div>`;
+    }
+
+    function renderFiles() {
+        const items = boardNotes()
+            .filter(n => !(n.private && !privateUnlocked))
+            .flatMap(n => n.attachments.map(att => ({ att, note: n })));
+        if (!items.length) return '<div class="empty"><p class="empty-title">No files yet</p><p>Photos, drawings, voice notes and documents you add to entries collect here.</p></div>';
+        const photos = items.filter(i => i.att.kind === 'image' || i.att.kind === 'drawing');
+        const voice = items.filter(i => i.att.kind === 'audio');
+        const docs = items.filter(i => i.att.kind === 'file');
+        const from = n => `<button class="link-btn" data-action="open-note" data-id="${escapeHTML(n.id)}">${escapeHTML(n.title || 'Untitled')}</button>`;
+        return `
+            ${photos.length ? `<section class="section"><h2>Photos &amp; drawings</h2><div class="photo-grid" style="margin-top:16px">${photos.map(({ att, note }) => `
+                <button class="photo-tile" data-action="view-photo" data-media-id="${escapeHTML(att.id)}" data-caption="${escapeHTML(`${note.title || 'Untitled'} · ${new Date(note.createdAt).toLocaleDateString()}`)}">
+                    <img data-media="${escapeHTML(att.id)}" alt="" loading="lazy"><span class="photo-date">${new Date(note.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                </button>`).join('')}</div></section>` : ''}
+            ${voice.length ? `<section class="section"><h2>Voice notes</h2><div class="file-list">${voice.map(({ att, note }) => `
+                <div class="file-row"><svg class="i"><use href="#i-mic"/></svg><audio controls preload="none" data-media="${escapeHTML(att.id)}"></audio>
+                <span class="muted small">${Media.formatDuration(att.duration)}</span><span class="file-from">${from(note)}</span></div>`).join('')}</div></section>` : ''}
+            ${docs.length ? `<section class="section"><h2>Documents</h2><div class="file-list">${docs.map(({ att, note }) => `
+                <div class="file-row"><svg class="i"><use href="#i-file"/></svg>
+                <a data-media="${escapeHTML(att.id)}" download="${escapeHTML(att.name)}">${escapeHTML(att.name)}</a>
+                <span class="muted small">${Media.formatSize(att.size)}</span><span class="file-from">${from(note)}</span></div>`).join('')}</div></section>` : ''}`;
+    }
+
+    function renderOverview() {
         const folderList = folders
             .filter(f => inRange(folderActivity(f), state.folderRange))
             .sort((a, b) => folderActivity(b) - folderActivity(a));
-        const noteList = activeNotes().filter(n => inRange(n.createdAt, state.noteRange));
+        const noteList = boardNotes().filter(n => inRange(n.createdAt, state.noteRange));
         const now = new Date();
 
         return `
@@ -285,6 +470,29 @@ document.addEventListener('DOMContentLoaded', () => {
                 <h2>My Notes</h2>
                 ${tabs('noteRange')}
                 ${notesGrid(noteList, { empty: activeNotes().length ? `No entries ${rangeText(state.noteRange)}.` : 'Your diary is empty — write your first entry.' })}
+            </section>`;
+    }
+
+    function setStatus(id, status) {
+        const n = notes.find(x => x.id === id);
+        if (!n || statusOf(n) === status) return;
+        n.status = status;
+        n.updatedAt = Date.now();
+        persist();
+        render();
+        showToast(`Moved to ${STATUSES.find(s => s[0] === status)[1]}`);
+    }
+
+    function renderSearch() {
+        const results = activeNotes().filter(matches);
+        return `
+            <section class="section">
+                <div class="section-head">
+                    <h2>Search results</h2>
+                    <span class="muted">${results.length} ${results.length === 1 ? 'entry' : 'entries'} for “${escapeHTML(searchInput.value.trim())}”</span>
+                </div>
+                <div style="height:22px"></div>
+                ${notesGrid(results, { newTile: false, empty: 'Nothing matches your search.' })}
             </section>`;
     }
 
@@ -647,11 +855,54 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Content actions ----------
     content.addEventListener('click', e => {
+        // A click on a checklist label is re-dispatched to its checkbox; don't also open the card
+        if (e.target.closest('label') && e.target.tagName !== 'INPUT' && e.target.closest('.task-checks, .goal-list')) return;
         const el = e.target.closest('[data-action]');
         if (!el || !content.contains(el)) return;
         const { action, id } = el.dataset;
 
         switch (action) {
+            case 'home-tab':
+                state.homeTab = el.dataset.tab;
+                render();
+                break;
+            case 'board-folder': {
+                const set = new Set(state.boardFolders);
+                if (set.has(id)) set.delete(id);
+                else set.add(id);
+                state.boardFolders = [...set];
+                render();
+                break;
+            }
+            case 'col-new':
+                openEditor(null, { status: el.dataset.status });
+                break;
+            case 'card-menu': {
+                const n = notes.find(x => x.id === id);
+                if (!n) break;
+                const current = statusOf(n);
+                openPopover(el, [
+                    ...STATUSES.filter(([key]) => key !== current).map(([key, label]) =>
+                        ({ label: `Move to ${label}`, icon: 'i-right', onClick: () => setStatus(id, key) })),
+                    ...(n.status ? [{ label: 'Let goals decide', icon: 'i-refresh', onClick: () => { n.status = null; persist(); render(); } }] : []),
+                    { sep: true },
+                    { label: 'Archive', icon: 'i-archive', onClick: () => { n.archived = true; persist(); render(); showToast('Entry archived', () => { n.archived = false; persist(); render(); }); } }
+                ]);
+                break;
+            }
+            case 'board-menu':
+                openPopover(el, [
+                    { label: 'New entry', icon: 'i-edit', onClick: () => openEditor(null) },
+                    { label: 'Morning journal', icon: 'i-sun', onClick: () => openJournal('morning') },
+                    { label: 'Evening reflection', icon: 'i-moon', onClick: () => openJournal('evening') },
+                    { label: 'New folder', icon: 'i-folder-new', onClick: createFolder },
+                    { label: 'Export entries', icon: 'i-download', onClick: exportData }
+                ]);
+                break;
+            case 'board-invite':
+                if (hooks.invite) hooks.invite();
+                else showToast('Friends need an internet connection');
+                break;
             case 'range':
                 state[el.dataset.key] = el.dataset.range;
                 render();
@@ -719,6 +970,34 @@ document.addEventListener('DOMContentLoaded', () => {
             e.preventDefault();
             e.target.click();
         }
+    });
+
+    // Drag cards between board columns
+    content.addEventListener('dragstart', e => {
+        const card = e.target.closest && e.target.closest('.task-card');
+        if (!card) return;
+        e.dataTransfer.setData('text/plain', card.dataset.id);
+        e.dataTransfer.effectAllowed = 'move';
+        card.classList.add('dragging');
+    });
+    content.addEventListener('dragend', e => {
+        const card = e.target.closest && e.target.closest('.task-card');
+        if (card) card.classList.remove('dragging');
+        content.querySelectorAll('.drop-over').forEach(el => el.classList.remove('drop-over'));
+    });
+    content.addEventListener('dragover', e => {
+        const zone = e.target.closest && e.target.closest('[data-drop]');
+        if (!zone) return;
+        e.preventDefault();
+        content.querySelectorAll('.drop-over').forEach(el => el !== zone && el.classList.remove('drop-over'));
+        zone.classList.add('drop-over');
+    });
+    content.addEventListener('drop', e => {
+        const zone = e.target.closest && e.target.closest('[data-drop]');
+        if (!zone) return;
+        e.preventDefault();
+        const id = e.dataTransfer.getData('text/plain');
+        if (id) setStatus(id, zone.dataset.drop);
     });
 
     function openJournal(kind) {
@@ -809,14 +1088,14 @@ document.addEventListener('DOMContentLoaded', () => {
             editing = {
                 id: null, color: defaults.color || COLORS[notes.length % COLORS.length], mood: null, emotions: [],
                 kind: defaults.kind || 'free', sections: emptySections(), goals: [], attachments: [], location: null,
-                private: false, shared: false, createdAt
+                private: false, shared: !!defaults.shared, status: defaults.status || null, createdAt
             };
         } else {
             editing = {
                 id: note.id, color: note.color, mood: note.mood, emotions: [...note.emotions], kind: note.kind,
                 sections: { ...emptySections(), ...note.sections }, goals: note.goals.map(g => ({ ...g })),
                 attachments: note.attachments.map(a => ({ ...a })), location: note.location,
-                private: note.private, shared: note.shared, createdAt: note.createdAt
+                private: note.private, shared: note.shared, status: note.status, createdAt: note.createdAt
             };
         }
         Object.assign(editing, { shownSections: new Set(), showGoals: false, changed: false, created: false });
@@ -1153,7 +1432,9 @@ document.addEventListener('DOMContentLoaded', () => {
             attachments: session.attachments.map(a => ({ ...a })),
             location: session.location,
             private: session.private,
-            shared: session.shared && !session.private
+            shared: session.shared && !session.private,
+            // Board moves made while the editor was open take precedence
+            status: (session.id && notes.find(x => x.id === session.id)?.status) || session.status || null
         };
     }
 
@@ -1553,6 +1834,16 @@ document.addEventListener('DOMContentLoaded', () => {
         views, actions, hooks, state,
         on(type, fn) { (listeners[type] = listeners[type] || []).push(fn); },
         getNotes: () => notes,
+        newEntry: defaults => openEditor(null, defaults),
+        openNote: id => openNote(notes.find(n => n.id === id)),
+        updateNote(id, patch) {
+            const n = notes.find(x => x.id === id);
+            if (!n) return;
+            Object.assign(n, patch, { updatedAt: Date.now() });
+            persist();
+            emit('note', n);
+            render();
+        },
         render, setView, setTitle, showToast, ask, askLink, openPopover, closePopover,
         escapeHTML, initials, shortDate, dayLabel, dayKey, renameUser, fullText,
         // The AI assistant reads and writes the open entry through this
@@ -1617,6 +1908,7 @@ document.addEventListener('DOMContentLoaded', () => {
             archived: !!n.archived,
             private: !!n.private,
             shared: !!n.shared && !n.private,
+            status: ['todo', 'doing', 'done'].includes(n.status) ? n.status : null,
             trashedAt: n.trashedAt ?? null,
             createdAt,
             updatedAt: n.updatedAt ?? createdAt

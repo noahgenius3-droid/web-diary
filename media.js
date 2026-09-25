@@ -157,6 +157,92 @@ window.Media = (() => {
         });
     }
 
+    // ---------- Inline recorder (chat voice notes, WhatsApp style) ----------
+    // onLevel(level 0–1, seconds) fires ~10×/s for a live meter; stop() also returns a 40-bar waveform.
+    async function createRecorder(onLevel) {
+        if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+            throw new Error('Voice notes aren’t supported in this browser.');
+        }
+        let stream;
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (e) {
+            throw new Error('Microphone access was blocked. Allow it in your browser to send voice notes.');
+        }
+
+        const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg']
+            .find(t => MediaRecorder.isTypeSupported(t)) || '';
+        const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+        const chunks = [];
+        const levels = [];
+
+        let ctx = null;
+        let analyser = null;
+        try {
+            ctx = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = ctx.createAnalyser();
+            analyser.fftSize = 512;
+            ctx.createMediaStreamSource(stream).connect(analyser);
+        } catch (e) {
+            analyser = null;
+        }
+        const buffer = analyser ? new Uint8Array(analyser.fftSize) : null;
+        const started = Date.now();
+
+        const tick = setInterval(() => {
+            let level = 0.2;
+            if (analyser) {
+                analyser.getByteTimeDomainData(buffer);
+                let sum = 0;
+                for (const v of buffer) {
+                    const x = (v - 128) / 128;
+                    sum += x * x;
+                }
+                level = Math.min(1, Math.sqrt(sum / buffer.length) * 3.5);
+            }
+            levels.push(level);
+            if (onLevel) onLevel(level, (Date.now() - started) / 1000);
+        }, 100);
+
+        const cleanup = () => {
+            clearInterval(tick);
+            stream.getTracks().forEach(t => t.stop());
+            if (ctx) ctx.close().catch(() => {});
+        };
+
+        recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+        recorder.start(250);
+
+        return {
+            elapsed: () => (Date.now() - started) / 1000,
+            stop: () => new Promise(resolve => {
+                const duration = (Date.now() - started) / 1000;
+                recorder.onstop = () => {
+                    cleanup();
+                    const type = (recorder.mimeType || mime || 'audio/webm').split(';')[0];
+                    resolve({ blob: new Blob(chunks, { type }), type, duration, waveform: waveformFrom(levels) });
+                };
+                recorder.stop();
+            }),
+            cancel: () => {
+                recorder.onstop = cleanup;
+                try { recorder.stop(); } catch (e) { cleanup(); }
+            }
+        };
+    }
+
+    function waveformFrom(levels, bars = 40) {
+        if (!levels.length) return [];
+        const out = [];
+        for (let i = 0; i < bars; i++) {
+            const start = Math.floor(i * levels.length / bars);
+            const end = Math.max(start + 1, Math.floor((i + 1) * levels.length / bars));
+            out.push(Math.max(...levels.slice(start, end)));
+        }
+        const max = Math.max(...out, 0.01);
+        return out.map(v => Math.round(Math.max(0.1, v / max) * 100) / 100);
+    }
+
     // ---------- Drawing pad ----------
     const INKS = ['#23211f', '#2b3f7e', '#d9534f', '#2e9e5b', '#e0a800'];
     const SIZES = [2, 5, 10];
@@ -315,5 +401,5 @@ window.Media = (() => {
         });
     }
 
-    return { put, get, del, url, hydrate, kindOf, formatSize, formatDuration, pickFiles, recordVoice, drawPad, lightbox, locate };
+    return { put, get, del, url, hydrate, kindOf, formatSize, formatDuration, pickFiles, recordVoice, createRecorder, drawPad, lightbox, locate };
 })();

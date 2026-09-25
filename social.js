@@ -51,9 +51,18 @@ document.addEventListener('DOMContentLoaded', () => {
         muted: new Set(load('diaryMuted', [])),
         urls: new Map(),   // storage path -> { url, expires }
         remoteIds: new Set(), // local ids of my entries that exist in the feed
+        remotePhotos: new Map(), // local id -> [{ id, path, name }] uploaded for the feed
+        feedSort: 'latest',
+        feedFilter: 'all',   // all | mine | saved | tag:<name>
+        saved: new Set(load('diarySavedPosts', [])),
+        seenStories: new Set(load('diarySeenStories', [])),
+        suggestions: [],
+        rec: null,           // in-progress chat voice recording
         channel: null,
         presence: null
     };
+    const FEED_BUCKET = 'diary-feed';
+    const FEED_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 
     const signedIn = () => !!(s.session && s.profile);
 
@@ -118,7 +127,24 @@ document.addEventListener('DOMContentLoaded', () => {
         ? [{ label: 'Sign out', icon: 'i-logout', onClick: signOut }]
         : [{ label: 'Sign in', icon: 'i-user', onClick: () => openAuth() }];
 
+    // Notes board header: friend avatars + Invite
+    app.hooks.friendAvatars = () => {
+        if (!signedIn() || !s.friends.length) return '';
+        const shown = s.friends.slice(0, 4);
+        const extra = s.friends.length - shown.length;
+        return `<span class="avatar-stack" title="${s.friends.length} friends">${shown.map(f => avatar(f, 'sm')).join('')}${extra > 0 ? `<span class="avatar sm more">+${extra}</span>` : ''}</span>`;
+    };
+    app.hooks.invite = () => {
+        if (!window.diarySocial.requireSignIn('Sign in to invite friends to your circle.')) return;
+        s.addOpen = true;
+        app.setView('messages');
+        const input = $('add-friend-input');
+        if (input) input.focus();
+        app.showToast(`Share your username @${s.profile.username} so friends can add you`);
+    };
+
     app.hooks.afterRender = view => {
+        if (view === 'home') paintPresence();
         if (view === 'feed') hydrateStorage(content);
         if (view !== 'messages' || !signedIn()) return;
         const thread = $('chat-thread');
@@ -137,6 +163,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             input.innerHTML = Rich.sanitize(s.drafts[s.activeFriend] || '');
             renderPending();
+            if (s.rec) showRecBar();
             if (s.chatFocused) {
                 input.focus();
                 Rich.placeCaretAtEnd(input);
@@ -144,14 +171,25 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    // Keep shared entries in sync with the feed (private entries are never shared)
+    // Keep shared entries in sync with the feed (private entries are never shared).
+    // Autosave fires often, so syncs are debounced per entry and run one at a time.
+    const shareTimers = new Map();
+    let shareChain = Promise.resolve();
+    const queue = job => { shareChain = shareChain.then(job).catch(() => {}); };
+
     app.on('note', note => {
         if (!signedIn()) return;
-        if (note.shared && !note.private && !note.trashedAt) upsertShared(note);
-        else if (s.remoteIds.has(note.id)) removeShared(note);
+        clearTimeout(shareTimers.get(note.id));
+        shareTimers.set(note.id, setTimeout(() => queue(() => {
+            const n = app.getNotes().find(x => x.id === note.id);
+            if (!n || !signedIn()) return;
+            if (n.shared && !n.private && !n.trashedAt) return upsertShared(n);
+            if (s.remoteIds.has(n.id)) return removeShared(n);
+        }), 1200));
     });
     app.on('note-removed', note => {
-        if (signedIn() && s.remoteIds.has(note.id)) removeShared(note);
+        clearTimeout(shareTimers.get(note.id));
+        if (signedIn() && s.remoteIds.has(note.id)) queue(() => removeShared(note));
     });
 
     // ---------- Auth ----------
@@ -468,6 +506,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const input = $('chat-input');
         if (!input || !s.activeFriend) return;
         s.drafts[s.activeFriend] = Rich.toText(input.innerHTML) ? input.innerHTML : '';
+        updateComposerButton();
         clearTimeout(saveDraft.timer);
         saveDraft.timer = setTimeout(() => {
             try { localStorage.setItem(`diaryChatDrafts:${s.profile.id}`, JSON.stringify(s.drafts)); } catch (e) {}
@@ -511,6 +550,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!box) return;
         const list = s.pending[s.activeFriend] || [];
         box.hidden = !list.length;
+        updateComposerButton();
         box.innerHTML = list.map(p => `
             <div class="pending">
                 ${p.preview ? `<img src="${p.preview}" alt="">` : `<svg class="i"><use href="#${p.kind === 'audio' ? 'i-mic' : 'i-file'}"/></svg>`}
@@ -529,45 +569,240 @@ document.addEventListener('DOMContentLoaded', () => {
         const pending = s.pending[friendId] || [];
         if (!text && !pending.length) return;
 
-        s.sending = true;
-        content.querySelector('.composer')?.classList.add('busy');
         input.innerHTML = '';
         s.drafts[friendId] = '';
         saveDraft();
         s.pending[friendId] = [];
         renderPending();
 
-        const me = s.profile.id;
-        const uploaded = [];
-        try {
-            for (const p of pending) {
-                const ext = (p.name.match(/\.[a-z0-9]{1,5}$/i) || [''])[0].toLowerCase() || extFor(p.type);
-                const path = `${me}/${friendId}/${randomId()}${ext}`;
-                const { error } = await client.storage.from(BUCKET).upload(path, p.file, { contentType: p.type, upsert: false });
-                if (error) throw new Error(`Couldn’t upload ${p.name}: ${error.message}`);
-                uploaded.push({ path, name: p.name.slice(0, 120), type: p.type, size: p.size, kind: p.kind, ...(p.duration ? { duration: Math.round(p.duration) } : {}) });
-            }
-            const { data, error } = await client.from('diary_messages')
-                .insert({ recipient: friendId, body: text ? html.slice(0, 20000) : '', attachments: uploaded })
-                .select().single();
-            if (error) throw error;
-            pending.forEach(p => p.preview && URL.revokeObjectURL(p.preview));
-            (s.threads[friendId] = s.threads[friendId] || []).push(data);
-            s.last[friendId] = data;
-            appendMessage(data);
-            updateConvoRow(friendId);
-        } catch (err) {
-            app.showToast(err.message || 'Message not sent');
-            if (uploaded.length) client.storage.from(BUCKET).remove(uploaded.map(u => u.path));
+        const ok = await deliver(friendId, text ? html : '', pending);
+        if (!ok) {
             const current = $('chat-input');
             if (current && s.activeFriend === friendId) current.innerHTML = html;
             s.drafts[friendId] = html;
             s.pending[friendId] = pending;
             renderPending();
+        }
+        updateComposerButton();
+    }
+
+    // Upload attachments, then insert the message. Returns false (after telling the user) on failure.
+    async function deliver(friendId, html, items) {
+        s.sending = true;
+        content.querySelector('.composer')?.classList.add('busy');
+        const me = s.profile.id;
+        const uploaded = [];
+        try {
+            for (const p of items) {
+                const ext = (p.name.match(/\.[a-z0-9]{1,5}$/i) || [''])[0].toLowerCase() || extFor(p.type);
+                const path = `${me}/${friendId}/${randomId()}${ext}`;
+                const { error } = await client.storage.from(BUCKET).upload(path, p.file, { contentType: p.type, upsert: false });
+                if (error) throw new Error(`Couldn’t upload ${p.name}: ${error.message}`);
+                uploaded.push({
+                    path, name: p.name.slice(0, 120), type: p.type, size: p.size, kind: p.kind,
+                    ...(p.duration ? { duration: Math.round(p.duration) } : {}),
+                    ...(p.waveform ? { waveform: p.waveform.slice(0, 40) } : {})
+                });
+            }
+            const { data, error } = await client.from('diary_messages')
+                .insert({ recipient: friendId, body: html.slice(0, 20000), attachments: uploaded })
+                .select().single();
+            if (error) throw error;
+            items.forEach(p => p.preview && URL.revokeObjectURL(p.preview));
+            (s.threads[friendId] = s.threads[friendId] || []).push(data);
+            s.last[friendId] = data;
+            appendMessage(data);
+            updateConvoRow(friendId);
+            return true;
+        } catch (err) {
+            app.showToast(err.message || 'Message not sent');
+            if (uploaded.length) client.storage.from(BUCKET).remove(uploaded.map(u => u.path));
+            return false;
         } finally {
             s.sending = false;
             content.querySelector('.composer')?.classList.remove('busy');
         }
+    }
+
+    // ---------- Voice notes (WhatsApp style) ----------
+    // Hold the mic to record and release to send; slide left to cancel.
+    // A quick tap (or "+ → Voice note") records hands-free until you tap send or the bin.
+    async function startVoice(startX, locked = false) {
+        if (s.rec || !s.activeFriend || s.sending) return;
+        const rec = s.rec = { mode: locked ? 'locked' : 'hold', startX, down: Date.now(), friendId: s.activeFriend, controller: null, released: false, levels: [] };
+        showRecBar();
+        try {
+            rec.controller = await Media.createRecorder((level, secs) => paintRec(rec, level, secs));
+        } catch (err) {
+            if (s.rec === rec) s.rec = null;
+            hideRecBar();
+            app.showToast(err.message);
+            return;
+        }
+        if (s.rec !== rec) return rec.controller.cancel(); // cancelled while the permission prompt was up
+        if (rec.released) lockVoice();                    // released during the prompt: switch to hands-free
+    }
+
+    function releaseVoice() {
+        const rec = s.rec;
+        rec.released = true;
+        if (!rec.controller) return;
+        if (Date.now() - rec.down < 400) lockVoice();
+        else finishVoice(true);
+    }
+
+    function lockVoice() {
+        if (!s.rec) return;
+        s.rec.mode = 'locked';
+        const hint = $('rec-hint');
+        if (hint) hint.textContent = 'Recording — tap send when you’re done';
+        updateComposerButton();
+    }
+
+    async function finishVoice(send) {
+        const rec = s.rec;
+        if (!rec || !rec.controller) return;
+        s.rec = null;
+        const result = await rec.controller.stop();
+        hideRecBar();
+        updateComposerButton();
+        if (!send) return;
+        if (result.duration < 1) {
+            app.showToast('Hold the mic a little longer to record');
+            return;
+        }
+        const file = new File([result.blob], `Voice note${extFor(result.type)}`, { type: result.type });
+        await deliver(rec.friendId, '', [{
+            file, type: result.type, name: 'Voice note', size: file.size, kind: 'audio',
+            duration: result.duration, waveform: result.waveform
+        }]);
+    }
+
+    function cancelVoice(message) {
+        const rec = s.rec;
+        if (!rec) return;
+        s.rec = null;
+        if (rec.controller) rec.controller.cancel();
+        hideRecBar();
+        updateComposerButton();
+        if (message) app.showToast(message);
+    }
+
+    function showRecBar() {
+        content.querySelector('.composer')?.classList.add('recording');
+        const hint = $('rec-hint');
+        if (hint && s.rec) hint.textContent = s.rec.mode === 'locked' ? 'Recording — tap send when you’re done' : '‹ Slide left to cancel';
+        if (s.rec) paintRec(s.rec, null, (Date.now() - s.rec.down) / 1000);
+        updateComposerButton();
+    }
+
+    function hideRecBar() {
+        content.querySelector('.composer')?.classList.remove('recording');
+    }
+
+    function paintRec(rec, level, secs) {
+        if (level !== null) {
+            rec.levels.push(level);
+            if (rec.levels.length > 48) rec.levels.shift();
+        }
+        const time = $('rec-time');
+        const wave = $('rec-wave');
+        if (time) time.textContent = Media.formatDuration(secs);
+        if (wave) wave.innerHTML = rec.levels.map(v => `<span style="height:${Math.round(Math.max(0.12, v) * 100)}%"></span>`).join('');
+        if (secs >= 300 && s.rec === rec) finishVoice(true); // 5 minute cap
+    }
+
+    content.addEventListener('pointerdown', e => {
+        const btn = e.target.closest('#chat-action');
+        if (!btn || btn.dataset.mode !== 'mic') return;
+        e.preventDefault();
+        startVoice(e.clientX);
+    });
+    document.addEventListener('pointerup', () => { if (s.rec && s.rec.mode === 'hold') releaseVoice(); });
+    document.addEventListener('pointercancel', () => { if (s.rec && s.rec.mode === 'hold') lockVoice(); });
+    document.addEventListener('pointermove', e => {
+        if (s.rec && s.rec.mode === 'hold' && s.rec.startX - e.clientX > 90) cancelVoice('Voice note cancelled');
+    });
+
+    content.addEventListener('click', e => {
+        const btn = e.target.closest('#chat-action');
+        if (!btn) return;
+        if (btn.dataset.mode === 'send') sendMessage();
+        else if (btn.dataset.mode === 'rec-send') finishVoice(true);
+    });
+
+    // ---------- Voice note player ----------
+    function voiceHTML(a) {
+        const wave = (Array.isArray(a.waveform) && a.waveform.length ? a.waveform : pseudoWave(a.path))
+            .slice(0, 60)
+            .map(v => Math.max(0.1, Math.min(1, Number(v) || 0.1)));
+        return `
+            <div class="vn" data-duration="${Number(a.duration) || 0}">
+                <button type="button" class="vn-play" data-action="vn-play" aria-label="Play voice note"><svg class="i"><use href="#i-play"/></svg></button>
+                <div class="vn-main">
+                    <div class="vn-wave" data-action="vn-seek" aria-hidden="true">${wave.map(v => `<span style="height:${Math.round(v * 100)}%"></span>`).join('')}</div>
+                    <div class="vn-meta">
+                        <span class="vn-time">${Media.formatDuration(a.duration)}</span>
+                        <button type="button" class="vn-speed" data-action="vn-speed" aria-label="Playback speed">1×</button>
+                    </div>
+                </div>
+                <span class="vn-mic" aria-hidden="true"><svg class="i"><use href="#i-mic"/></svg></span>
+                <audio preload="none" data-path="${esc(a.path)}"></audio>
+            </div>`;
+    }
+
+    // Stable fake waveform for voice notes sent before waveforms were recorded
+    function pseudoWave(seed) {
+        let h = 0;
+        for (const c of String(seed)) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+        return Array.from({ length: 40 }, () => {
+            h = (h * 1103515245 + 12345) >>> 0;
+            return 0.2 + (h % 800) / 1000;
+        });
+    }
+
+    function bindVoice(vn) {
+        const audio = vn.querySelector('audio');
+        if (vn.dataset.bound) return audio;
+        vn.dataset.bound = '1';
+        const bars = [...vn.querySelectorAll('.vn-wave span')];
+        const time = vn.querySelector('.vn-time');
+        const btn = vn.querySelector('.vn-play');
+        const total = () => (Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : Number(vn.dataset.duration) || 1);
+        const paint = () => {
+            const played = Math.round(Math.min(1, audio.currentTime / total()) * bars.length);
+            bars.forEach((b, i) => b.classList.toggle('played', i < played));
+            time.textContent = Media.formatDuration(audio.currentTime > 0 ? audio.currentTime : total());
+        };
+        const icon = name => { btn.innerHTML = `<svg class="i"><use href="#${name}"/></svg>`; };
+        audio.addEventListener('timeupdate', paint);
+        audio.addEventListener('play', () => { vn.classList.add('playing'); icon('i-pause'); btn.setAttribute('aria-label', 'Pause voice note'); });
+        audio.addEventListener('pause', () => { vn.classList.remove('playing'); icon('i-play'); btn.setAttribute('aria-label', 'Play voice note'); });
+        audio.addEventListener('ended', () => { audio.currentTime = 0; paint(); });
+        return audio;
+    }
+
+    async function toggleVoice(vn) {
+        const audio = bindVoice(vn);
+        if (!audio.paused) return audio.pause();
+        if (!audio.src) await hydrateStorage(vn);
+        if (!audio.src) return app.showToast('Couldn’t load that voice note');
+        document.querySelectorAll('.vn audio').forEach(a => { if (a !== audio) a.pause(); });
+        try {
+            await audio.play();
+        } catch (e) {
+            app.showToast('Couldn’t play that voice note');
+        }
+    }
+
+    async function seekVoice(vn, e) {
+        const audio = bindVoice(vn);
+        const rect = vn.querySelector('.vn-wave').getBoundingClientRect();
+        const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+        if (!audio.src) await hydrateStorage(vn);
+        const total = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : Number(vn.dataset.duration) || 0;
+        try { audio.currentTime = ratio * total; } catch (err) {}
+        if (audio.paused) toggleVoice(vn);
     }
 
     function onIncomingMessage(m) {
@@ -627,20 +862,28 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Storage URLs ----------
+    // Signed URLs for private storage; elements may name their bucket with data-bucket (chat by default)
     async function hydrateStorage(root) {
         const els = [...root.querySelectorAll('[data-path]:not([data-hydrated])')];
         if (!els.length || !client) return;
         const now = Date.now();
-        const needed = [...new Set(els.map(el => el.dataset.path))]
-            .filter(p => !s.urls.has(p) || s.urls.get(p).expires < now + 60000);
-        if (needed.length) {
-            const { data } = await client.storage.from(BUCKET).createSignedUrls(needed, 3600);
-            (data || []).forEach(d => {
-                if (d.signedUrl) s.urls.set(d.path, { url: d.signedUrl, expires: now + 3600 * 1000 });
-            });
-        }
+        const key = el => `${el.dataset.bucket || BUCKET}:${el.dataset.path}`;
+        const byBucket = new Map();
         els.forEach(el => {
-            const entry = s.urls.get(el.dataset.path);
+            const k = key(el);
+            if (s.urls.has(k) && s.urls.get(k).expires > now + 60000) return;
+            const bucket = el.dataset.bucket || BUCKET;
+            if (!byBucket.has(bucket)) byBucket.set(bucket, new Set());
+            byBucket.get(bucket).add(el.dataset.path);
+        });
+        await Promise.all([...byBucket.entries()].map(async ([bucket, paths]) => {
+            const { data } = await client.storage.from(bucket).createSignedUrls([...paths], 3600);
+            (data || []).forEach(d => {
+                if (d.signedUrl) s.urls.set(`${bucket}:${d.path}`, { url: d.signedUrl, expires: now + 3600 * 1000 });
+            });
+        }));
+        els.forEach(el => {
+            const entry = s.urls.get(key(el));
             el.dataset.hydrated = '1';
             if (!entry) {
                 el.classList.add('media-missing');
@@ -655,13 +898,17 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadFeed() {
         if (s.feedLoading) return;
         s.feedLoading = true;
-        const { data, error } = await client.from('diary_shared_entries').select(`
-            id, author, title, body, html, color, mood, written_at, shared_at,
-            author_profile:diary_profiles!diary_shared_entries_author_fkey(username, display_name),
-            likes:diary_entry_likes(user_id)
-        `).order('shared_at', { ascending: false }).limit(50);
+        const [feedRes, suggestRes] = await Promise.all([
+            client.from('diary_shared_entries').select(`
+                id, author, local_id, title, body, html, color, mood, photos, written_at, shared_at,
+                author_profile:diary_profiles!diary_shared_entries_author_fkey(username, display_name),
+                likes:diary_entry_likes(user_id)
+            `).order('shared_at', { ascending: false }).limit(60),
+            client.rpc('diary_friend_suggestions')
+        ]);
         s.feedLoading = false;
-        s.feed = error ? [] : data;
+        s.feed = feedRes.error ? [] : feedRes.data;
+        s.suggestions = suggestRes.error ? [] : suggestRes.data;
         if (app.state.view === 'feed') app.render();
     }
 
@@ -685,18 +932,48 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Sharing ----------
     async function loadRemoteIds() {
-        const { data } = await client.from('diary_shared_entries').select('local_id').eq('author', s.profile.id);
+        const { data } = await client.from('diary_shared_entries').select('local_id, photos').eq('author', s.profile.id);
         s.remoteIds = new Set((data || []).map(r => r.local_id));
+        s.remotePhotos = new Map((data || []).map(r => [r.local_id, r.photos || []]));
     }
 
     function syncAllShared() {
-        app.getNotes().filter(n => n.shared && !n.private && !n.trashedAt).forEach(upsertShared);
+        app.getNotes().filter(n => n.shared && !n.private && !n.trashedAt).forEach(n => queue(() => upsertShared(n)));
+    }
+
+    // Upload new entry photos to the friends-only bucket and drop ones that were removed
+    async function syncPhotos(note) {
+        const me = s.profile.id;
+        const images = note.attachments
+            .filter(a => (a.kind === 'image' || a.kind === 'drawing') && FEED_TYPES.includes(a.type))
+            .slice(0, 10);
+        const previous = s.remotePhotos.get(note.id) || [];
+        const photos = [];
+        for (const img of images) {
+            const existing = previous.find(p => p.id === img.id);
+            if (existing) {
+                photos.push(existing);
+                continue;
+            }
+            const blob = await Media.get(img.id);
+            if (!blob) continue;
+            const path = `${me}/${note.id}/${img.id}${extFor(img.type)}`;
+            const { error } = await client.storage.from(FEED_BUCKET).upload(path, blob, { contentType: img.type, upsert: false });
+            if (error && !/exist/i.test(error.message)) continue;
+            photos.push({ id: img.id, path, name: String(img.name || '').slice(0, 120) });
+        }
+        const stale = previous.filter(p => !photos.some(x => x.id === p.id)).map(p => p.path);
+        if (stale.length) await client.storage.from(FEED_BUCKET).remove(stale);
+        return photos;
     }
 
     async function upsertShared(note) {
         let html = Rich.sanitize(note.html || '');
         if (html.length > 60000) html = Rich.textToHTML(note.text.slice(0, 20000));
+        const photos = await syncPhotos(note);
+        s.remotePhotos.set(note.id, photos);
         const { error } = await client.from('diary_shared_entries').upsert({
+            photos,
             author: s.profile.id,
             local_id: note.id,
             title: note.title.slice(0, 200),
@@ -716,6 +993,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const { error } = await client.from('diary_shared_entries')
             .delete().eq('author', s.profile.id).eq('local_id', note.id);
         if (error) return app.showToast('Could not unshare that entry');
+        const photos = (s.remotePhotos.get(note.id) || []).map(p => p.path);
+        if (photos.length) await client.storage.from(FEED_BUCKET).remove(photos);
+        s.remotePhotos.delete(note.id);
         s.remoteIds.delete(note.id);
         s.feed = null;
     }
@@ -746,60 +1026,276 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const me = s.profile.id;
-        const filterFriend = s.feedAuthor && s.friends.find(f => f.id === s.feedAuthor);
-        const list = s.feedAuthor ? s.feed.filter(p => p.author === s.feedAuthor) : s.feed;
-        const posts = list.map(p => {
-            const author = p.author_profile || { username: 'unknown', display_name: 'Someone' };
-            const mine = p.author === me;
-            const liked = p.likes.some(l => l.user_id === me);
-            const long = p.body.length > 420 || p.body.split('\n').length > 7;
-            const body = p.html ? Rich.sanitize(p.html) : esc(p.body);
-            return `
-                <article class="post">
-                    <header class="post-head">
-                        <span class="avatar sm">${esc(app.initials(author.display_name))}</span>
-                        <div class="post-who">
-                            <strong>${mine ? 'You' : esc(author.display_name)}</strong>
-                            <span class="muted">@${esc(author.username)} · ${timeAgo(p.shared_at)}</span>
-                        </div>
-                    </header>
-                    <div class="post-body tinted c-${esc(p.color)}">
-                        <p class="post-date">${app.shortDate(new Date(p.written_at))}${p.mood ? ` · ${MOOD_EMOJI[p.mood] || ''}` : ''}</p>
-                        ${p.title ? `<h3>${esc(p.title)}</h3>` : ''}
-                        <div class="post-text rich-content${long ? ' clamped' : ''}">${body}</div>
-                        ${long ? '<button class="read-more" data-action="expand-post">Read more</button>' : ''}
-                    </div>
-                    <footer class="post-foot">
-                        <button class="like-btn" data-action="like" data-id="${esc(p.id)}" aria-pressed="${liked}" aria-label="${liked ? 'Unlike' : 'Like'}">
-                            <svg class="i"><use href="#${liked ? 'i-heart-fill' : 'i-heart'}"/></svg>
-                            <span>${p.likes.length || ''}</span>
-                        </button>
-                        ${mine ? '<span class="muted small">Shared by you</span>' : `<button class="chip" data-action="message-friend" data-id="${esc(p.author)}"><svg class="i"><use href="#i-chat"/></svg>Message</button>`}
-                    </footer>
-                </article>`;
-        }).join('');
+        const mine = s.feed.filter(p => p.author === me);
+        const likesReceived = mine.reduce((sum, p) => sum + p.likes.length, 0);
+
+        let list = s.feed;
+        let filterLabel = '';
+        if (s.feedAuthor) {
+            list = list.filter(p => p.author === s.feedAuthor);
+            const f = s.friends.find(x => x.id === s.feedAuthor);
+            filterLabel = `${f ? f.display_name : 'Their'}’s posts`;
+        } else if (s.feedFilter === 'mine') {
+            list = mine;
+            filterLabel = 'Your posts';
+        } else if (s.feedFilter === 'saved') {
+            list = list.filter(p => s.saved.has(p.id));
+            filterLabel = 'Saved posts';
+        } else if (s.feedFilter.startsWith('tag:')) {
+            const tag = s.feedFilter.slice(4);
+            list = list.filter(p => hashtags(p).includes(tag));
+            filterLabel = `#${tag}`;
+        }
+        if (s.feedSort === 'popular') {
+            list = [...list].sort((a, b) => b.likes.length - a.likes.length || Date.parse(b.shared_at) - Date.parse(a.shared_at));
+        }
+
+        const navItem = (filter, icon, label) => `
+            <button class="social-nav-item${!s.feedAuthor && s.feedFilter === filter ? ' active' : ''}" data-action="feed-filter" data-filter="${filter}">
+                <svg class="i"><use href="#${icon}"/></svg>${label}</button>`;
+
+        const stories = storyGroups();
+        const online = s.friends.filter(f => s.online.has(f.id));
 
         return `
-            <section class="section feed">
-                <div class="section-head">
-                    <div>
-                        <h2>${filterFriend ? `${esc(filterFriend.display_name)}’s entries` : 'Friends’ updates'}</h2>
-                        <p class="muted">Entries you and your friends chose to share.</p>
+            <div class="social">
+                <aside class="social-left">
+                    <div class="profile-card">
+                        <span class="avatar xl">${esc(app.initials(s.profile.display_name))}<span class="verified" aria-hidden="true"><svg class="i"><use href="#i-check"/></svg></span></span>
+                        <strong>${esc(s.profile.display_name)}</strong>
+                        <small>@${esc(s.profile.username)}</small>
+                        <div class="profile-stats">
+                            <div><b>${mine.length}</b><span>Posts</span></div>
+                            <div><b>${s.friends.length}</b><span>Friends</span></div>
+                            <div><b>${likesReceived}</b><span>Likes</span></div>
+                        </div>
                     </div>
-                    <div class="head-actions">
-                        ${filterFriend ? '<button class="chip" data-action="feed-all"><svg class="i"><use href="#i-close"/></svg>Show everyone</button>' : ''}
-                        <button class="chip" data-action="refresh-feed"><svg class="i"><use href="#i-refresh"/></svg>Refresh</button>
-                        <button class="chip" data-action="find-friends"><svg class="i"><use href="#i-user"/></svg>Friends</button>
+                    <nav class="social-nav" aria-label="Feed">
+                        ${navItem('all', 'i-home', 'Feed')}
+                        ${navItem('mine', 'i-user', 'My posts')}
+                        ${navItem('saved', 'i-bookmark', 'My favorites')}
+                        <button class="social-nav-item" data-action="find-friends"><svg class="i"><use href="#i-send"/></svg>Direct</button>
+                        <button class="social-nav-item" data-action="go-insights"><svg class="i"><use href="#i-chart"/></svg>Stats</button>
+                    </nav>
+                    <div class="contacts">
+                        <h4>Contacts</h4>
+                        ${s.friends.slice(0, 6).map(f => `
+                            <div class="contact-row">
+                                ${avatar(f, 'md')}
+                                <span class="contact-name"><strong>${esc(f.display_name)}</strong><small>@${esc(f.username)}</small></span>
+                                <button class="icon-btn ghost" data-action="message-friend" data-id="${esc(f.id)}" aria-label="Message ${esc(f.display_name)}"><svg class="i"><use href="#i-chat"/></svg></button>
+                            </div>`).join('') || '<p class="muted small">Add friends to see them here.</p>'}
+                        ${s.friends.length ? '<button class="link-btn center" data-action="find-friends">View all</button>' : ''}
                     </div>
-                </div>
-                <div class="feed-list">
-                    ${posts || `<div class="empty">
-                        <p class="empty-title">No updates yet</p>
-                        <p>Turn on <strong>Share with friends</strong> when writing an entry, or add friends to see theirs here.</p>
-                    </div>`}
-                </div>
-            </section>`;
+                </aside>
+
+                <section class="social-main">
+                    <div class="social-top">
+                        <label class="search feed-search">
+                            <svg class="i"><use href="#i-search"/></svg>
+                            <input type="search" id="feed-search" placeholder="Search posts…" aria-label="Search posts">
+                        </label>
+                        <button class="create-post" data-action="create-post"><svg class="i"><use href="#i-plus"/></svg>Create new post</button>
+                    </div>
+
+                    <div class="block-head">
+                        <h2>Stories</h2>
+                        ${stories.length ? '<button class="link-btn" data-action="story-open">Watch all</button>' : ''}
+                    </div>
+                    <div class="stories">
+                        <button class="story" data-action="create-post">
+                            <span class="story-ring add"><svg class="i"><use href="#i-plus"/></svg></span><span>Add story</span>
+                        </button>
+                        ${stories.map(g => `
+                            <button class="story" data-action="story-open" data-id="${esc(g.author)}">
+                                <span class="story-ring${g.posts.every(p => s.seenStories.has(p.id)) ? ' seen' : ''}">${avatar(g.person, 'lg')}</span>
+                                <span>${g.author === me ? 'You' : esc(g.person.display_name.split(' ')[0])}</span>
+                            </button>`).join('')}
+                    </div>
+
+                    <div class="block-head">
+                        <h2>${filterLabel ? esc(filterLabel) : 'Feeds'}</h2>
+                        <div class="feed-sort" role="group" aria-label="Sort posts">
+                            <button data-action="feed-sort" data-sort="popular" aria-pressed="${s.feedSort === 'popular'}">Popular</button>
+                            <button data-action="feed-sort" data-sort="latest" aria-pressed="${s.feedSort === 'latest'}">Latest</button>
+                        </div>
+                    </div>
+                    ${filterLabel ? '<button class="chip filter-chip" data-action="feed-all"><svg class="i"><use href="#i-close"/></svg>Show everything</button>' : ''}
+                    <div class="feed-list">
+                        ${list.map(postCard).join('') || `<div class="empty">
+                            <p class="empty-title">${filterLabel ? 'Nothing here yet' : 'No posts yet'}</p>
+                            <p>${s.feedFilter === 'saved' ? 'Tap the bookmark on a post to save it here.' : 'Turn on <strong>Share with friends</strong> in an entry, or add friends to see theirs here.'}</p>
+                        </div>`}
+                    </div>
+                </section>
+
+                <aside class="social-right">
+                    <section class="side-box">
+                        <h4>Requests ${s.incoming.length ? `<span class="count-dot">${s.incoming.length}</span>` : ''}</h4>
+                        ${s.incoming.map(f => `
+                            <div class="request-row">
+                                ${avatar(f, 'md')}
+                                <div>
+                                    <p><strong>${esc(f.display_name)}</strong> wants to add you to friends</p>
+                                    <div class="request-actions">
+                                        <button class="link-btn accent" data-action="accept-request" data-id="${esc(f.friendshipId)}">Accept</button>
+                                        <button class="link-btn" data-action="decline-request" data-id="${esc(f.friendshipId)}">Decline</button>
+                                    </div>
+                                </div>
+                            </div>`).join('') || '<p class="muted small">No new requests.</p>'}
+                    </section>
+                    <section class="side-box">
+                        <h4>Suggestions for you</h4>
+                        ${s.suggestions.map(p => `
+                            <div class="suggest-row">
+                                <span class="avatar md">${esc(app.initials(p.display_name))}</span>
+                                <span class="contact-name"><strong>${esc(p.display_name)}</strong><small>${p.mutual ? `${p.mutual} mutual friend${p.mutual === 1 ? '' : 's'}` : `@${esc(p.username)}`}</small></span>
+                                <button class="icon-btn ghost accent" data-action="suggest-add" data-username="${esc(p.username)}" aria-label="Add ${esc(p.display_name)}"><svg class="i"><use href="#i-user-plus"/></svg></button>
+                            </div>`).join('') || '<p class="muted small">No suggestions right now.</p>'}
+                    </section>
+                    <section class="active-card">
+                        <span class="avatar-stack">${(online.length ? online : s.friends).slice(0, 6).map(f => avatar(f, 'sm')).join('')}</span>
+                        <p><b>${online.length}</b> ${online.length === 1 ? 'friend' : 'friends'} online</p>
+                        <small>${online.length ? 'Active now in your circle' : 'Your friends will show here when they’re online'}</small>
+                    </section>
+                </aside>
+            </div>`;
     };
+
+    function hashtags(p) {
+        const text = `${p.title || ''} ${p.body || ''}`;
+        return [...new Set([...text.matchAll(/#([\p{L}\p{N}_]{2,30})/gu)].map(m => m[1].toLowerCase()))];
+    }
+
+    function postCard(p) {
+        const me = s.profile.id;
+        const author = p.author_profile || { username: 'unknown', display_name: 'Someone' };
+        const person = { id: p.author, display_name: author.display_name };
+        const liked = p.likes.some(l => l.user_id === me);
+        const saved = s.saved.has(p.id);
+        const long = p.body.length > 320 || p.body.split('\n').length > 5;
+        const body = p.html ? Rich.sanitize(p.html) : esc(p.body);
+        const tags = hashtags(p);
+        const photos = (p.photos || []).filter(ph => ph && typeof ph.path === 'string');
+
+        let grid = '';
+        if (photos.length) {
+            const shown = photos.slice(0, 5);
+            const extra = photos.length - shown.length;
+            grid = `<div class="post-photos n${Math.min(shown.length, 5)}">${shown.map((ph, i) => `
+                <button class="post-photo" data-action="feed-photo" data-img="${esc(ph.path)}" aria-label="View photo">
+                    <img data-path="${esc(ph.path)}" data-bucket="${FEED_BUCKET}" alt="" loading="lazy">
+                    ${i === shown.length - 1 && extra > 0 ? `<span class="photo-more">+${extra}</span>` : ''}
+                </button>`).join('')}</div>`;
+        }
+
+        return `
+            <article class="post" data-search="${esc(`${author.display_name} ${author.username} ${p.title} ${p.body}`.toLowerCase())}">
+                <header class="post-head">
+                    ${avatar(person, 'md')}
+                    <div class="post-who">
+                        <strong>${p.author === me ? 'You' : esc(author.display_name)}</strong>
+                        <span class="muted">@${esc(author.username)} · ${timeAgo(p.shared_at)}${p.mood ? ` · ${MOOD_EMOJI[p.mood] || ''}` : ''}</span>
+                    </div>
+                    <button class="more-btn" data-action="post-menu" data-id="${esc(p.id)}" aria-label="Post options"><svg class="i"><use href="#i-more"/></svg></button>
+                </header>
+                ${grid}
+                ${p.title ? `<h3 class="post-title">${esc(p.title)}</h3>` : ''}
+                <div class="post-text rich-content${long ? ' clamped' : ''}">${body}</div>
+                ${long ? '<button class="read-more" data-action="expand-post">read more</button>' : ''}
+                ${tags.length ? `<div class="post-tags">${tags.map(t => `<button class="tag-link" data-action="feed-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('')}</div>` : ''}
+                <footer class="post-foot">
+                    <button class="like-btn" data-action="like" data-id="${esc(p.id)}" aria-pressed="${liked}" aria-label="${liked ? 'Unlike' : 'Like'}">
+                        <svg class="i"><use href="#${liked ? 'i-heart-fill' : 'i-heart'}"/></svg><span>${p.likes.length || ''}</span>
+                    </button>
+                    ${p.author === me ? '' : `<button class="like-btn" data-action="message-friend" data-id="${esc(p.author)}" aria-label="Reply privately"><svg class="i"><use href="#i-chat"/></svg><span>Reply</span></button>`}
+                    <button class="save-btn" data-action="save-post" data-id="${esc(p.id)}" aria-pressed="${saved}" aria-label="${saved ? 'Remove from favorites' : 'Save to favorites'}">
+                        <svg class="i"><use href="#${saved ? 'i-bookmark-fill' : 'i-bookmark'}"/></svg>
+                    </button>
+                </footer>
+            </article>`;
+    }
+
+    // One story group per person who shared in the last 24 hours (you first)
+    function storyGroups() {
+        const since = Date.now() - 86400000;
+        const groups = new Map();
+        [...s.feed].reverse().forEach(p => {
+            if (Date.parse(p.shared_at) < since) return;
+            if (!groups.has(p.author)) {
+                const a = p.author_profile || { display_name: 'Someone', username: '' };
+                groups.set(p.author, { author: p.author, person: { id: p.author, display_name: a.display_name, username: a.username }, posts: [] });
+            }
+            groups.get(p.author).posts.push(p);
+        });
+        const me = s.profile.id;
+        return [...groups.values()].sort((a, b) => (b.author === me) - (a.author === me));
+    }
+
+    // ---------- Story viewer ----------
+    const storyDialog = $('story');
+    let story = null;
+
+    function openStories(startAuthor) {
+        const groups = storyGroups();
+        if (!groups.length) return;
+        let gi = startAuthor ? groups.findIndex(g => g.author === startAuthor) : groups.findIndex(g => g.posts.some(p => !s.seenStories.has(p.id)));
+        if (gi < 0) gi = 0;
+        story = { groups, gi, pi: 0, timer: null };
+        storyDialog.showModal();
+        showStory();
+    }
+
+    function showStory() {
+        clearTimeout(story.timer);
+        const group = story.groups[story.gi];
+        const post = group.posts[story.pi];
+        s.seenStories.add(post.id);
+        try { localStorage.setItem('diarySeenStories', JSON.stringify([...s.seenStories].slice(-300))); } catch (e) {}
+
+        $('story-bars').innerHTML = group.posts.map((p, i) =>
+            `<span class="${i < story.pi ? 'done' : i === story.pi ? 'active' : ''}"><i></i></span>`).join('');
+        $('story-avatar').textContent = app.initials(group.person.display_name);
+        $('story-name').textContent = group.author === s.profile.id ? 'Your story' : group.person.display_name;
+        $('story-time').textContent = timeAgo(post.shared_at);
+        const photo = (post.photos || [])[0];
+        $('story-card').className = `story-card tinted c-${post.color}`;
+        $('story-card').innerHTML = `
+            ${photo ? `<img class="story-photo" data-path="${esc(photo.path)}" data-bucket="${FEED_BUCKET}" alt="">` : ''}
+            ${post.title ? `<h3>${esc(post.title)}</h3>` : ''}
+            <div class="rich-content">${post.html ? Rich.sanitize(post.html) : esc(post.body)}</div>
+            ${post.mood ? `<p class="story-mood">${MOOD_EMOJI[post.mood] || ''}</p>` : ''}`;
+        hydrateStorage($('story-card'));
+        story.timer = setTimeout(() => stepStory(1), 7000);
+    }
+
+    function stepStory(dir) {
+        if (!story) return;
+        const group = story.groups[story.gi];
+        story.pi += dir;
+        if (story.pi >= group.posts.length) {
+            story.gi++;
+            story.pi = 0;
+        } else if (story.pi < 0) {
+            story.gi = Math.max(0, story.gi - 1);
+            story.pi = 0;
+        }
+        if (story.gi >= story.groups.length) return storyDialog.close();
+        showStory();
+    }
+
+    $('story-next').addEventListener('click', () => stepStory(1));
+    $('story-prev').addEventListener('click', () => stepStory(-1));
+    $('story-close').addEventListener('click', () => storyDialog.close());
+    storyDialog.addEventListener('close', () => {
+        if (story) clearTimeout(story.timer);
+        story = null;
+        if (app.state.view === 'feed') app.render();
+    });
+    storyDialog.addEventListener('keydown', e => {
+        if (e.key === 'ArrowRight') stepStory(1);
+        if (e.key === 'ArrowLeft') stepStory(-1);
+    });
 
     // ---------- Inbox (chat) ----------
     app.views.messages = () => {
@@ -920,7 +1416,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <button class="icon-btn" data-action="toggle-info" aria-pressed="${s.showInfo}" aria-label="Contact details" title="Contact details"><svg class="i"><use href="#i-info"/></svg></button>
             </header>
             <div class="chat-thread" id="chat-thread">${body}</div>
-            <form class="composer" data-form="send-message">
+            <form class="composer${s.rec ? ' recording' : ''}" data-form="send-message">
                 <div class="pending-atts" id="pending-atts" hidden></div>
                 <div class="rich-toolbar compact" id="chat-toolbar" role="toolbar" aria-label="Formatting"${s.showFormat ? '' : ' hidden'}></div>
                 <div class="composer-row">
@@ -931,16 +1427,39 @@ document.addEventListener('DOMContentLoaded', () => {
                             <button type="button" class="tool-btn" data-action="chat-format" aria-pressed="${s.showFormat}" title="Formatting" aria-label="Formatting"><span class="aa">Aa</span></button>
                             <button type="button" class="tool-btn" data-action="chat-add" title="Add photo, document, voice note or drawing" aria-label="Add"><svg class="i"><use href="#i-plus"/></svg></button>
                             <button type="button" class="tool-btn" data-action="chat-emoji" title="Emoji" aria-label="Emoji"><svg class="i"><use href="#i-smile"/></svg></button>
-                            <button type="button" class="tool-btn" data-action="chat-voice" title="Record a voice note" aria-label="Record a voice note"><svg class="i"><use href="#i-mic"/></svg></button>
                             <button type="button" class="tool-btn" data-action="chat-file" title="Attach a document" aria-label="Attach a document"><svg class="i"><use href="#i-paperclip"/></svg></button>
                         </div>
                         <div class="emoji-panel" id="emoji-panel" hidden>
                             ${EMOJI.map(e => `<button type="button" data-action="emoji" data-emoji="${e}" aria-label="${e}">${e}</button>`).join('')}
                         </div>
                     </div>
-                    <button class="send-btn dark" aria-label="Send"><svg class="i"><use href="#i-send"/></svg></button>
+                    <div class="rec-bar" id="rec-bar" aria-live="polite">
+                        <button type="button" class="tool-btn rec-trash" data-action="vn-cancel" aria-label="Delete recording"><svg class="i"><use href="#i-trash"/></svg></button>
+                        <span class="rec-dot" aria-hidden="true"></span>
+                        <span class="rec-time" id="rec-time">0:00</span>
+                        <span class="rec-wave" id="rec-wave" aria-hidden="true"></span>
+                        <span class="rec-hint" id="rec-hint">‹ Slide left to cancel</span>
+                    </div>
+                    <button type="button" class="send-btn dark" id="chat-action" data-mode="mic" aria-label="Hold to record, tap for hands-free">
+                        <svg class="i"><use href="#i-mic"/></svg>
+                    </button>
                 </div>
             </form>`;
+    }
+
+    // Mic when there's nothing to send (WhatsApp style), send arrow otherwise
+    function updateComposerButton() {
+        const btn = $('chat-action');
+        const input = $('chat-input');
+        if (!btn || !input) return;
+        let mode = 'mic';
+        if (s.rec) mode = s.rec.mode === 'locked' ? 'rec-send' : 'recording';
+        else if (Rich.toText(input.innerHTML) || (s.pending[s.activeFriend] || []).length) mode = 'send';
+        if (btn.dataset.mode === mode) return;
+        btn.dataset.mode = mode;
+        const icon = mode === 'mic' || mode === 'recording' ? 'i-mic' : 'i-send';
+        btn.innerHTML = `<svg class="i"><use href="#${icon}"/></svg>`;
+        btn.setAttribute('aria-label', mode === 'mic' ? 'Hold to record, tap for hands-free' : mode === 'recording' ? 'Release to send' : 'Send');
     }
 
     function messageHTML(m, prev) {
@@ -970,9 +1489,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (a.kind === 'image' || a.kind === 'drawing') {
             return `<button type="button" class="msg-img" data-action="chat-view-image" data-img="${path}" aria-label="View ${name}"><img data-path="${path}" alt="${name}"></button>`;
         }
-        if (a.kind === 'audio') {
-            return `<div class="msg-audio"><svg class="i"><use href="#i-mic"/></svg><audio controls preload="none" data-path="${path}"></audio>${a.duration ? `<span>${Media.formatDuration(a.duration)}</span>` : ''}</div>`;
-        }
+        if (a.kind === 'audio') return voiceHTML(a);
         return `<a class="file-chip" data-path="${path}" target="_blank" rel="noopener" download="${name}">
             <svg class="i"><use href="#i-file"/></svg><span>${name}<small>${Media.formatSize(a.size)}</small></span></a>`;
     }
@@ -1024,7 +1541,64 @@ document.addEventListener('DOMContentLoaded', () => {
     Object.assign(app.actions, {
         'sign-in': () => openAuth(),
         'refresh-feed': () => { s.feed = null; app.render(); },
-        'feed-all': () => { s.feedAuthor = null; app.render(); },
+        'feed-all': () => { s.feedAuthor = null; s.feedFilter = 'all'; app.render(); },
+        'feed-filter': el => { s.feedAuthor = null; s.feedFilter = el.dataset.filter; app.render(); },
+        'feed-sort': el => { s.feedSort = el.dataset.sort; app.render(); },
+        'feed-tag': el => { s.feedAuthor = null; s.feedFilter = `tag:${el.dataset.tag}`; app.render(); window.scrollTo({ top: 0 }); },
+        'go-insights': () => app.setView('insights'),
+        'create-post': () => {
+            if (!window.diarySocial.requireSignIn('Sign in to share with friends.')) return;
+            app.newEntry({ shared: true });
+            app.showToast('This entry will be shared with your friends');
+        },
+        'save-post': el => {
+            const id = el.dataset.id;
+            if (s.saved.has(id)) s.saved.delete(id);
+            else s.saved.add(id);
+            try { localStorage.setItem('diarySavedPosts', JSON.stringify([...s.saved])); } catch (e) {}
+            app.showToast(s.saved.has(id) ? 'Saved to My favorites' : 'Removed from favorites');
+            app.render();
+        },
+        'post-menu': el => {
+            const post = (s.feed || []).find(p => p.id === el.dataset.id);
+            if (!post) return;
+            const mine = post.author === s.profile.id;
+            const items = mine
+                ? [
+                    { label: 'Open entry', icon: 'i-edit', onClick: () => {
+                        const local = app.getNotes().find(n => n.id === post.local_id);
+                        if (local) app.openNote(local.id);
+                        else app.showToast('That entry isn’t on this device');
+                    } },
+                    { label: 'Stop sharing', icon: 'i-lock', danger: true, onClick: () => {
+                        const local = app.getNotes().find(n => n.id === post.local_id);
+                        if (local) {
+                            app.updateNote(local.id, { shared: false });
+                            app.showToast('Entry is private again');
+                        } else {
+                            queue(async () => {
+                                await client.from('diary_shared_entries').delete().eq('id', post.id);
+                                s.feed = null;
+                                app.render();
+                            });
+                        }
+                    } }
+                ]
+                : [
+                    { label: 'Message', icon: 'i-chat', onClick: () => { app.setView('messages'); openChat(post.author); } },
+                    { label: `More from ${post.author_profile ? post.author_profile.display_name : 'them'}`, icon: 'i-user', onClick: () => { s.feedAuthor = post.author; app.render(); } }
+                ];
+            app.openPopover(el, items);
+        },
+        'story-open': el => openStories(el.dataset.id || null),
+        'suggest-add': el => {
+            s.suggestions = s.suggestions.filter(p => p.username !== el.dataset.username);
+            addFriend(el.dataset.username);
+        },
+        'feed-photo': el => {
+            const entry = s.urls.get(`${FEED_BUCKET}:${el.dataset.img}`);
+            if (entry) Media.lightbox(entry.url);
+        },
         'find-friends': () => app.setView('messages'),
         'like': el => toggleLike(el.dataset.id),
         'expand-post': el => {
@@ -1088,10 +1662,18 @@ document.addEventListener('DOMContentLoaded', () => {
         'chat-add': el => app.openPopover(el, [
             { label: 'Photo', icon: 'i-image', onClick: async () => addPending(await Media.pickFiles('image/png,image/jpeg,image/gif,image/webp')) },
             { label: 'Document', icon: 'i-file', onClick: async () => addPending(await Media.pickFiles(DOC_ACCEPT)) },
-            { label: 'Voice note', icon: 'i-mic', onClick: recordChatVoice },
+            { label: 'Voice note', icon: 'i-mic', onClick: () => startVoice(0, true) },
             { label: 'Drawing', icon: 'i-draw', onClick: drawForChat }
         ]),
-        'chat-voice': () => recordChatVoice(),
+        'vn-play': el => toggleVoice(el.closest('.vn')),
+        'vn-seek': (el, e) => seekVoice(el.closest('.vn'), e),
+        'vn-speed': el => {
+            const audio = bindVoice(el.closest('.vn'));
+            const next = { 1: 1.5, 1.5: 2, 2: 1 }[audio.playbackRate] || 1;
+            audio.playbackRate = next;
+            el.textContent = `${next}×`;
+        },
+        'vn-cancel': () => cancelVoice(),
         'chat-file': async () => addPending(await Media.pickFiles(`${DOC_ACCEPT},image/*`)),
         'remove-pending': el => {
             const list = s.pending[s.activeFriend] || [];
@@ -1101,19 +1683,10 @@ document.addEventListener('DOMContentLoaded', () => {
             renderPending();
         },
         'chat-view-image': el => {
-            const entry = s.urls.get(el.dataset.img);
+            const entry = s.urls.get(`${BUCKET}:${el.dataset.img}`);
             if (entry) Media.lightbox(entry.url);
         }
     });
-
-    async function recordChatVoice() {
-        const result = await Media.recordVoice();
-        if (!result) return;
-        if (result.error) return app.showToast(result.error);
-        const ext = extFor(result.type);
-        const file = new File([result.blob], `Voice note${ext}`, { type: result.type });
-        addPending([file], { kind: 'audio', duration: result.duration });
-    }
 
     async function drawForChat() {
         const result = await Media.drawPad();
@@ -1143,6 +1716,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     content.addEventListener('input', e => {
         if (e.target.id === 'chat-input') saveDraft();
+        if (e.target.id === 'feed-search') {
+            const q = e.target.value.trim().toLowerCase();
+            content.querySelectorAll('.post[data-search]').forEach(post => {
+                post.hidden = !!q && !post.dataset.search.includes(q);
+            });
+        }
         if (e.target.id === 'chat-search') {
             // Filter rows in place so typing isn't interrupted by a re-render
             const q = e.target.value.trim().toLowerCase();
