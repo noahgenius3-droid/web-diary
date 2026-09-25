@@ -6,7 +6,7 @@
     <title>My Diary</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Mulish:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     <script>
         // Apply saved theme before paint to avoid a flash
@@ -17,61 +17,132 @@
     </script>
 </head>
 <body>
+    <!-- Icon sprite -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+        <symbol id="i-book" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5V4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/></g></symbol>
+        <symbol id="i-add" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="4" fill="currentColor"/><path d="M8 2v4M16 2v4M12 9.5v7M8.5 13h7" stroke="#fff" stroke-width="2" stroke-linecap="round"/><path d="M8 2v3M16 2v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+        <symbol id="i-notes" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/></g></symbol>
+        <symbol id="i-calendar" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="3"/><path d="M8 2v4M16 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 17h.01M12 17h.01"/></g></symbol>
+        <symbol id="i-archive" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="5" rx="1.5"/><path d="M5 8v11a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8M10 12h4"/></g></symbol>
+        <symbol id="i-trash" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6M10 11v6M14 11v6"/></g></symbol>
+        <symbol id="i-search" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></g></symbol>
+        <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+        <symbol id="i-more" viewBox="0 0 24 24"><g fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></g></symbol>
+        <symbol id="i-folder" viewBox="0 0 32 32"><path d="M8 2h13l9 9v13a6 6 0 0 1-6 6H8a6 6 0 0 1-6-6V8a6 6 0 0 1 6-6z" fill="currentColor"/><path d="M21 2v5a4 4 0 0 0 4 4h5z" fill="#fff" opacity=".6"/></symbol>
+        <symbol id="i-folder-new" viewBox="0 0 24 24"><path d="M6 2h9l7 7v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V6a4 4 0 0 1 4-4z" fill="currentColor"/><path d="M15 2v4a3 3 0 0 0 3 3h4z" fill="#fff" opacity=".6"/></symbol>
+        <symbol id="i-edit" viewBox="0 0 24 24"><rect x="1" y="1" width="22" height="22" rx="6" fill="currentColor"/><path d="M14.2 6.8l3 3-7.4 7.4-3.8.8.8-3.8z" fill="#fff"/></symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M10 2h4"/></g></symbol>
+        <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+        <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 5l-8 7 8 7z" fill="currentColor"/></symbol>
+        <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 5l8 7-8 7z" fill="currentColor"/></symbol>
+        <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+        <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+        <symbol id="i-sun" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></g></symbol>
+        <symbol id="i-user" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></g></symbol>
+        <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 21h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+        <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M16.5 3.5l4 4L8 20l-5 1 1-5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+    </svg>
+
     <div class="app">
-        <header class="topbar">
+        <aside class="sidebar">
             <div class="brand">
-                <span class="brand-mark" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5V4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/></svg>
-                </span>
-                <span class="brand-name">My Diary</span>
+                <span class="brand-mark"><svg class="i"><use href="#i-book"/></svg></span>
+                <span class="brand-name">DIARY</span>
             </div>
-            <button id="theme-toggle" class="icon-btn" aria-label="Toggle dark mode" title="Toggle theme">
-                <svg class="icon-moon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-                <svg class="icon-sun" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
-            </button>
-        </header>
 
-        <section class="hero">
-            <p class="today" id="today"></p>
-            <h1 id="greeting">Good day.</h1>
-            <div class="stats">
-                <div class="stat"><span class="stat-value" id="stat-entries">0</span><span class="stat-label">entries</span></div>
-                <div class="stat"><span class="stat-value" id="stat-words">0</span><span class="stat-label">words</span></div>
-                <div class="stat"><span class="stat-value" id="stat-streak">0</span><span class="stat-label">day streak</span></div>
+            <div class="add-new">
+                <button class="add-btn" id="add-new-btn">
+                    <svg class="i"><use href="#i-add"/></svg>
+                    Add new
+                </button>
+                <div class="color-dots" id="color-dots" aria-label="New note in color"></div>
             </div>
-        </section>
 
-        <section class="composer" aria-label="New entry">
-            <textarea id="note-input" placeholder="What's on your mind today?" rows="4"></textarea>
-            <div class="composer-footer">
-                <div class="moods" role="radiogroup" aria-label="Mood">
-                    <button class="mood" data-mood="happy" role="radio" aria-checked="false" title="Happy">😊</button>
-                    <button class="mood" data-mood="calm" role="radio" aria-checked="false" title="Calm">😌</button>
-                    <button class="mood" data-mood="thoughtful" role="radio" aria-checked="false" title="Thoughtful">🤔</button>
-                    <button class="mood" data-mood="sad" role="radio" aria-checked="false" title="Sad">😔</button>
-                    <button class="mood" data-mood="stressed" role="radio" aria-checked="false" title="Stressed">😤</button>
-                </div>
-                <div class="composer-actions">
-                    <span class="word-count" id="word-count">0 words</span>
-                    <button id="save-btn" class="primary-btn" disabled>
-                        Save entry
-                        <kbd>Ctrl ↵</kbd>
-                    </button>
-                </div>
+            <nav class="side-nav" aria-label="Views">
+                <button class="nav-item" data-view="home"><svg class="i"><use href="#i-notes"/></svg>Notes</button>
+                <button class="nav-item" data-view="calendar"><svg class="i"><use href="#i-calendar"/></svg>Calendar</button>
+                <button class="nav-item" data-view="archive"><svg class="i"><use href="#i-archive"/></svg>Archive<span class="nav-count" id="archive-count"></span></button>
+                <button class="nav-item" data-view="trash"><svg class="i"><use href="#i-trash"/></svg>Trash<span class="nav-count" id="trash-count"></span></button>
+            </nav>
+
+            <div class="side-card">
+                <svg class="illustration" viewBox="0 0 120 90" aria-hidden="true">
+                    <circle cx="16" cy="18" r="4" fill="#f0a9a9"/>
+                    <circle cx="104" cy="14" r="3" fill="#71b5e0"/>
+                    <circle cx="108" cy="70" r="4" fill="#e8e07e"/>
+                    <path d="M12 62l3 3M15 62l-3 3" stroke="#b8acf2" stroke-width="2" stroke-linecap="round"/>
+                    <rect x="28" y="20" width="64" height="56" rx="6" fill="#e8e07e"/>
+                    <rect x="32" y="16" width="56" height="56" rx="5" fill="#fff" stroke="#23211f" stroke-width="2"/>
+                    <path d="M40 30h40M40 39h40M40 48h26" stroke="#23211f" stroke-width="2" stroke-linecap="round" opacity=".35"/>
+                    <path d="M70 62l24-24 6 6-24 24-8 2z" fill="#f0a9a9" stroke="#23211f" stroke-width="2" stroke-linejoin="round"/>
+                </svg>
+                <p class="streak"><strong id="stat-streak">0</strong> day streak</p>
+                <p class="side-card-meta"><span id="stat-entries">0</span> entries · <span id="stat-words">0</span> words</p>
+                <button class="primary-btn block" id="write-today">Write today’s entry</button>
             </div>
-        </section>
+        </aside>
 
-        <section class="entries">
-            <div class="entries-toolbar">
-                <h2>Entries</h2>
+        <div class="main-col">
+            <header class="topbar">
+                <h1 id="page-title">My Diary</h1>
                 <label class="search">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-                    <input type="search" id="search-input" placeholder="Search entries" aria-label="Search entries">
+                    <svg class="i"><use href="#i-search"/></svg>
+                    <input type="search" id="search-input" placeholder="Search" aria-label="Search entries">
                 </label>
-            </div>
-            <div id="notes-list" class="notes-list"></div>
-        </section>
+                <button class="profile" id="profile-btn" title="Change your name">
+                    <span id="user-name"></span>
+                    <span class="avatar" id="avatar"></span>
+                </button>
+                <button class="icon-btn" id="menu-btn" aria-label="Menu" aria-haspopup="menu">
+                    <svg class="i"><use href="#i-menu"/></svg>
+                </button>
+            </header>
+
+            <main class="content" id="content"></main>
+        </div>
     </div>
+
+    <button class="fab" id="fab" aria-label="New entry"><svg class="i"><use href="#i-plus"/></svg></button>
+
+    <!-- Note editor -->
+    <dialog class="editor tinted" id="editor" aria-label="Edit entry">
+        <form method="dialog" class="editor-form" id="editor-form">
+            <div class="editor-top">
+                <div class="swatches" id="editor-colors" role="radiogroup" aria-label="Color"></div>
+                <button type="button" class="icon-btn ghost" id="editor-close" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button>
+            </div>
+            <input class="editor-title" id="editor-title" placeholder="Title" maxlength="120" autocomplete="off">
+            <div class="editor-meta">
+                <span class="editor-date" id="editor-date"></span>
+                <select id="editor-folder" aria-label="Folder"></select>
+                <div class="moods" id="editor-moods" role="radiogroup" aria-label="Mood"></div>
+            </div>
+            <textarea id="editor-text" placeholder="What’s on your mind today?"></textarea>
+            <div class="editor-foot">
+                <button type="button" class="chip" id="editor-archive"><svg class="i"><use href="#i-archive"/></svg><span>Archive</span></button>
+                <button type="button" class="chip danger" id="editor-delete"><svg class="i"><use href="#i-trash"/></svg><span>Delete</span></button>
+                <span class="word-count" id="editor-words">0 words</span>
+                <button type="submit" class="primary-btn">Done <kbd>Ctrl ↵</kbd></button>
+            </div>
+        </form>
+    </dialog>
+
+    <!-- Small prompt / confirm dialog -->
+    <dialog class="ask" id="ask">
+        <form method="dialog" id="ask-form">
+            <h3 id="ask-title"></h3>
+            <p class="ask-text" id="ask-text"></p>
+            <input id="ask-input" maxlength="60" autocomplete="off">
+            <div class="swatches" id="ask-colors" role="radiogroup" aria-label="Color"></div>
+            <div class="ask-actions">
+                <button type="button" class="ghost-btn" id="ask-cancel">Cancel</button>
+                <button type="submit" class="primary-btn" id="ask-ok">OK</button>
+            </div>
+        </form>
+    </dialog>
+
+    <div class="popover" id="popover" role="menu" hidden></div>
 
     <div id="toast" class="toast" role="status" aria-live="polite">
         <span id="toast-text"></span>
