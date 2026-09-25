@@ -1,9 +1,25 @@
 document.addEventListener('DOMContentLoaded', () => {
     const COLORS = ['yellow', 'pink', 'blue', 'green', 'purple'];
     const MOODS = { happy: '😊', calm: '😌', thoughtful: '🤔', sad: '😔', stressed: '😤' };
+    const MOOD_LABELS = { happy: 'Happy', calm: 'Calm', thoughtful: 'Thoughtful', sad: 'Sad', stressed: 'Stressed' };
+    const EMOTIONS = ['Grateful', 'Joyful', 'Excited', 'Proud', 'Loved', 'Hopeful', 'Content', 'Relaxed',
+        'Tired', 'Anxious', 'Frustrated', 'Lonely', 'Overwhelmed', 'Angry', 'Confused', 'Bored'];
+    const KINDS = {
+        free: { label: 'Free write', icon: '✏️' },
+        morning: { label: 'Morning', icon: '☀️' },
+        evening: { label: 'Evening', icon: '🌙' }
+    };
+    const SECTIONS = {
+        gratitude: { label: 'Gratitude', icon: '🙏', placeholder: 'Three things I’m grateful for…' },
+        highlights: { label: 'Daily highlights', icon: '✨', placeholder: 'The best moments of today…' },
+        learned: { label: 'What I learned today', icon: '💡', placeholder: 'Something new I discovered…' },
+        improve: { label: 'What I need to improve', icon: '🌱', placeholder: 'Next time I’ll…' }
+    };
+    const KIND_SECTIONS = { free: [], morning: ['gratitude'], evening: ['highlights', 'learned', 'improve'] };
     const RANGES = [['all', 'All'], ['today', 'Today'], ['week', 'This Week'], ['month', 'This Month']];
     const TRASH_DAYS = 30;
     const DAY_MS = 86400000;
+    const MAX_FILE = 25 * 1048576;
     const hooks = { displayName: null, profileClick: null, menuItems: null, afterRender: null, shareToggle: null, rename: null };
 
     const $ = id => document.getElementById(id);
@@ -17,13 +33,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const editor = $('editor');
     const edTitle = $('editor-title');
-    const edText = $('editor-text');
+    const edBody = $('editor-text');
     const edFolder = $('editor-folder');
     const edDate = $('editor-date');
     const edWords = $('editor-words');
+    const edSaved = $('editor-saved');
     const edArchive = $('editor-archive');
     const edDelete = $('editor-delete');
     const edShare = $('editor-share');
+    const edPrivate = $('editor-private');
+    const edLocation = $('editor-location');
+    const edAttachments = $('editor-attachments');
+    const edReflection = $('editor-reflection');
+    const edEmotions = $('editor-emotions');
+    const edEmotionPicker = $('emotion-picker');
 
     const askDialog = $('ask');
     const askInput = $('ask-input');
@@ -34,7 +57,6 @@ document.addEventListener('DOMContentLoaded', () => {
         .map((f, i) => ({ ...f, color: COLORS.includes(f.color) ? f.color : COLORS[i % COLORS.length] }));
     let userName = String(load('diaryUser', ''));
     sortNotes();
-    purgeTrash();
 
     const state = {
         view: 'home',
@@ -47,17 +69,23 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     // Extension points for social.js and ai.js
-    const views = { home: renderHome, folder: renderFolder, calendar: renderCalendar, archive: renderArchive, trash: renderTrash };
+    const views = {
+        home: renderHome, folder: renderFolder, calendar: renderCalendar, insights: renderInsights,
+        photos: renderPhotos, archive: renderArchive, trash: renderTrash
+    };
     const actions = {};
     const listeners = {};
 
     let editing = null;
+    let saveTimer = null;
+    let privateUnlocked = false;
     let undoFn = null;
     let toastTimer = null;
     let popoverAnchor = null;
     let askResolve = null;
     let askColor = null;
 
+    purgeTrash();
     buildStatic();
     render();
 
@@ -73,8 +101,24 @@ document.addEventListener('DOMContentLoaded', () => {
             dots.append(b);
         });
 
-        buildSwatches($('editor-colors'), c => { editing.color = c; paintEditor(); });
+        buildSwatches($('editor-colors'), c => { editing.color = c; paintEditor(); changed(); });
         buildSwatches($('ask-colors'), c => { askColor = c; paintSwatches($('ask-colors'), c); });
+
+        const kinds = $('editor-kind');
+        Object.entries(KINDS).forEach(([key, k]) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.dataset.kind = key;
+            b.setAttribute('role', 'radio');
+            b.innerHTML = `<span aria-hidden="true">${k.icon}</span> ${k.label}`;
+            b.addEventListener('click', () => {
+                editing.kind = key;
+                paintEditor();
+                renderReflection();
+                changed();
+            });
+            kinds.append(b);
+        });
 
         const moods = $('editor-moods');
         Object.entries(MOODS).forEach(([key, emoji]) => {
@@ -82,14 +126,44 @@ document.addEventListener('DOMContentLoaded', () => {
             b.type = 'button';
             b.className = 'mood';
             b.dataset.mood = key;
-            b.title = key[0].toUpperCase() + key.slice(1);
+            b.title = MOOD_LABELS[key];
+            b.setAttribute('aria-label', MOOD_LABELS[key]);
             b.setAttribute('role', 'radio');
             b.textContent = emoji;
             b.addEventListener('click', () => {
                 editing.mood = editing.mood === key ? null : key;
                 paintEditor();
+                changed();
             });
             moods.append(b);
+        });
+
+        edEmotionPicker.innerHTML = EMOTIONS.map(e =>
+            `<button type="button" class="emotion-chip" data-emotion="${e}" aria-pressed="false">${e}</button>`).join('');
+        edEmotionPicker.addEventListener('click', e => {
+            const chip = e.target.closest('[data-emotion]');
+            if (!chip) return;
+            toggleEmotion(chip.dataset.emotion);
+        });
+        edEmotions.addEventListener('click', e => {
+            if (e.target.closest('[data-add-emotion]')) {
+                edEmotionPicker.hidden = !edEmotionPicker.hidden;
+                return;
+            }
+            const chip = e.target.closest('[data-emotion]');
+            if (chip) toggleEmotion(chip.dataset.emotion);
+        });
+
+        Rich.attach($('editor-toolbar'), edBody, {
+            onChange: changed,
+            onFiles: addFiles,
+            askLink,
+            extra: [
+                { cmd: 'image', label: 'Add photos', icon: 'i-image', run: () => pickAndAdd('image/*') },
+                { cmd: 'file', label: 'Attach a file', icon: 'i-paperclip', run: () => pickAndAdd('') },
+                { cmd: 'voice', label: 'Record a voice note', icon: 'i-mic', run: recordVoiceNote },
+                { cmd: 'draw', label: 'Handwrite or draw', icon: 'i-draw', run: drawNote }
+            ]
         });
 
         document.querySelectorAll('.nav-item[data-view]').forEach(b =>
@@ -146,7 +220,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const live = notes.filter(n => !n.trashedAt);
         $('stat-entries').textContent = live.length.toLocaleString();
-        $('stat-words').textContent = live.reduce((s, n) => s + countWords(n.title + ' ' + n.text), 0).toLocaleString();
+        $('stat-words').textContent = live.reduce((s, n) => s + countWords(fullText(n)), 0).toLocaleString();
         $('stat-streak').textContent = calcStreak();
 
         const name = displayName();
@@ -157,6 +231,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         document.body.dataset.view = state.view;
         content.innerHTML = (views[state.view] || renderHome)();
+        Media.hydrate(content);
         if (hooks.afterRender) hooks.afterRender(state.view);
     }
 
@@ -196,6 +271,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <p class="welcome-date">${now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
                 <p class="welcome-greeting">${greeting()}${displayName() ? `, ${escapeHTML(displayName().split(' ')[0])}` : ''}. What’s on your mind today?</p>
             </div>
+            ${todayPanel()}
             <section class="section">
                 <h2>Recent Folders</h2>
                 ${tabs('folderRange')}
@@ -210,6 +286,68 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${tabs('noteRange')}
                 ${notesGrid(noteList, { empty: activeNotes().length ? `No entries ${rangeText(state.noteRange)}.` : 'Your diary is empty — write your first entry.' })}
             </section>`;
+    }
+
+    function todayPanel() {
+        const today = dayKey(new Date());
+        const todays = activeNotes().filter(n => dayKey(new Date(n.createdAt)) === today);
+        const morning = todays.find(n => n.kind === 'morning');
+        const evening = todays.find(n => n.kind === 'evening');
+        const goals = todays.flatMap(n => n.goals.filter(g => g.text.trim()).map(g => ({ ...g, noteId: n.id })));
+        const done = goals.filter(g => g.done).length;
+        const memory = photoMemory();
+
+        const journalCard = (kind, entry, blurb) => `
+            <button class="today-card ${kind}${entry ? ' done' : ''}" data-action="journal" data-kind="${kind}">
+                <span class="today-icon" aria-hidden="true">${KINDS[kind].icon}</span>
+                <span class="today-text">
+                    <strong>${kind === 'morning' ? 'Morning journal' : 'Evening reflection'}</strong>
+                    <span>${entry ? '✓ Done today — tap to open' : blurb}</span>
+                </span>
+            </button>`;
+
+        return `
+            <section class="today-grid" aria-label="Today">
+                ${journalCard('morning', morning, 'Gratitude and goals for the day')}
+                ${journalCard('evening', evening, 'Highlights, lessons and what to improve')}
+                <div class="today-card goals">
+                    <div class="today-goals-head">
+                        <strong>🎯 Today’s goals</strong>
+                        ${goals.length ? `<span class="muted small">${done}/${goals.length} done</span>` : ''}
+                    </div>
+                    ${goals.length
+                        ? `<ul class="goal-list">${goals.slice(0, 5).map(g => `
+                            <li><label><input type="checkbox" data-action="toggle-goal" data-note="${escapeHTML(g.noteId)}" data-goal="${escapeHTML(g.id)}"${g.done ? ' checked' : ''}>
+                            <span>${escapeHTML(g.text)}</span></label></li>`).join('')}</ul>`
+                        : '<p class="muted small">Set goals in your morning journal and tick them off here.</p>'}
+                </div>
+                ${memory ? `
+                    <button class="today-card memory" data-action="view-photo" data-media-id="${escapeHTML(memory.att.id)}" data-caption="${escapeHTML(memory.caption)}">
+                        <img data-media="${escapeHTML(memory.att.id)}" alt="">
+                        <span class="memory-label">📸 ${escapeHTML(memory.label)}</span>
+                    </button>` : ''}
+            </section>`;
+    }
+
+    // A past photo to resurface: same calendar day in an earlier month/year first, otherwise the oldest one
+    function photoMemory() {
+        const now = new Date();
+        const photos = allPhotos().filter(p => now - p.note.createdAt > 6 * DAY_MS);
+        if (!photos.length) return null;
+        const sameDay = photos.find(p => new Date(p.note.createdAt).getDate() === now.getDate());
+        const pick = sameDay || photos[now.getDate() % photos.length];
+        const d = new Date(pick.note.createdAt);
+        return {
+            att: pick.att,
+            label: sameDay ? `On this day · ${d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}` : `Memory from ${d.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}`,
+            caption: `${pick.note.title || 'Untitled'} · ${d.toLocaleDateString()}`
+        };
+    }
+
+    function allPhotos() {
+        return notes
+            .filter(n => !n.trashedAt && !n.private)
+            .flatMap(n => n.attachments.filter(a => a.kind === 'image' || a.kind === 'drawing').map(att => ({ att, note: n })));
     }
 
     function renderFolder() {
@@ -255,12 +393,14 @@ document.addEventListener('DOMContentLoaded', () => {
         for (let d = 1; d <= daysInMonth; d++) {
             const key = `${y}-${m}-${d}`;
             const dayNotes = byDay.get(key) || [];
+            const mood = dayNotes.find(n => n.mood);
             const dots = dayNotes.slice(0, 3).map(n => `<span class="cal-dot c-${n.color}"></span>`).join('');
             const label = new Date(y, m, d).toLocaleDateString(undefined, { month: 'long', day: 'numeric' });
             cells += `
                 <button class="cal-day${key === todayKey ? ' is-today' : ''}" data-action="cal-day" data-day="${key}"
-                    aria-pressed="${key === state.calDay}" aria-label="${label}, ${dayNotes.length} ${dayNotes.length === 1 ? 'entry' : 'entries'}">
-                    <span class="cal-num">${d}</span><span class="cal-dots">${dots}</span>
+                    aria-pressed="${key === state.calDay}" aria-label="${label}, ${dayNotes.length} ${dayNotes.length === 1 ? 'entry' : 'entries'}${mood ? `, feeling ${MOOD_LABELS[mood.mood].toLowerCase()}` : ''}">
+                    <span class="cal-num">${d}</span>
+                    ${mood ? `<span class="cal-mood" aria-hidden="true">${MOODS[mood.mood]}</span>` : `<span class="cal-dots">${dots}</span>`}
                 </button>`;
         }
 
@@ -282,6 +422,121 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div style="height:22px"></div>
                 ${notesGrid(selected, { day: state.calDay, empty: 'No entries on this day.' })}
             </section>`;
+    }
+
+    // ---------- Insights (mood & emotion tracking) ----------
+    function renderInsights() {
+        setTitle('Insights');
+        const since = Date.now() - 30 * DAY_MS;
+        const recent = notes.filter(n => !n.trashedAt && n.createdAt >= since);
+        const goals = recent.flatMap(n => n.goals.filter(g => g.text.trim()));
+        const goalsDone = goals.filter(g => g.done).length;
+
+        const moodCounts = countBy(recent.filter(n => n.mood), n => n.mood);
+        const emotionCounts = countBy(recent.flatMap(n => n.emotions), e => e);
+        const topMood = Object.entries(moodCounts).sort((a, b) => b[1] - a[1])[0];
+
+        // One cell per day for the last 30 days, showing that day's latest mood
+        const days = [];
+        for (let i = 29; i >= 0; i--) {
+            const d = new Date();
+            d.setDate(d.getDate() - i);
+            const dayNotes = recent.filter(n => dayKey(new Date(n.createdAt)) === dayKey(d));
+            const withMood = dayNotes.find(n => n.mood);
+            days.push({ d, count: dayNotes.length, mood: withMood ? withMood.mood : null });
+        }
+
+        const stat = (value, label) => `<div class="stat-tile"><span class="stat-tile-value">${value}</span><span class="stat-tile-label">${label}</span></div>`;
+
+        const bars = (counts, labelFor) => {
+            const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+            if (!entries.length) return '<p class="muted small">Nothing tracked yet.</p>';
+            const max = entries[0][1];
+            return `<div class="bars" role="list">${entries.map(([key, count]) => `
+                <div class="bar-row" role="listitem" title="${escapeHTML(labelFor(key))}: ${count} ${count === 1 ? 'entry' : 'entries'}">
+                    <span class="bar-label">${labelFor(key, true)}</span>
+                    <span class="bar-track"><span class="bar-fill" style="width:${Math.max(4, (count / max) * 100)}%"></span></span>
+                    <span class="bar-value">${count}</span>
+                </div>`).join('')}</div>`;
+        };
+
+        return `
+            <section class="section">
+                <div class="section-head">
+                    <div>
+                        <h2>Last 30 days</h2>
+                        <p class="muted">How you’ve been feeling, based on the moods and emotions you log in entries.</p>
+                    </div>
+                </div>
+                <div class="stat-tiles">
+                    ${stat(recent.length, 'entries')}
+                    ${stat(calcStreak(), 'day streak')}
+                    ${stat(goals.length ? `${Math.round((goalsDone / goals.length) * 100)}%` : '—', 'goals completed')}
+                    ${stat(topMood ? `${MOODS[topMood[0]]} ${MOOD_LABELS[topMood[0]]}` : '—', 'most common mood')}
+                </div>
+            </section>
+            <section class="section insight-card">
+                <h3>Mood by day</h3>
+                <div class="mood-strip">
+                    ${days.map(({ d, count, mood }) => `
+                        <div class="mood-day${mood ? '' : ' no-mood'}" title="${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}: ${mood ? MOOD_LABELS[mood] : count ? 'no mood logged' : 'no entry'}">
+                            <span class="mood-day-emoji">${mood ? MOODS[mood] : count ? '•' : ''}</span>
+                            <span class="mood-day-num">${d.getDate()}</span>
+                        </div>`).join('')}
+                </div>
+            </section>
+            <div class="insight-grid">
+                <section class="insight-card">
+                    <h3>Moods</h3>
+                    ${bars(moodCounts, (k, rich) => rich ? `${MOODS[k]} ${MOOD_LABELS[k]}` : MOOD_LABELS[k])}
+                </section>
+                <section class="insight-card">
+                    <h3>Emotions</h3>
+                    ${bars(emotionCounts, k => escapeHTML(k))}
+                </section>
+            </div>`;
+    }
+
+    // ---------- Photo memories ----------
+    function renderPhotos() {
+        setTitle('Photo memories');
+        const photos = allPhotos();
+        if (!photos.length) {
+            return `<div class="empty">
+                <p class="empty-title">No photo memories yet</p>
+                <p>Add photos or drawings to your entries with the picture button in the editor.</p>
+            </div>`;
+        }
+
+        const now = new Date();
+        const onThisDay = photos.filter(p => {
+            const d = new Date(p.note.createdAt);
+            return d.getMonth() === now.getMonth() && d.getDate() === now.getDate() && d.getFullYear() !== now.getFullYear();
+        });
+
+        const groups = new Map();
+        photos.forEach(p => {
+            const d = new Date(p.note.createdAt);
+            const key = d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(p);
+        });
+
+        const tile = ({ att, note }) => {
+            const caption = `${note.title || 'Untitled'} · ${new Date(note.createdAt).toLocaleDateString()}`;
+            return `<button class="photo-tile" data-action="view-photo" data-media-id="${escapeHTML(att.id)}" data-caption="${escapeHTML(caption)}" aria-label="${escapeHTML(caption)}">
+                <img data-media="${escapeHTML(att.id)}" alt="" loading="lazy">
+                <span class="photo-date">${new Date(note.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+            </button>`;
+        };
+
+        return `
+            ${onThisDay.length ? `<section class="section"><h2>On this day</h2><div class="photo-grid" style="margin-top:16px">${onThisDay.map(tile).join('')}</div></section>` : ''}
+            ${[...groups.entries()].map(([label, list]) => `
+                <section class="section">
+                    <h2>${escapeHTML(label)}</h2>
+                    <div class="photo-grid" style="margin-top:16px">${list.map(tile).join('')}</div>
+                </section>`).join('')}`;
     }
 
     function renderArchive() {
@@ -343,13 +598,31 @@ document.addEventListener('DOMContentLoaded', () => {
     function noteCard(n, trash) {
         const q = state.query;
         const date = new Date(n.createdAt);
-        const lines = n.text.split('\n');
-        const title = n.title || lines[0].trim() || 'Untitled';
-        const body = n.title ? n.text : lines.slice(1).join('\n').trim();
         const time = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
         const weekday = date.toLocaleDateString(undefined, { weekday: 'long' });
-        const mood = n.mood ? `<span class="note-mood" title="${n.mood}">${MOODS[n.mood]}</span>` : '';
         const id = escapeHTML(n.id);
+        const hidden = n.private && !privateUnlocked;
+
+        let title;
+        let body;
+        if (hidden) {
+            title = 'Private entry';
+            body = '';
+        } else {
+            const lines = n.text.split('\n');
+            title = n.title || lines[0].trim() || (n.kind !== 'free' ? `${KINDS[n.kind].label} journal` : 'Untitled');
+            body = n.title ? n.text : lines.slice(1).join('\n').trim();
+            if (!body) body = Object.values(n.sections).find(v => v.trim()) || '';
+        }
+
+        const thumb = !hidden && n.attachments.find(a => a.kind === 'image' || a.kind === 'drawing');
+        const badges = [
+            n.kind !== 'free' ? `<span title="${KINDS[n.kind].label} journal">${KINDS[n.kind].icon}</span>` : '',
+            n.private ? '<span title="Private"><svg class="i"><use href="#i-lock"/></svg></span>' : '',
+            n.attachments.some(a => a.kind === 'audio') ? '<span title="Voice note"><svg class="i"><use href="#i-mic"/></svg></span>' : '',
+            n.attachments.some(a => a.kind === 'file') ? '<span title="Attachments"><svg class="i"><use href="#i-paperclip"/></svg></span>' : '',
+            n.mood ? `<span class="note-mood" title="${MOOD_LABELS[n.mood]}">${MOODS[n.mood]}</span>` : ''
+        ].join('');
 
         const openAttrs = trash ? '' : `data-action="open-note" data-id="${id}" tabindex="0" role="button"`;
         const foot = trash
@@ -357,16 +630,17 @@ document.addEventListener('DOMContentLoaded', () => {
                    <button class="chip" data-action="restore" data-id="${id}">Restore</button>
                    <button class="chip danger" data-action="destroy" data-id="${id}">Delete forever</button>
                </div>`
-            : `<div class="note-foot"><svg class="i"><use href="#i-clock"/></svg><span>${time}, ${weekday}</span>${mood}</div>`;
+            : `<div class="note-foot"><svg class="i"><use href="#i-clock"/></svg><span>${time}, ${weekday}</span><span class="note-badges">${badges}</span></div>`;
 
         return `
-            <article class="note-card c-${n.color}" ${openAttrs}>
-                <div class="note-date">${shortDate(date)}</div>
+            <article class="note-card c-${n.color}${thumb ? ' has-thumb' : ''}${hidden ? ' is-private' : ''}" ${openAttrs}>
+                <div class="note-date">${shortDate(date)}${n.location && !hidden ? ` · ${escapeHTML(n.location.weather ? n.location.weather.emoji : '📍')}` : ''}</div>
                 <div class="note-head">
-                    <h3>${highlight(title, q)}</h3>
+                    <h3>${hidden ? '🔒 Private entry' : highlight(title, q)}</h3>
                     ${trash ? '' : '<svg class="note-edit"><use href="#i-edit"/></svg>'}
                 </div>
-                <p class="note-body">${highlight(body, q)}</p>
+                ${thumb ? `<img class="note-thumb" data-media="${escapeHTML(thumb.id)}" alt="">` : ''}
+                <p class="note-body">${hidden ? 'Open to read this entry.' : highlight(body, q)}</p>
                 ${foot}
             </article>`;
     }
@@ -383,10 +657,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 render();
                 break;
             case 'open-note':
-                openEditor(notes.find(n => n.id === id));
+                openNote(notes.find(n => n.id === id));
                 break;
             case 'new-note':
                 openEditor(null, { folderId: el.dataset.folder || null, day: el.dataset.day || null });
+                break;
+            case 'journal':
+                openJournal(el.dataset.kind);
+                break;
+            case 'toggle-goal':
+                toggleGoal(el.dataset.note, el.dataset.goal);
+                break;
+            case 'view-photo':
+                Media.url(el.dataset.mediaId).then(u => u && Media.lightbox(u, el.dataset.caption));
                 break;
             case 'new-folder':
                 createFolder();
@@ -438,6 +721,74 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    function openJournal(kind) {
+        const today = dayKey(new Date());
+        const existing = activeNotes().find(n => n.kind === kind && dayKey(new Date(n.createdAt)) === today);
+        if (existing) openNote(existing);
+        else openEditor(null, { kind, color: kind === 'morning' ? 'yellow' : 'purple' });
+    }
+
+    function toggleGoal(noteId, goalId) {
+        const n = notes.find(x => x.id === noteId);
+        const g = n && n.goals.find(x => x.id === goalId);
+        if (!g) return;
+        g.done = !g.done;
+        n.updatedAt = Date.now();
+        persist();
+        render();
+        if (g.done) showToast('Goal done — nice work 🎉');
+    }
+
+    // ---------- Private entries ----------
+    async function openNote(note) {
+        if (!note) return;
+        if (note.private && !(await unlockPrivate())) return;
+        openEditor(note);
+    }
+
+    async function unlockPrivate() {
+        const saved = load('diaryPin', null);
+        if (!saved || privateUnlocked) return true;
+        const r = await ask({ title: 'Private entries', text: 'Enter your PIN to open private entries.', value: '', placeholder: 'PIN', ok: 'Unlock', inputType: 'password' });
+        if (!r) return false;
+        if (await hashPin(r.value) === saved) {
+            privateUnlocked = true;
+            render();
+            return true;
+        }
+        showToast('That PIN isn’t right');
+        return false;
+    }
+
+    async function setPin() {
+        const saved = load('diaryPin', null);
+        if (saved && !privateUnlocked && !(await unlockPrivate())) return;
+        const r = await ask({
+            title: saved ? 'Change private PIN' : 'Set a private PIN',
+            text: saved ? 'Enter a new PIN, or leave it empty to remove the PIN.' : 'You’ll need this PIN to open entries marked Private. It keeps them from casual eyes on this device — it isn’t encryption.',
+            value: '', placeholder: '4+ digits or letters', ok: 'Save', allowEmpty: !!saved, inputType: 'password'
+        });
+        if (!r) return;
+        if (!r.value) {
+            localStorage.removeItem('diaryPin');
+            showToast('PIN removed');
+            return;
+        }
+        if (r.value.length < 4) return showToast('Use at least 4 characters');
+        try { localStorage.setItem('diaryPin', JSON.stringify(await hashPin(r.value))); } catch (e) {}
+        privateUnlocked = true;
+        showToast('PIN saved');
+    }
+
+    async function hashPin(pin) {
+        const data = new TextEncoder().encode(`diary-pin:${pin}`);
+        if (window.crypto && crypto.subtle) {
+            const digest = await crypto.subtle.digest('SHA-256', data);
+            return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+        return btoa(String.fromCharCode(...data));
+    }
+
     // ---------- Editor ----------
     function newNoteDefaults() {
         if (state.view === 'folder') return { folderId: state.folderId };
@@ -446,6 +797,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function openEditor(note, defaults = {}) {
+        if (editor.open) editor.close();
         if (!note) {
             let createdAt = Date.now();
             // Writing from another calendar day backdates the entry to that day
@@ -454,13 +806,23 @@ document.addEventListener('DOMContentLoaded', () => {
                 const t = new Date();
                 createdAt = new Date(y, m, d, t.getHours(), t.getMinutes()).getTime();
             }
-            editing = { id: null, color: defaults.color || COLORS[notes.length % COLORS.length], mood: null, shared: false, createdAt };
+            editing = {
+                id: null, color: defaults.color || COLORS[notes.length % COLORS.length], mood: null, emotions: [],
+                kind: defaults.kind || 'free', sections: emptySections(), goals: [], attachments: [], location: null,
+                private: false, shared: false, createdAt
+            };
         } else {
-            editing = { id: note.id, color: note.color, mood: note.mood, shared: note.shared, createdAt: note.createdAt };
+            editing = {
+                id: note.id, color: note.color, mood: note.mood, emotions: [...note.emotions], kind: note.kind,
+                sections: { ...emptySections(), ...note.sections }, goals: note.goals.map(g => ({ ...g })),
+                attachments: note.attachments.map(a => ({ ...a })), location: note.location,
+                private: note.private, shared: note.shared, createdAt: note.createdAt
+            };
         }
+        Object.assign(editing, { shownSections: new Set(), showGoals: false, changed: false, created: false });
 
         edTitle.value = note ? note.title : '';
-        edText.value = note ? note.text : '';
+        edBody.innerHTML = note ? Rich.sanitize(note.html) : '';
         edFolder.innerHTML = '<option value="">No folder</option>' +
             folders.map(f => `<option value="${escapeHTML(f.id)}">${escapeHTML(f.name)}</option>`).join('');
         edFolder.value = (note ? note.folderId : defaults.folderId) || '';
@@ -469,22 +831,60 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         edArchive.hidden = edDelete.hidden = !note;
         if (note) edArchive.querySelector('span').textContent = note.archived ? 'Unarchive' : 'Archive';
+        edEmotionPicker.hidden = true;
+        edSaved.textContent = note ? 'All changes saved' : '';
 
         paintEditor();
+        renderAttachments();
+        renderReflection();
         updateWords();
         editor.showModal();
-        autoResize();
-        const focusTarget = note ? edText : edTitle;
-        focusTarget.focus();
-        if (note) edText.setSelectionRange(edText.value.length, edText.value.length);
+        edReflection.querySelectorAll('textarea').forEach(autoGrow);
+        if (note) {
+            edBody.focus();
+            Rich.placeCaretAtEnd(edBody);
+        } else {
+            edTitle.focus();
+        }
+    }
+
+    function emptySections() {
+        return { gratitude: '', highlights: '', learned: '', improve: '' };
     }
 
     function paintEditor() {
         editor.className = `editor tinted c-${editing.color}`;
         paintSwatches($('editor-colors'), editing.color);
+        $('editor-kind').querySelectorAll('button').forEach(b =>
+            b.setAttribute('aria-checked', String(b.dataset.kind === editing.kind)));
         editor.querySelectorAll('.mood').forEach(b =>
             b.setAttribute('aria-checked', String(b.dataset.mood === editing.mood)));
-        edShare.checked = editing.shared;
+        edPrivate.checked = editing.private;
+        edShare.checked = editing.shared && !editing.private;
+        edShare.disabled = editing.private;
+        edShare.closest('label').classList.toggle('disabled', editing.private);
+        edTitle.placeholder = editing.kind === 'free' ? 'Title' : `${KINDS[editing.kind].label} journal — ${new Date(editing.createdAt).toLocaleDateString(undefined, { weekday: 'long' })}`;
+
+        // Emotions: selected chips + an add button
+        edEmotions.innerHTML = editing.emotions.map(e =>
+            `<button type="button" class="emotion-chip on" data-emotion="${escapeHTML(e)}" title="Remove ${escapeHTML(e)}">${escapeHTML(e)} <span aria-hidden="true">×</span></button>`).join('') +
+            `<button type="button" class="emotion-add" data-add-emotion>${editing.emotions.length ? '+' : '+ How do you feel?'}</button>`;
+        edEmotionPicker.querySelectorAll('[data-emotion]').forEach(c =>
+            c.setAttribute('aria-pressed', String(editing.emotions.includes(c.dataset.emotion))));
+
+        const loc = editing.location;
+        edLocation.querySelector('span').textContent = loc
+            ? `${loc.place}${loc.weather ? ` · ${loc.weather.emoji} ${loc.weather.temp}° ${loc.weather.label}` : ''}`
+            : 'Add location & weather';
+        edLocation.classList.toggle('set', !!loc);
+    }
+
+    function toggleEmotion(emotion) {
+        const i = editing.emotions.indexOf(emotion);
+        if (i === -1) editing.emotions.push(emotion);
+        else editing.emotions.splice(i, 1);
+        paintEditor();
+        changed();
     }
 
     edShare.addEventListener('change', () => {
@@ -494,24 +894,312 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         editing.shared = edShare.checked;
+        changed();
     });
 
+    edPrivate.addEventListener('change', () => {
+        editing.private = edPrivate.checked;
+        if (editing.private) editing.shared = false;
+        paintEditor();
+        changed();
+        if (editing.private && !load('diaryPin', null)) showToast('Tip: set a PIN in the menu to lock private entries');
+    });
+
+    edLocation.addEventListener('click', async () => {
+        if (editing.location) {
+            openPopover(edLocation, [
+                { label: 'Update location & weather', icon: 'i-pin', onClick: fetchLocation },
+                { label: 'Remove', icon: 'i-trash', danger: true, onClick: () => { editing.location = null; paintEditor(); changed(); } }
+            ]);
+            return;
+        }
+        fetchLocation();
+    });
+
+    async function fetchLocation() {
+        const label = edLocation.querySelector('span');
+        label.textContent = 'Finding you…';
+        try {
+            editing.location = await Media.locate();
+            changed();
+        } catch (err) {
+            showToast(err.message);
+        }
+        if (editing) paintEditor();
+    }
+
+    edFolder.addEventListener('change', changed);
+
+    // ---------- Attachments ----------
+    async function pickAndAdd(accept) {
+        addFiles(await Media.pickFiles(accept));
+    }
+
+    async function addFiles(files, kindOverride) {
+        if (!editing || !files.length) return;
+        for (const file of files) {
+            if (file.size > MAX_FILE) {
+                showToast(`${file.name || 'File'} is larger than 25 MB`);
+                continue;
+            }
+            const att = {
+                id: uid(),
+                kind: kindOverride || Media.kindOf(file.type || ''),
+                name: file.name || `${kindOverride || 'attachment'}-${new Date().toISOString().slice(0, 10)}`,
+                type: file.type || 'application/octet-stream',
+                size: file.size,
+                duration: file.duration
+            };
+            try {
+                await Media.put(att.id, file);
+            } catch (e) {
+                showToast('Could not store that file on this device');
+                continue;
+            }
+            if (!editing) return Media.del(att.id);
+            editing.attachments.push(att);
+        }
+        renderAttachments();
+        changed();
+    }
+
+    async function recordVoiceNote() {
+        const result = await Media.recordVoice();
+        if (!result) return;
+        if (result.error) return showToast(result.error);
+        const blob = result.blob;
+        blob.duration = result.duration;
+        blob.name = `Voice note ${new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
+        const file = new File([blob], blob.name, { type: result.type });
+        file.duration = result.duration;
+        addFiles([file], 'audio');
+    }
+
+    async function drawNote() {
+        const result = await Media.drawPad();
+        if (!result) return;
+        const file = new File([result.blob], `Drawing ${new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}.png`, { type: 'image/png' });
+        addFiles([file], 'drawing');
+    }
+
+    function renderAttachments() {
+        const list = editing.attachments;
+        edAttachments.hidden = !list.length;
+        edAttachments.innerHTML = list.map(a => {
+            const remove = `<button type="button" class="att-remove" data-remove="${escapeHTML(a.id)}" aria-label="Remove ${escapeHTML(a.name)}"><svg class="i"><use href="#i-close"/></svg></button>`;
+            if (a.kind === 'image' || a.kind === 'drawing') {
+                return `<figure class="att-thumb${a.kind === 'drawing' ? ' drawing' : ''}">
+                    <button type="button" class="att-view" data-view="${escapeHTML(a.id)}" aria-label="View ${escapeHTML(a.name)}"><img data-media="${escapeHTML(a.id)}" alt="${escapeHTML(a.name)}"></button>
+                    ${remove}</figure>`;
+            }
+            if (a.kind === 'audio') {
+                return `<div class="att-audio"><svg class="i"><use href="#i-mic"/></svg>
+                    <audio controls preload="metadata" data-media="${escapeHTML(a.id)}"></audio>
+                    <span class="muted small">${Media.formatDuration(a.duration)}</span>${remove}</div>`;
+            }
+            return `<div class="att-file"><a data-media="${escapeHTML(a.id)}" download="${escapeHTML(a.name)}">
+                <svg class="i"><use href="#i-file"/></svg><span>${escapeHTML(a.name)}<small>${Media.formatSize(a.size)}</small></span></a>${remove}</div>`;
+        }).join('');
+        Media.hydrate(edAttachments);
+    }
+
+    edAttachments.addEventListener('click', async e => {
+        const remove = e.target.closest('[data-remove]');
+        if (remove) {
+            const id = remove.dataset.remove;
+            editing.attachments = editing.attachments.filter(a => a.id !== id);
+            Media.del(id);
+            renderAttachments();
+            changed();
+            return;
+        }
+        const view = e.target.closest('[data-view]');
+        if (view) {
+            const u = await Media.url(view.dataset.view);
+            if (u) Media.lightbox(u);
+        }
+    });
+
+    // ---------- Reflection sections & goals ----------
+    function renderReflection() {
+        const shown = new Set(KIND_SECTIONS[editing.kind]);
+        Object.keys(SECTIONS).forEach(k => { if (editing.sections[k].trim()) shown.add(k); });
+        editing.shownSections.forEach(k => shown.add(k));
+        const showGoals = editing.kind !== 'free' || editing.goals.length > 0 || editing.showGoals;
+        const hidden = Object.keys(SECTIONS).filter(k => !shown.has(k));
+
+        const blocks = Object.keys(SECTIONS).filter(k => shown.has(k)).map(k => `
+            <div class="reflect-block">
+                <label for="section-${k}"><span aria-hidden="true">${SECTIONS[k].icon}</span> ${SECTIONS[k].label}</label>
+                <textarea id="section-${k}" data-section="${k}" rows="2" placeholder="${SECTIONS[k].placeholder}">${escapeHTML(editing.sections[k])}</textarea>
+            </div>`).join('');
+
+        const goals = showGoals ? `
+            <div class="reflect-block">
+                <label><span aria-hidden="true">🎯</span> Daily goals</label>
+                <ul class="goal-edit">
+                    ${editing.goals.map(g => `
+                        <li>
+                            <input type="checkbox" data-goal-done="${escapeHTML(g.id)}" aria-label="Done"${g.done ? ' checked' : ''}>
+                            <input class="goal-text${g.done ? ' done' : ''}" data-goal-text="${escapeHTML(g.id)}" value="${escapeHTML(g.text)}" aria-label="Goal">
+                            <button type="button" class="att-remove" data-goal-remove="${escapeHTML(g.id)}" aria-label="Remove goal"><svg class="i"><use href="#i-close"/></svg></button>
+                        </li>`).join('')}
+                </ul>
+                <input class="goal-new" id="goal-new" placeholder="Add a goal and press Enter" autocomplete="off">
+            </div>` : '';
+
+        const adders = [
+            ...hidden.map(k => `<button type="button" class="chip" data-show-section="${k}">+ ${SECTIONS[k].label}</button>`),
+            showGoals ? '' : '<button type="button" class="chip" data-show-goals>+ Daily goals</button>'
+        ].join('');
+
+        edReflection.innerHTML = `${blocks}${goals}${adders ? `<div class="reflect-adders">${adders}</div>` : ''}`;
+        edReflection.querySelectorAll('textarea').forEach(autoGrow);
+    }
+
+    edReflection.addEventListener('input', e => {
+        const t = e.target;
+        if (t.dataset.section) {
+            editing.sections[t.dataset.section] = t.value;
+            autoGrow(t);
+            changed();
+        } else if (t.dataset.goalText) {
+            const g = editing.goals.find(x => x.id === t.dataset.goalText);
+            if (g) g.text = t.value;
+            changed();
+        }
+    });
+
+    edReflection.addEventListener('change', e => {
+        const id = e.target.dataset.goalDone;
+        if (!id) return;
+        const g = editing.goals.find(x => x.id === id);
+        if (g) g.done = e.target.checked;
+        renderReflection();
+        changed();
+    });
+
+    edReflection.addEventListener('keydown', e => {
+        if (e.target.id === 'goal-new' && e.key === 'Enter') {
+            e.preventDefault();
+            const text = e.target.value.trim();
+            if (!text) return;
+            editing.goals.push({ id: uid(), text, done: false });
+            renderReflection();
+            $('goal-new').focus();
+            changed();
+        } else if (e.target.dataset.goalText && e.key === 'Enter') {
+            e.preventDefault();
+            $('goal-new').focus();
+        }
+    });
+
+    edReflection.addEventListener('click', e => {
+        const show = e.target.closest('[data-show-section]');
+        if (show) {
+            editing.shownSections.add(show.dataset.showSection);
+            renderReflection();
+            $(`section-${show.dataset.showSection}`).focus();
+            return;
+        }
+        if (e.target.closest('[data-show-goals]')) {
+            editing.showGoals = true;
+            renderReflection();
+            $('goal-new').focus();
+            return;
+        }
+        const remove = e.target.closest('[data-goal-remove]');
+        if (remove) {
+            editing.goals = editing.goals.filter(g => g.id !== remove.dataset.goalRemove);
+            renderReflection();
+            changed();
+        }
+    });
+
+    function autoGrow(el) {
+        if (!el.isConnected || !el.offsetParent) return; // not visible yet — measured again once the editor opens
+        el.style.height = 'auto';
+        el.style.height = el.scrollHeight + 'px';
+    }
+
+    // ---------- Saving (automatic) ----------
+    function changed() {
+        if (!editing) return;
+        updateWords();
+        edSaved.textContent = 'Saving…';
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => {
+            if (!editing) return;
+            if (save(editing)) render();
+            edSaved.textContent = editing.id
+                ? `Saved ${new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`
+                : '';
+        }, 700);
+    }
+
+    function collectFields(session) {
+        const html = Rich.sanitize(edBody.innerHTML);
+        return {
+            title: edTitle.value.trim(),
+            html,
+            text: Rich.toText(html),
+            folderId: edFolder.value || null,
+            color: session.color,
+            mood: session.mood,
+            emotions: [...session.emotions],
+            kind: session.kind,
+            sections: Object.fromEntries(Object.entries(session.sections).map(([k, v]) => [k, v.trim()])),
+            goals: session.goals.filter(g => g.text.trim()).map(g => ({ ...g, text: g.text.trim() })),
+            attachments: session.attachments.map(a => ({ ...a })),
+            location: session.location,
+            private: session.private,
+            shared: session.shared && !session.private
+        };
+    }
+
+    function isEmpty(f) {
+        return !f.title && !f.text && !f.attachments.length &&
+            !Object.values(f.sections).some(Boolean) && !f.goals.length;
+    }
+
+    function save(session) {
+        const fields = collectFields(session);
+        if (isEmpty(fields)) return false;
+
+        let n;
+        if (session.id) {
+            n = notes.find(x => x.id === session.id);
+            if (!n) return false;
+            const same = Object.keys(fields).every(k => JSON.stringify(n[k]) === JSON.stringify(fields[k]));
+            if (same) return false;
+            Object.assign(n, fields, { updatedAt: Date.now() });
+        } else {
+            n = { id: uid(), ...fields, archived: false, trashedAt: null, createdAt: session.createdAt, updatedAt: Date.now() };
+            notes.push(n);
+            sortNotes();
+            session.id = n.id;
+            session.created = true;
+            edArchive.hidden = edDelete.hidden = false;
+            edArchive.querySelector('span').textContent = 'Archive';
+        }
+        session.changed = true;
+        persist();
+        emit('note', n);
+        return true;
+    }
+
     function updateWords() {
-        const count = countWords(edTitle.value + ' ' + edText.value);
+        const sections = Object.values(editing.sections).join(' ');
+        const count = countWords(`${edTitle.value} ${Rich.toText(edBody.innerHTML)} ${sections}`);
         edWords.textContent = `${count} ${count === 1 ? 'word' : 'words'}`;
     }
 
-    function autoResize() {
-        edText.style.height = 'auto';
-        edText.style.height = edText.scrollHeight + 'px';
-    }
-
-    edText.addEventListener('input', () => { autoResize(); updateWords(); });
-    edTitle.addEventListener('input', updateWords);
+    edBody.addEventListener('input', changed);
+    edTitle.addEventListener('input', changed);
     edTitle.addEventListener('keydown', e => {
         if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
             e.preventDefault();
-            edText.focus();
+            edBody.focus();
         }
     });
     editor.addEventListener('keydown', e => {
@@ -521,6 +1209,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     $('editor-close').addEventListener('click', () => editor.close());
+    $('editor-form').addEventListener('submit', e => {
+        // Only the Done button submits; Enter inside fields must not close the editor
+        if (e.submitter && e.submitter.id !== 'editor-done') e.preventDefault();
+    });
 
     // Close on backdrop click (only if the press also started on the backdrop)
     let pressedBackdrop = false;
@@ -529,48 +1221,32 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target === editor && pressedBackdrop) editor.close();
     });
 
-    // Every way of closing the editor saves — the diary never loses writing
+    // Closing saves one last time; a brand-new entry that stayed empty leaves nothing behind
     editor.addEventListener('close', () => {
         const session = editing;
         editing = null;
-        if (session) commitEditor(session);
-    });
-
-    function commitEditor(session, quiet = false) {
-        const title = edTitle.value.trim();
-        const text = edText.value.trim();
-        const folderId = edFolder.value || null;
-        if (!title && !text) return;
-
-        if (session.id) {
-            const n = notes.find(x => x.id === session.id);
-            if (!n) return;
-            const changed = n.title !== title || n.text !== text || n.color !== session.color ||
-                n.mood !== session.mood || n.folderId !== folderId || n.shared !== session.shared;
-            if (!changed) return;
-            Object.assign(n, { title, text, color: session.color, mood: session.mood, folderId, shared: session.shared, updatedAt: Date.now() });
-            persist();
-            emit('note', n);
-            if (!quiet) showToast(n.shared ? 'Entry updated and shared' : 'Entry updated');
-        } else {
-            const n = {
-                id: uid(), title, text, mood: session.mood, color: session.color, folderId, shared: session.shared,
-                archived: false, trashedAt: null, createdAt: session.createdAt, updatedAt: Date.now()
-            };
-            notes.push(n);
-            sortNotes();
-            persist();
-            emit('note', n);
-            if (!quiet) showToast(n.shared ? 'Entry saved and shared with friends' : 'Entry saved');
+        clearTimeout(saveTimer);
+        if (!session) return;
+        const savedNow = save(session);
+        if (!session.id) {
+            session.attachments.forEach(a => Media.del(a.id));
+            return;
         }
         render();
-    }
+        if (!session.silent && (savedNow || session.changed)) {
+            const n = notes.find(x => x.id === session.id);
+            showToast(session.created
+                ? (n && n.shared ? 'Entry saved and shared with friends' : 'Entry saved')
+                : 'Entry updated');
+        }
+    });
 
+    // Archive/Delete save pending edits first and silence the close handler's toast so theirs (with Undo) stays
     edArchive.addEventListener('click', () => {
         const session = editing;
-        editing = null;
+        session.silent = true;
+        save(session);
         editor.close();
-        commitEditor(session, true);
         const n = notes.find(x => x.id === session.id);
         if (!n) return;
         n.archived = !n.archived;
@@ -585,7 +1261,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     edDelete.addEventListener('click', () => {
         const session = editing;
-        editing = null;
+        session.silent = true;
+        save(session);
         editor.close();
         const n = notes.find(x => x.id === session.id);
         if (!n) return;
@@ -601,6 +1278,11 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
+    async function askLink(current) {
+        const r = await ask({ title: current ? 'Edit link' : 'Add a link', value: current || '', placeholder: 'https://example.com', ok: 'Save', allowEmpty: !!current });
+        return r ? r.value : null;
+    }
+
     // ---------- Notes: trash ----------
     function restoreNote(id) {
         const n = notes.find(x => x.id === id);
@@ -612,11 +1294,18 @@ document.addEventListener('DOMContentLoaded', () => {
         showToast('Entry restored');
     }
 
+    function removeNotes(predicate) {
+        notes.filter(predicate).forEach(n => {
+            emit('note-removed', n);
+            n.attachments.forEach(a => Media.del(a.id));
+        });
+        notes = notes.filter(n => !predicate(n));
+    }
+
     async function destroyNote(id) {
-        const ok = await ask({ title: 'Delete forever?', text: 'This entry will be permanently deleted. This can’t be undone.', ok: 'Delete', danger: true });
+        const ok = await ask({ title: 'Delete forever?', text: 'This entry and its attachments will be permanently deleted. This can’t be undone.', ok: 'Delete', danger: true });
         if (!ok) return;
-        notes.filter(n => n.id === id).forEach(n => emit('note-removed', n));
-        notes = notes.filter(n => n.id !== id);
+        removeNotes(n => n.id === id);
         persist();
         render();
         showToast('Entry deleted');
@@ -626,8 +1315,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const count = notes.filter(n => n.trashedAt).length;
         const ok = await ask({ title: 'Empty trash?', text: `${count} ${count === 1 ? 'entry' : 'entries'} will be permanently deleted. This can’t be undone.`, ok: 'Empty trash', danger: true });
         if (!ok) return;
-        notes.filter(n => n.trashedAt).forEach(n => emit('note-removed', n));
-        notes = notes.filter(n => !n.trashedAt);
+        removeNotes(n => !!n.trashedAt);
         persist();
         render();
         showToast('Trash emptied');
@@ -636,7 +1324,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function purgeTrash() {
         const cutoff = Date.now() - TRASH_DAYS * DAY_MS;
         const before = notes.length;
-        notes = notes.filter(n => !n.trashedAt || n.trashedAt > cutoff);
+        removeNotes(n => n.trashedAt && n.trashedAt <= cutoff);
         if (notes.length !== before) persist();
     }
 
@@ -695,8 +1383,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function openMainMenu(anchor) {
-        const nav = [['home', 'Notes', 'i-notes'], ['calendar', 'Calendar', 'i-calendar'], ['feed', 'Feed', 'i-feed'],
-            ['messages', 'Messages', 'i-chat'], ['archive', 'Archive', 'i-archive'], ['trash', 'Trash', 'i-trash']]
+        const nav = [['home', 'Notes', 'i-notes'], ['calendar', 'Calendar', 'i-calendar'], ['insights', 'Insights', 'i-chart'],
+            ['photos', 'Photos', 'i-image'], ['feed', 'Feed', 'i-feed'], ['messages', 'Messages', 'i-chat'],
+            ['archive', 'Archive', 'i-archive'], ['trash', 'Trash', 'i-trash']]
             .map(([view, label, icon]) => ({ label, icon, cls: 'mobile-only', onClick: () => setView(view) }));
         openPopover(anchor, [
             ...nav,
@@ -711,6 +1400,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     try { localStorage.setItem('diaryTheme', next); } catch (e) {}
                 }
             },
+            { label: load('diaryPin', null) ? 'Change private PIN' : 'Set private PIN', icon: 'i-lock', onClick: setPin },
             { label: 'Change name', icon: 'i-user', onClick: renameUser },
             { label: 'Export entries', icon: 'i-download', onClick: exportData }
         ]);
@@ -744,6 +1434,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             const b = document.createElement('button');
+            b.type = 'button';
             b.className = 'pop-item' + (item.danger ? ' danger' : '') + (item.cls ? ` ${item.cls}` : '');
             b.setAttribute('role', 'menuitem');
             b.innerHTML = `<svg class="i"><use href="#${item.icon}"/></svg><span></span>`;
@@ -789,12 +1480,13 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('scroll', closePopover, { passive: true });
 
     // ---------- Prompt / confirm dialog ----------
-    function ask({ title, text = '', value = null, placeholder = '', color = null, ok = 'OK', danger = false, allowEmpty = false }) {
+    function ask({ title, text = '', value = null, placeholder = '', color = null, ok = 'OK', danger = false, allowEmpty = false, inputType = 'text' }) {
         return new Promise(resolve => {
             $('ask-title').textContent = title;
             $('ask-text').textContent = text;
             $('ask-text').hidden = !text;
             askInput.hidden = value === null;
+            askInput.type = inputType;
             askInput.value = value || '';
             askInput.placeholder = placeholder;
             askInput.dataset.allowEmpty = allowEmpty ? '1' : '';
@@ -838,7 +1530,7 @@ document.addEventListener('DOMContentLoaded', () => {
         toastUndo.hidden = !undo;
         toast.classList.add('show');
         clearTimeout(toastTimer);
-        toastTimer = setTimeout(hideToast, undo ? 5000 : 2000);
+        toastTimer = setTimeout(hideToast, undo ? 5000 : 2400);
     }
 
     function hideToast() {
@@ -861,8 +1553,21 @@ document.addEventListener('DOMContentLoaded', () => {
         views, actions, hooks, state,
         on(type, fn) { (listeners[type] = listeners[type] || []).push(fn); },
         getNotes: () => notes,
-        render, setView, setTitle, showToast, ask, openPopover, closePopover,
-        escapeHTML, initials, shortDate, dayLabel, dayKey, renameUser
+        render, setView, setTitle, showToast, ask, askLink, openPopover, closePopover,
+        escapeHTML, initials, shortDate, dayLabel, dayKey, renameUser, fullText,
+        // The AI assistant reads and writes the open entry through this
+        editorApi: {
+            getTitle: () => edTitle.value,
+            setTitle(value) { edTitle.value = value; changed(); },
+            getText: () => Rich.toText(edBody.innerHTML),
+            setText(text) { edBody.innerHTML = Rich.textToHTML(text); changed(); },
+            appendText(text) {
+                const sep = Rich.toText(edBody.innerHTML) ? '<br><br>' : '';
+                edBody.insertAdjacentHTML('beforeend', sep + Rich.textToHTML(text));
+                changed();
+            },
+            focus() { edBody.focus(); Rich.placeCaretAtEnd(edBody); }
+        }
     };
 
     // ---------- Data ----------
@@ -884,22 +1589,34 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Upgrades entries saved by the earlier version ({ id, text, mood, date })
+    // Upgrades entries saved by earlier versions (plain text, no journal fields)
     function migrateNote(n, i) {
         if (!n || typeof n.text !== 'string') return null;
         const fromId = Number(n.id);
         const createdAt = Number.isFinite(n.createdAt) ? n.createdAt
             : Number.isFinite(fromId) ? fromId
             : Date.parse(n.date) || Date.now();
+        const sections = { ...emptySections() };
+        if (n.sections && typeof n.sections === 'object') {
+            Object.keys(sections).forEach(k => { if (typeof n.sections[k] === 'string') sections[k] = n.sections[k]; });
+        }
         return {
             id: String(n.id ?? createdAt),
             title: typeof n.title === 'string' ? n.title : '',
             text: n.text,
+            html: typeof n.html === 'string' ? n.html : Rich.textToHTML(n.text),
             mood: MOODS[n.mood] ? n.mood : null,
+            emotions: Array.isArray(n.emotions) ? n.emotions.filter(e => EMOTIONS.includes(e)) : [],
+            kind: KINDS[n.kind] ? n.kind : 'free',
+            sections,
+            goals: Array.isArray(n.goals) ? n.goals.filter(g => g && typeof g.text === 'string').map(g => ({ id: String(g.id || uid()), text: g.text, done: !!g.done })) : [],
+            attachments: Array.isArray(n.attachments) ? n.attachments.filter(a => a && a.id && a.kind) : [],
+            location: n.location && typeof n.location.place === 'string' ? n.location : null,
             color: COLORS.includes(n.color) ? n.color : COLORS[i % COLORS.length],
             folderId: n.folderId ?? null,
             archived: !!n.archived,
-            shared: !!n.shared,
+            private: !!n.private,
+            shared: !!n.shared && !n.private,
             trashedAt: n.trashedAt ?? null,
             createdAt,
             updatedAt: n.updatedAt ?? createdAt
@@ -914,13 +1631,27 @@ document.addEventListener('DOMContentLoaded', () => {
         return notes.filter(n => !n.trashedAt && !n.archived);
     }
 
+    function fullText(n) {
+        return [n.title, n.text, ...Object.values(n.sections), ...n.goals.map(g => g.text), ...n.emotions].join('\n');
+    }
+
     function matches(n) {
-        return !state.query || `${n.title}\n${n.text}`.toLowerCase().includes(state.query);
+        if (!state.query) return true;
+        if (n.private && !privateUnlocked) return false;
+        return fullText(n).toLowerCase().includes(state.query);
     }
 
     function folderActivity(f) {
         return notes.reduce((latest, n) =>
             n.folderId === f.id && !n.trashedAt ? Math.max(latest, n.updatedAt) : latest, f.createdAt);
+    }
+
+    function countBy(list, keyFn) {
+        return list.reduce((acc, item) => {
+            const k = keyFn(item);
+            acc[k] = (acc[k] || 0) + 1;
+            return acc;
+        }, {});
     }
 
     function uid() {

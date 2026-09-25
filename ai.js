@@ -39,8 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Editor assistant ----------
     const editor = $('editor');
-    const edTitle = $('editor-title');
-    const edText = $('editor-text');
+    const entry = app.editorApi;
     const panel = $('ai-panel');
     const output = $('ai-output');
     const actionsEl = $('ai-actions');
@@ -55,14 +54,18 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     $('editor-ai').addEventListener('click', e => {
+        if ($('editor-private').checked) {
+            app.showToast('The AI assistant is off for private entries');
+            return;
+        }
         if (!social.requireSignIn('Sign in to use the AI writing assistant.')) return;
         app.openPopover(e.currentTarget, Object.entries(TASKS).map(([task, t]) =>
             ({ label: t.label, icon: t.icon, onClick: () => runTask(task) })));
     });
 
     async function runTask(task) {
-        const title = edTitle.value;
-        const text = edText.value;
+        const title = entry.getTitle();
+        const text = entry.getText();
         if (task !== 'prompt' && !title.trim() && !text.trim()) {
             app.showToast('Write a few words first');
             return;
@@ -99,31 +102,18 @@ document.addEventListener('DOMContentLoaded', () => {
         $('ai-panel-label').textContent = TASKS[task].label;
 
         const apply = {
-            continue: ['Add to entry', () => setText(joinText(edText.value, result))],
-            improve: ['Replace my entry', () => setText(result)],
-            title: ['Use this title', () => {
-                edTitle.value = result.replace(/^["'“]+|["'”]+$/g, '').slice(0, 120);
-                edTitle.dispatchEvent(new Event('input'));
-            }],
-            prompt: ['Start with this', () => setText(joinText(edText.value, result))],
+            continue: ['Add to entry', () => entry.appendText(result)],
+            improve: ['Replace my entry', () => entry.setText(result)],
+            title: ['Use this title', () => entry.setTitle(result.replace(/^["'“]+|["'”]+$/g, '').slice(0, 120))],
+            prompt: ['Start with this', () => entry.appendText(result)],
             reflect: null
         }[task];
 
         const buttons = [];
-        if (apply) buttons.push({ label: apply[0], primary: true, onClick: () => { apply[1](); hidePanel(); edText.focus(); } });
+        if (apply) buttons.push({ label: apply[0], primary: true, onClick: () => { apply[1](); hidePanel(); entry.focus(); } });
         buttons.push({ label: 'Try again', onClick: () => runTask(task) });
         buttons.push({ label: apply ? 'Discard' : 'Close', onClick: hidePanel });
         setActions(buttons);
-    }
-
-    function joinText(existing, addition) {
-        const base = existing.replace(/\s+$/, '');
-        return base ? `${base}\n\n${addition}` : addition;
-    }
-
-    function setText(value) {
-        edText.value = value;
-        edText.dispatchEvent(new Event('input'));
     }
 
     function setActions(buttons) {
@@ -231,9 +221,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function recentEntries() {
         return app.getNotes()
-            .filter(n => !n.trashedAt && !n.archived)
+            // Private entries never leave the device
+            .filter(n => !n.trashedAt && !n.archived && !n.private)
             .slice(0, 10)
-            .map(n => `${new Date(n.createdAt).toDateString()} — ${n.title || 'Untitled'}\n${n.text}`)
+            .map(n => `${new Date(n.createdAt).toDateString()} — ${n.title || 'Untitled'}${n.mood ? ` (mood: ${n.mood})` : ''}\n${app.fullText(n)}`)
             .join('\n\n---\n\n')
             .slice(0, 12000);
     }
