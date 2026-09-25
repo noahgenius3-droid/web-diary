@@ -4,7 +4,8 @@ import Anthropic from "npm:@anthropic-ai/sdk";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const MODEL = "claude-sonnet-5";
-const anthropic = new Anthropic();
+const API_KEY = Deno.env.get("ANTHROPIC_API_KEY")?.trim();
+const anthropic = API_KEY ? new Anthropic({ apiKey: API_KEY }) : null;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -67,6 +68,10 @@ function isChatTurn(m: unknown): m is ChatTurn {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json(405, { error: "Method not allowed" });
+  if (!anthropic) {
+    console.error("ANTHROPIC_API_KEY secret is not set");
+    return json(503, { error: "The AI assistant isn't set up yet: the ANTHROPIC_API_KEY secret is missing." });
+  }
 
   let payload: Record<string, unknown>;
   try {
@@ -141,12 +146,15 @@ Deno.serve(async (req) => {
           controller.enqueue(encoder.encode("\n\nI can't help with that one."));
         }
       } catch (error) {
-        if (error instanceof Anthropic.RateLimitError) {
+        if (error instanceof Anthropic.AuthenticationError) {
+          console.error("Anthropic rejected the API key", error.message);
+          controller.enqueue(encoder.encode("\n\nThe AI assistant's API key was rejected. Check the ANTHROPIC_API_KEY secret."));
+        } else if (error instanceof Anthropic.RateLimitError) {
           console.error("Anthropic rate limit", error.message);
           controller.enqueue(encoder.encode("\n\nThe assistant is busy right now - try again in a minute."));
         } else if (error instanceof Anthropic.APIError) {
           console.error(`Anthropic API error ${error.status}`, error.message);
-          controller.enqueue(encoder.encode("\n\nThe assistant hit an error. Please try again."));
+          controller.enqueue(encoder.encode(`\n\nThe assistant hit an error (${error.status ?? "network"}). Please try again.`));
         } else {
           console.error("Unexpected error", error);
           controller.enqueue(encoder.encode("\n\nThe assistant hit an error. Please try again."));
