@@ -57,6 +57,8 @@ document.addEventListener('DOMContentLoaded', () => {
         saved: new Set(load('diarySavedPosts', [])),
         seenStories: new Set(load('diarySeenStories', [])),
         suggestions: [],
+        feedDraft: { text: '', photos: [] }, // the feed composer survives re-renders
+        posting: false,
         rec: null,           // in-progress chat voice recording
         channel: null,
         presence: null
@@ -127,25 +129,24 @@ document.addEventListener('DOMContentLoaded', () => {
         ? [{ label: 'Sign out', icon: 'i-logout', onClick: signOut }]
         : [{ label: 'Sign in', icon: 'i-user', onClick: () => openAuth() }];
 
-    // Notes board header: friend avatars + Invite
+    // Friend avatars on the Notes page header
     app.hooks.friendAvatars = () => {
         if (!signedIn() || !s.friends.length) return '';
         const shown = s.friends.slice(0, 4);
         const extra = s.friends.length - shown.length;
         return `<span class="avatar-stack" title="${s.friends.length} friends">${shown.map(f => avatar(f, 'sm')).join('')}${extra > 0 ? `<span class="avatar sm more">+${extra}</span>` : ''}</span>`;
     };
-    app.hooks.invite = () => {
-        if (!window.diarySocial.requireSignIn('Sign in to invite friends to your circle.')) return;
-        s.addOpen = true;
-        app.setView('messages');
-        const input = $('add-friend-input');
-        if (input) input.focus();
-        app.showToast(`Share your username @${s.profile.username} so friends can add you`);
-    };
 
     app.hooks.afterRender = view => {
         if (view === 'home') paintPresence();
-        if (view === 'feed') hydrateStorage(content);
+        if (view === 'feed') {
+            hydrateStorage(content);
+            const text = $('feed-text');
+            if (text) {
+                text.value = s.feedDraft.text;
+                renderFeedPhotos();
+            }
+        }
         if (view !== 'messages' || !signedIn()) return;
         const thread = $('chat-thread');
         if (thread) {
@@ -474,6 +475,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateBadge() {
         const total = Object.values(s.unread).reduce((a, b) => a + b, 0) + s.incoming.length;
         $('messages-count').textContent = total ? String(total) : '';
+        $('messages-count-m').textContent = total ? String(total) : '';
     }
 
     async function loadThread(friendId) {
@@ -984,9 +986,13 @@ document.addEventListener('DOMContentLoaded', () => {
             written_at: new Date(note.createdAt).toISOString(),
             updated_at: new Date().toISOString()
         }, { onConflict: 'author,local_id' });
-        if (error) return app.showToast('Could not share that entry');
+        if (error) {
+            app.showToast('Could not share that entry');
+            return { ok: false, photos: 0 };
+        }
         s.remoteIds.add(note.id);
         s.feed = null;
+        return { ok: true, photos: photos.length };
     }
 
     async function removeShared(note) {
@@ -1095,8 +1101,22 @@ document.addEventListener('DOMContentLoaded', () => {
                             <svg class="i"><use href="#i-search"/></svg>
                             <input type="search" id="feed-search" placeholder="Search posts…" aria-label="Search posts">
                         </label>
-                        <button class="create-post" data-action="create-post"><svg class="i"><use href="#i-plus"/></svg>Create new post</button>
+                        <button class="create-post" data-action="create-post"><svg class="i"><use href="#i-plus"/></svg><span>Create new post</span></button>
                     </div>
+
+                    <form class="post-composer" data-form="feed-post">
+                        <div class="pc-row">
+                            <span class="avatar md">${esc(app.initials(s.profile.display_name))}</span>
+                            <textarea id="feed-text" rows="2" maxlength="5000" placeholder="What’s on your mind, ${esc(s.profile.display_name.split(' ')[0])}?" aria-label="Write a post"></textarea>
+                        </div>
+                        <div class="pc-photos" id="feed-photos" hidden></div>
+                        <div class="pc-foot">
+                            <button type="button" class="pc-tool" data-action="feed-add-photos"><svg class="i"><use href="#i-image"/></svg>Photo</button>
+                            <button type="button" class="pc-tool camera" data-action="feed-camera"><svg class="i"><use href="#i-camera"/></svg>Camera</button>
+                            <span class="pc-note"><svg class="i"><use href="#i-lock"/></svg>Friends only · also saved to your diary</span>
+                            <button type="submit" class="pc-post" id="feed-post-btn">${s.posting ? 'Posting…' : 'Post'}</button>
+                        </div>
+                    </form>
 
                     <div class="block-head">
                         <h2>Stories</h2>
@@ -1161,6 +1181,82 @@ document.addEventListener('DOMContentLoaded', () => {
                 </aside>
             </div>`;
     };
+
+    // ---------- Posting from the feed ----------
+    const MAX_POST_PHOTOS = 10;
+
+    async function addFeedPhotos(files) {
+        for (const original of files) {
+            if (s.feedDraft.photos.length >= MAX_POST_PHOTOS) {
+                app.showToast(`Up to ${MAX_POST_PHOTOS} photos per post`);
+                break;
+            }
+            const file = await Media.compressImage(original);
+            if (!FEED_TYPES.includes(file.type)) {
+                app.showToast(`${original.name || 'That photo'} isn’t a supported format`);
+                continue;
+            }
+            if (file.size > 10 * 1048576) {
+                app.showToast(`${original.name || 'That photo'} is too large`);
+                continue;
+            }
+            s.feedDraft.photos.push({ id: Math.random().toString(36).slice(2), file, preview: URL.createObjectURL(file) });
+        }
+        renderFeedPhotos();
+    }
+
+    function renderFeedPhotos() {
+        const box = $('feed-photos');
+        if (!box) return;
+        const photos = s.feedDraft.photos;
+        box.hidden = !photos.length;
+        box.innerHTML = photos.map(p => `
+            <figure class="pc-thumb">
+                <img src="${p.preview}" alt="">
+                <button type="button" class="att-remove" data-action="feed-remove-photo" data-id="${p.id}" aria-label="Remove photo"><svg class="i"><use href="#i-close"/></svg></button>
+            </figure>`).join('');
+    }
+
+    async function postToFeed() {
+        if (s.posting) return;
+        const text = s.feedDraft.text.trim();
+        const photos = s.feedDraft.photos;
+        if (!text && !photos.length) {
+            app.showToast('Write something or add a photo first');
+            $('feed-text')?.focus();
+            return;
+        }
+        s.posting = true;
+        const btn = $('feed-post-btn');
+        if (btn) {
+            btn.textContent = 'Posting…';
+            btn.disabled = true;
+        }
+        try {
+            const note = await app.createEntry({ text, shared: true }, photos.map(p => p.file));
+            // Share right away instead of waiting for the autosave debounce
+            clearTimeout(shareTimers.get(note.id));
+            const result = await new Promise(resolve => queue(async () => {
+                try {
+                    resolve(await upsertShared(note));
+                } catch (err) {
+                    app.showToast('Couldn’t reach the server — your post is saved and will share next time');
+                    resolve({ ok: false, photos: 0 });
+                }
+            }));
+            photos.forEach(p => URL.revokeObjectURL(p.preview));
+            s.feedDraft = { text: '', photos: [] };
+            s.feed = null;
+            if (!result.ok) return; // upsertShared already explained; the entry is still saved in the diary
+            if (result.photos < photos.length) app.showToast(`Posted, but ${photos.length - result.photos} photo(s) couldn’t upload`);
+            else app.showToast(photos.length ? 'Posted with photos 📸' : 'Posted to your friends');
+        } catch (err) {
+            app.showToast('Couldn’t post that — please try again');
+        } finally {
+            s.posting = false;
+            if (app.state.view === 'feed') app.render();
+        }
+    }
 
     function hashtags(p) {
         const text = `${p.title || ''} ${p.body || ''}`;
@@ -1548,8 +1644,19 @@ document.addEventListener('DOMContentLoaded', () => {
         'go-insights': () => app.setView('insights'),
         'create-post': () => {
             if (!window.diarySocial.requireSignIn('Sign in to share with friends.')) return;
-            app.newEntry({ shared: true });
-            app.showToast('This entry will be shared with your friends');
+            const text = $('feed-text');
+            if (text) {
+                text.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                text.focus();
+            }
+        },
+        'feed-add-photos': async () => addFeedPhotos(await Media.pickFiles('image/*')),
+        'feed-camera': async () => addFeedPhotos(await Media.pickFiles('image/*', false, 'environment')),
+        'feed-remove-photo': el => {
+            const photo = s.feedDraft.photos.find(p => p.id === el.dataset.id);
+            if (photo) URL.revokeObjectURL(photo.preview);
+            s.feedDraft.photos = s.feedDraft.photos.filter(p => p.id !== el.dataset.id);
+            renderFeedPhotos();
         },
         'save-post': el => {
             const id = el.dataset.id;
@@ -1704,6 +1811,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (username) addFriend(username);
         } else if (form.dataset.form === 'send-message') {
             sendMessage();
+        } else if (form.dataset.form === 'feed-post') {
+            postToFeed();
         }
     });
 
@@ -1716,6 +1825,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     content.addEventListener('input', e => {
         if (e.target.id === 'chat-input') saveDraft();
+        if (e.target.id === 'feed-text') {
+            s.feedDraft.text = e.target.value;
+            e.target.style.height = 'auto';
+            e.target.style.height = Math.min(e.target.scrollHeight, 240) + 'px';
+        }
         if (e.target.id === 'feed-search') {
             const q = e.target.value.trim().toLowerCase();
             content.querySelectorAll('.post[data-search]').forEach(post => {

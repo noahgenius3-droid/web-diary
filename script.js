@@ -16,14 +16,30 @@ document.addEventListener('DOMContentLoaded', () => {
         improve: { label: 'What I need to improve', icon: '🌱', placeholder: 'Next time I’ll…' }
     };
     const KIND_SECTIONS = { free: [], morning: ['gratitude'], evening: ['highlights', 'learned', 'improve'] };
+    const today = () => new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    // Starting points on the Notes page. `journal` reuses today's morning/evening entry if one exists.
+    const TEMPLATES = [
+        { id: 'blank', label: 'Blank note', desc: 'A clean page', icon: '📝', tone: 'purple', color: 'purple', make: () => ({}) },
+        { id: 'morning', label: 'Morning journal', desc: 'Gratitude and goals', icon: '☀️', tone: 'yellow', journal: 'morning' },
+        { id: 'evening', label: 'Evening reflection', desc: 'Highlights and lessons', icon: '🌙', tone: 'blue', journal: 'evening' },
+        { id: 'todo', label: 'To-Do list', desc: 'Checkboxes and more', icon: '✅', tone: 'green', color: 'green',
+            make: () => ({ title: `To-do · ${today()}`, showGoals: true }) },
+        { id: 'gratitude', label: 'Gratitude list', desc: 'Three good things', icon: '🙏', tone: 'pink', color: 'pink',
+            make: () => ({ title: `Grateful for · ${today()}`, html: '<ol><li><br></li><li><br></li><li><br></li></ol>' }) },
+        { id: 'meeting', label: 'Meeting notes', desc: 'Attendees and agenda', icon: '🗓️', tone: 'yellow', color: 'yellow',
+            make: () => ({ title: `Meeting · ${today()}`, html: '<b>Attendees</b><ul><li><br></li></ul><b>Agenda</b><ul><li><br></li></ul><b>Action items</b><ul><li><br></li></ul>' }) },
+        { id: 'recipe', label: 'Recipe', desc: 'Ingredients and steps', icon: '🍲', tone: 'pink', color: 'pink',
+            make: () => ({ title: 'New recipe', html: '<b>Ingredients</b><ul><li><br></li></ul><b>Steps</b><ol><li><br></li></ol>' }) },
+        { id: 'travel', label: 'Travel log', desc: 'Places and moments', icon: '✈️', tone: 'blue', color: 'blue',
+            make: () => ({ title: `Travel · ${today()}`, html: '<b>Where I went</b><br><br><b>Best moment</b><br><br><b>What I’ll remember</b><br>' }) },
+        { id: 'dream', label: 'Dream journal', desc: 'Before it fades', icon: '💭', tone: 'purple', color: 'purple',
+            make: () => ({ title: `Dream · ${today()}`, html: '<b>What happened</b><br><br><b>How I felt</b><br><br><b>What it might mean</b><br>' }) }
+    ];
     const RANGES = [['all', 'All'], ['today', 'Today'], ['week', 'This Week'], ['month', 'This Month']];
     const TRASH_DAYS = 30;
     const DAY_MS = 86400000;
     const MAX_FILE = 25 * 1048576;
-    const hooks = {
-        displayName: null, profileClick: null, menuItems: null, afterRender: null, shareToggle: null, rename: null,
-        friendAvatars: null, invite: null
-    };
+    const hooks = { displayName: null, profileClick: null, menuItems: null, afterRender: null, shareToggle: null, rename: null, friendAvatars: null };
 
     const $ = id => document.getElementById(id);
     const content = $('content');
@@ -64,15 +80,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const state = {
         view: 'home',
         folderId: null,
-        folderRange: 'all',
         noteRange: 'all',
         calMonth: firstOfMonth(new Date()),
         calDay: dayKey(new Date()),
-        query: '',
-        homeTab: 'board',
-        boardFolders: []
+        query: ''
     };
-    const STATUSES = [['todo', 'To do', 'red'], ['doing', 'Doing', 'amber'], ['done', 'Complete', 'green']];
 
     // Extension points for social.js and ai.js
     const views = {
@@ -172,8 +184,9 @@ document.addEventListener('DOMContentLoaded', () => {
             ]
         });
 
-        document.querySelectorAll('.nav-item[data-view]').forEach(b =>
+        document.querySelectorAll('.nav-item[data-view], .tab-item[data-view]').forEach(b =>
             b.addEventListener('click', () => setView(b.dataset.view)));
+        $('tab-more').addEventListener('click', e => openMainMenu(e.currentTarget));
         $('add-new-btn').addEventListener('click', () => openEditor(null));
         $('write-today').addEventListener('click', () => openEditor(null));
         $('fab').addEventListener('click', () => openEditor(null, newNoteDefaults()));
@@ -216,8 +229,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------- Rendering ----------
     function render() {
         const navView = state.view === 'folder' ? 'home' : state.view;
-        document.querySelectorAll('.nav-item[data-view]').forEach(b =>
-            b.classList.toggle('active', b.dataset.view === navView));
+        document.querySelectorAll('.nav-item[data-view], .tab-item[data-view]').forEach(b => {
+            b.classList.toggle('active', b.dataset.view === navView);
+            if (b.classList.contains('tab-item')) b.setAttribute('aria-current', b.dataset.view === navView ? 'page' : 'false');
+        });
 
         const archived = notes.filter(n => n.archived && !n.trashedAt).length;
         const trashed = notes.filter(n => n.trashedAt).length;
@@ -250,237 +265,68 @@ document.addEventListener('DOMContentLoaded', () => {
         document.title = text === 'My Diary' ? 'My Diary' : `${text} · My Diary`;
     }
 
-    // ---------- Notes: board workspace ----------
+    // ---------- Notes (home) ----------
     function renderHome() {
         setTitle('My Diary');
         if (state.query) return renderSearch();
-        const tabs = { board: renderBoard, tasks: renderTasks, timeline: renderTimeline, files: renderFiles, overview: renderOverview };
-        return boardHead() + (tabs[state.homeTab] || renderBoard)();
-    }
 
-    function boardHead() {
+        const list = activeNotes().filter(n => inRange(n.createdAt, state.noteRange));
+        const folderList = [...folders].sort((a, b) => folderActivity(b) - folderActivity(a));
         const first = (displayName() || '').split(' ')[0];
-        const openGoals = boardNotes().flatMap(n => n.goals).filter(g => !g.done && g.text.trim()).length;
-        const tab = ([key, label, count]) => `
-            <button class="board-tab" role="tab" aria-selected="${state.homeTab === key}" data-action="home-tab" data-tab="${key}">
-                ${label}${count ? `<span class="count-dot">${count}</span>` : ''}
-            </button>`;
+        const friends = hooks.friendAvatars ? hooks.friendAvatars() : '';
+
         return `
-            <div class="board-head">
-                <div class="board-title-row">
-                    <h2 class="board-title"><span aria-hidden="true">📔</span> ${escapeHTML(first ? `${first}’s Journal` : 'My Journal')}</h2>
-                    <button class="icon-btn ghost" data-action="board-menu" aria-label="Journal options"><svg class="i"><use href="#i-down"/></svg></button>
-                    <span class="board-star" aria-hidden="true">⭐</span>
+            <header class="notes-head">
+                <div>
+                    <h2 class="notes-title">My Notes</h2>
+                    <p class="muted">${greeting()}${first ? `, ${escapeHTML(first)}` : ''}. ${escapeHTML(dailyLine())}</p>
                 </div>
-                <div class="board-crumbs">
-                    ${folders.map(f => `
-                        <label class="crumb"><input type="checkbox" data-action="board-folder" data-id="${escapeHTML(f.id)}"${state.boardFolders.includes(f.id) ? ' checked' : ''}> ${escapeHTML(f.name)}</label>`
-                    ).join('<span class="crumb-sep" aria-hidden="true">/</span>')}
-                    <button class="crumb add" data-action="new-folder">+ Folder</button>
-                </div>
-                <div class="board-tabs-row">
-                    <div class="board-tabs" role="tablist">
-                        ${[['board', 'Board'], ['tasks', 'Tasks', openGoals], ['timeline', 'Timeline'], ['files', 'Files'], ['overview', 'Overview']].map(tab).join('')}
+                <div class="notes-meta">
+                    <div class="meta-block">
+                        <span class="meta-label">Visibility</span>
+                        <span class="meta-value"><svg class="i"><use href="#i-lock"/></svg>Private diary</span>
                     </div>
-                    <div class="board-people">
-                        ${hooks.friendAvatars ? hooks.friendAvatars() : ''}
-                        <button class="invite-btn" data-action="board-invite">Invite</button>
-                    </div>
+                    ${friends ? `<div class="meta-block"><span class="meta-label">Friends</span>${friends}</div>` : ''}
                 </div>
-            </div>`;
-    }
+            </header>
 
-    function boardNotes() {
-        return activeNotes().filter(n => !state.boardFolders.length || state.boardFolders.includes(n.folderId));
-    }
-
-    // An explicit status (set by dragging) wins; otherwise goals decide
-    function statusOf(n) {
-        if (n.status) return n.status;
-        const goals = n.goals.filter(g => g.text.trim());
-        if (!goals.length) return 'done';
-        const done = goals.filter(g => g.done).length;
-        return done === goals.length ? 'done' : done ? 'doing' : 'todo';
-    }
-
-    function renderBoard() {
-        const list = boardNotes();
-        return `
-            <div class="board">
-                ${STATUSES.map(([key, label, tone]) => {
-                    const items = list.filter(n => statusOf(n) === key);
-                    return `
-                        <section class="board-col" aria-label="${label}">
-                            <header class="col-head">
-                                <span class="col-dot ${tone}"></span><strong>${label}</strong>
-                                <span class="col-count">${items.length}</span>
-                                <button class="icon-btn ghost" data-action="col-new" data-status="${key}" aria-label="New entry in ${label}"><svg class="i"><use href="#i-plus"/></svg></button>
-                            </header>
-                            <div class="col-cards" data-drop="${key}">
-                                ${items.map(taskCard).join('') || `<p class="col-empty">${key === 'todo' ? 'Entries with goals to start land here.' : key === 'doing' ? 'Drag entries here while you work on them.' : 'Finished entries show up here.'}</p>`}
-                            </div>
-                        </section>`;
-                }).join('')}
-            </div>`;
-    }
-
-    function taskCard(n) {
-        const hidden = n.private && !privateUnlocked;
-        const lines = n.text.split('\n');
-        const title = hidden ? '🔒 Private entry'
-            : n.title || lines[0].trim() || (n.kind !== 'free' ? `${KINDS[n.kind].label} journal` : 'Untitled');
-        let desc = hidden ? 'Open to read this entry.' : (n.title ? n.text : lines.slice(1).join(' ')).trim();
-        if (!desc && !hidden) desc = Object.values(n.sections).find(v => v.trim()) || '';
-        const cover = !hidden && n.attachments.find(a => a.kind === 'image' || a.kind === 'drawing');
-        const goals = n.goals.filter(g => g.text.trim());
-        const done = goals.filter(g => g.done).length;
-        const folder = folders.find(f => f.id === n.folderId);
-        const tag = folder ? folder.name : n.kind !== 'free' ? `${KINDS[n.kind].icon} ${KINDS[n.kind].label}` : 'Journal';
-        const files = n.attachments.length;
-        const id = escapeHTML(n.id);
-
-        return `
-            <article class="task-card" draggable="true" data-action="open-note" data-id="${id}" tabindex="0" role="button">
-                ${cover ? `<img class="task-cover" data-media="${escapeHTML(cover.id)}" alt="">` : ''}
-                <div class="task-top">
-                    <h3>${escapeHTML(title)}</h3>
-                    <button class="more-btn" data-action="card-menu" data-id="${id}" aria-label="Entry options"><svg class="i"><use href="#i-more"/></svg></button>
-                </div>
-                ${desc ? `<p class="task-desc">${escapeHTML(desc)}</p>` : ''}
-                ${!hidden && goals.length ? `
-                    <ul class="task-checks">
-                        ${goals.slice(0, 4).map(g => `
-                            <li><label><input type="checkbox" data-action="toggle-goal" data-note="${id}" data-goal="${escapeHTML(g.id)}"${g.done ? ' checked' : ''}>
-                            <span>${escapeHTML(g.text)}</span></label></li>`).join('')}
-                        ${goals.length > 4 ? `<li class="muted small">+${goals.length - 4} more</li>` : ''}
-                    </ul>
-                    <div class="task-progress"><span>Progress</span><span>${done}/${goals.length}</span></div>
-                    <div class="progress"><span style="width:${Math.round((done / goals.length) * 100)}%"></span></div>` : ''}
-                <div class="task-foot">
-                    <span class="task-tag c-${n.color}">${escapeHTML(tag)}</span>
-                    <span class="task-meta">
-                        ${n.mood && !hidden ? `<span title="${MOOD_LABELS[n.mood]}">${MOODS[n.mood]}</span>` : ''}
-                        ${files && !hidden ? `<span title="${files} attachment${files === 1 ? '' : 's'}"><svg class="i"><use href="#i-paperclip"/></svg>${files}</span>` : ''}
-                        <span title="Written ${new Date(n.createdAt).toLocaleString()}"><svg class="i"><use href="#i-clock"/></svg>${new Date(n.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
-                    </span>
-                </div>
-            </article>`;
-    }
-
-    function renderTasks() {
-        const withGoals = boardNotes().filter(n => n.goals.some(g => g.text.trim()) && !(n.private && !privateUnlocked));
-        if (!withGoals.length) {
-            return `<div class="empty">
-                <p class="empty-title">No goals yet</p>
-                <p>Morning journals come with a Daily goals list — or add goals to any entry.</p>
-                <button class="primary-btn" style="margin-top:16px" data-action="journal" data-kind="morning">Start a morning journal</button>
-            </div>`;
-        }
-        return `<div class="task-groups">${withGoals.map(n => {
-            const goals = n.goals.filter(g => g.text.trim());
-            const done = goals.filter(g => g.done).length;
-            return `
-                <section class="task-group">
-                    <header class="c-${n.color}">
-                        <span class="col-dot" style="background:var(--card)"></span>
-                        <button class="link-btn" data-action="open-note" data-id="${escapeHTML(n.id)}">${escapeHTML(n.title || `${KINDS[n.kind].label} journal`)}</button>
-                        <span class="muted small">${shortDate(new Date(n.createdAt))} · ${done}/${goals.length} done</span>
-                    </header>
-                    <div class="progress"><span style="width:${Math.round((done / goals.length) * 100)}%"></span></div>
-                    <ul class="goal-list">${goals.map(g => `
-                        <li><label><input type="checkbox" data-action="toggle-goal" data-note="${escapeHTML(n.id)}" data-goal="${escapeHTML(g.id)}"${g.done ? ' checked' : ''}>
-                        <span>${escapeHTML(g.text)}</span></label></li>`).join('')}</ul>
-                </section>`;
-        }).join('')}</div>`;
-    }
-
-    function renderTimeline() {
-        const list = boardNotes();
-        if (!list.length) return '<div class="empty"><p class="empty-title">Nothing on your timeline yet</p><p>Write your first entry to start it.</p></div>';
-        const groups = new Map();
-        list.forEach(n => {
-            const key = dayKey(new Date(n.createdAt));
-            if (!groups.has(key)) groups.set(key, []);
-            groups.get(key).push(n);
-        });
-        return `<div class="timeline">${[...groups.entries()].map(([key, items]) => `
-            <section class="timeline-day">
-                <div class="timeline-date"><strong>${dayLabel(key)}</strong><span>${items.length} ${items.length === 1 ? 'entry' : 'entries'}</span></div>
-                <div class="timeline-items">${items.map(n => {
-                    const hidden = n.private && !privateUnlocked;
-                    return `
-                        <button class="timeline-item c-${n.color}" data-action="open-note" data-id="${escapeHTML(n.id)}">
-                            <time>${new Date(n.createdAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</time>
-                            <span class="timeline-body">
-                                <strong>${hidden ? '🔒 Private entry' : escapeHTML(n.title || n.text.split('\n')[0] || 'Untitled')}</strong>
-                                ${hidden ? '' : `<span>${escapeHTML(n.text.slice(0, 140))}</span>`}
-                            </span>
-                            <span class="timeline-mood">${n.mood && !hidden ? MOODS[n.mood] : ''}</span>
-                        </button>`;
-                }).join('')}</div>
-            </section>`).join('')}</div>`;
-    }
-
-    function renderFiles() {
-        const items = boardNotes()
-            .filter(n => !(n.private && !privateUnlocked))
-            .flatMap(n => n.attachments.map(att => ({ att, note: n })));
-        if (!items.length) return '<div class="empty"><p class="empty-title">No files yet</p><p>Photos, drawings, voice notes and documents you add to entries collect here.</p></div>';
-        const photos = items.filter(i => i.att.kind === 'image' || i.att.kind === 'drawing');
-        const voice = items.filter(i => i.att.kind === 'audio');
-        const docs = items.filter(i => i.att.kind === 'file');
-        const from = n => `<button class="link-btn" data-action="open-note" data-id="${escapeHTML(n.id)}">${escapeHTML(n.title || 'Untitled')}</button>`;
-        return `
-            ${photos.length ? `<section class="section"><h2>Photos &amp; drawings</h2><div class="photo-grid" style="margin-top:16px">${photos.map(({ att, note }) => `
-                <button class="photo-tile" data-action="view-photo" data-media-id="${escapeHTML(att.id)}" data-caption="${escapeHTML(`${note.title || 'Untitled'} · ${new Date(note.createdAt).toLocaleDateString()}`)}">
-                    <img data-media="${escapeHTML(att.id)}" alt="" loading="lazy"><span class="photo-date">${new Date(note.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
-                </button>`).join('')}</div></section>` : ''}
-            ${voice.length ? `<section class="section"><h2>Voice notes</h2><div class="file-list">${voice.map(({ att, note }) => `
-                <div class="file-row"><svg class="i"><use href="#i-mic"/></svg><audio controls preload="none" data-media="${escapeHTML(att.id)}"></audio>
-                <span class="muted small">${Media.formatDuration(att.duration)}</span><span class="file-from">${from(note)}</span></div>`).join('')}</div></section>` : ''}
-            ${docs.length ? `<section class="section"><h2>Documents</h2><div class="file-list">${docs.map(({ att, note }) => `
-                <div class="file-row"><svg class="i"><use href="#i-file"/></svg>
-                <a data-media="${escapeHTML(att.id)}" download="${escapeHTML(att.name)}">${escapeHTML(att.name)}</a>
-                <span class="muted small">${Media.formatSize(att.size)}</span><span class="file-from">${from(note)}</span></div>`).join('')}</div></section>` : ''}`;
-    }
-
-    function renderOverview() {
-        const folderList = folders
-            .filter(f => inRange(folderActivity(f), state.folderRange))
-            .sort((a, b) => folderActivity(b) - folderActivity(a));
-        const noteList = boardNotes().filter(n => inRange(n.createdAt, state.noteRange));
-        const now = new Date();
-
-        return `
-            <div class="welcome">
-                <p class="welcome-date">${now.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
-                <p class="welcome-greeting">${greeting()}${displayName() ? `, ${escapeHTML(displayName().split(' ')[0])}` : ''}. What’s on your mind today?</p>
-            </div>
-            ${todayPanel()}
             <section class="section">
-                <h2>Recent Folders</h2>
-                ${tabs('folderRange')}
-                ${folderList.length === 0 && folders.length > 0 ? `<p class="grid-empty">No folders used ${rangeText(state.folderRange)}.</p>` : ''}
-                <div class="grid">
-                    ${folderList.map(folderCard).join('')}
-                    <button class="new-tile" data-action="new-folder"><svg class="i"><use href="#i-folder-new"/></svg>New folder</button>
+                <div class="section-head"><h2>Templates</h2></div>
+                <div class="templates" role="list">
+                    ${TEMPLATES.map(t => `
+                        <button class="template-card" role="listitem" data-action="template" data-id="${t.id}">
+                            <span class="template-icon tone-${t.tone}" aria-hidden="true">${t.icon}</span>
+                            <span class="template-text"><strong>${t.label}</strong><small>${t.desc}</small></span>
+                        </button>`).join('')}
                 </div>
             </section>
+
             <section class="section">
-                <h2>My Notes</h2>
-                ${tabs('noteRange')}
-                ${notesGrid(noteList, { empty: activeNotes().length ? `No entries ${rangeText(state.noteRange)}.` : 'Your diary is empty — write your first entry.' })}
+                <div class="section-head notes-bar">
+                    <h2>My drafts</h2>
+                    ${tabs('noteRange')}
+                </div>
+                <div class="folder-chips">
+                    ${folderList.map(f => `
+                        <button class="folder-chip c-${f.color}" data-action="open-folder" data-id="${escapeHTML(f.id)}">
+                            <span class="chip-dot"></span>${escapeHTML(f.name)}
+                            <span class="muted small">${activeNotes().filter(n => n.folderId === f.id).length}</span>
+                        </button>`).join('')}
+                    <button class="folder-chip add" data-action="new-folder"><svg class="i"><use href="#i-plus"/></svg>New folder</button>
+                </div>
+                ${notesGrid(list, { empty: activeNotes().length ? `No notes ${rangeText(state.noteRange)}.` : 'Your diary is empty — pick a template or write your first note.' })}
             </section>`;
     }
 
-    function setStatus(id, status) {
-        const n = notes.find(x => x.id === id);
-        if (!n || statusOf(n) === status) return;
-        n.status = status;
-        n.updatedAt = Date.now();
-        persist();
-        render();
-        showToast(`Moved to ${STATUSES.find(s => s[0] === status)[1]}`);
+    // A small rotating nudge under the page title
+    function dailyLine() {
+        const lines = [
+            'Let’s capture today before it slips away.',
+            'Small notes today, clear memories tomorrow.',
+            'Write it down — future you will thank you.',
+            'A few honest lines are all it takes.'
+        ];
+        return lines[new Date().getDate() % lines.length];
     }
 
     function renderSearch() {
@@ -489,67 +335,18 @@ document.addEventListener('DOMContentLoaded', () => {
             <section class="section">
                 <div class="section-head">
                     <h2>Search results</h2>
-                    <span class="muted">${results.length} ${results.length === 1 ? 'entry' : 'entries'} for “${escapeHTML(searchInput.value.trim())}”</span>
+                    <span class="muted">${results.length} ${results.length === 1 ? 'note' : 'notes'} for “${escapeHTML(searchInput.value.trim())}”</span>
                 </div>
-                <div style="height:22px"></div>
+                <div style="height:18px"></div>
                 ${notesGrid(results, { newTile: false, empty: 'Nothing matches your search.' })}
             </section>`;
     }
 
-    function todayPanel() {
-        const today = dayKey(new Date());
-        const todays = activeNotes().filter(n => dayKey(new Date(n.createdAt)) === today);
-        const morning = todays.find(n => n.kind === 'morning');
-        const evening = todays.find(n => n.kind === 'evening');
-        const goals = todays.flatMap(n => n.goals.filter(g => g.text.trim()).map(g => ({ ...g, noteId: n.id })));
-        const done = goals.filter(g => g.done).length;
-        const memory = photoMemory();
-
-        const journalCard = (kind, entry, blurb) => `
-            <button class="today-card ${kind}${entry ? ' done' : ''}" data-action="journal" data-kind="${kind}">
-                <span class="today-icon" aria-hidden="true">${KINDS[kind].icon}</span>
-                <span class="today-text">
-                    <strong>${kind === 'morning' ? 'Morning journal' : 'Evening reflection'}</strong>
-                    <span>${entry ? '✓ Done today — tap to open' : blurb}</span>
-                </span>
-            </button>`;
-
-        return `
-            <section class="today-grid" aria-label="Today">
-                ${journalCard('morning', morning, 'Gratitude and goals for the day')}
-                ${journalCard('evening', evening, 'Highlights, lessons and what to improve')}
-                <div class="today-card goals">
-                    <div class="today-goals-head">
-                        <strong>🎯 Today’s goals</strong>
-                        ${goals.length ? `<span class="muted small">${done}/${goals.length} done</span>` : ''}
-                    </div>
-                    ${goals.length
-                        ? `<ul class="goal-list">${goals.slice(0, 5).map(g => `
-                            <li><label><input type="checkbox" data-action="toggle-goal" data-note="${escapeHTML(g.noteId)}" data-goal="${escapeHTML(g.id)}"${g.done ? ' checked' : ''}>
-                            <span>${escapeHTML(g.text)}</span></label></li>`).join('')}</ul>`
-                        : '<p class="muted small">Set goals in your morning journal and tick them off here.</p>'}
-                </div>
-                ${memory ? `
-                    <button class="today-card memory" data-action="view-photo" data-media-id="${escapeHTML(memory.att.id)}" data-caption="${escapeHTML(memory.caption)}">
-                        <img data-media="${escapeHTML(memory.att.id)}" alt="">
-                        <span class="memory-label">📸 ${escapeHTML(memory.label)}</span>
-                    </button>` : ''}
-            </section>`;
-    }
-
-    // A past photo to resurface: same calendar day in an earlier month/year first, otherwise the oldest one
-    function photoMemory() {
-        const now = new Date();
-        const photos = allPhotos().filter(p => now - p.note.createdAt > 6 * DAY_MS);
-        if (!photos.length) return null;
-        const sameDay = photos.find(p => new Date(p.note.createdAt).getDate() === now.getDate());
-        const pick = sameDay || photos[now.getDate() % photos.length];
-        const d = new Date(pick.note.createdAt);
-        return {
-            att: pick.att,
-            label: sameDay ? `On this day · ${d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}` : `Memory from ${d.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}`,
-            caption: `${pick.note.title || 'Untitled'} · ${d.toLocaleDateString()}`
-        };
+    function startTemplate(id) {
+        const t = TEMPLATES.find(x => x.id === id);
+        if (!t) return;
+        if (t.journal) return openJournal(t.journal);
+        openEditor(null, { color: t.color, ...t.make() });
     }
 
     function allPhotos() {
@@ -780,129 +577,73 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function notesGrid(list, { newTile = true, trash = false, empty = '', folderId = '', day = '' } = {}) {
         if (list.length === 0 && !newTile) {
-            return `<div class="grid"><div class="empty"><p class="empty-title">${escapeHTML(empty)}</p></div></div>`;
+            return `<div class="empty"><p class="empty-title">${escapeHTML(empty)}</p></div>`;
         }
         const tile = newTile
-            ? `<button class="new-tile" data-action="new-note" data-folder="${escapeHTML(folderId)}" data-day="${day}"><svg class="i"><use href="#i-edit"/></svg>New Note</button>`
+            ? `<button class="mcard new-note" data-action="new-note" data-folder="${escapeHTML(folderId)}" data-day="${day}">
+                   <svg class="i"><use href="#i-plus"/></svg><strong>New note</strong><small>Start writing</small>
+               </button>`
             : '';
         return `
             ${list.length === 0 ? `<p class="grid-empty">${escapeHTML(empty)}</p>` : ''}
-            <div class="grid notes-grid">${list.map(n => noteCard(n, trash)).join('')}${tile}</div>`;
+            <div class="masonry">${tile}${list.map(n => noteCard(n, trash)).join('')}</div>`;
     }
 
-    function folderCard(f) {
-        const count = activeNotes().filter(n => n.folderId === f.id).length;
-        return `
-            <article class="folder-card tinted c-${f.color}" data-action="open-folder" data-id="${escapeHTML(f.id)}" tabindex="0" role="button" aria-label="Open folder ${escapeHTML(f.name)}">
-                <div class="folder-top">
-                    <svg class="folder-icon"><use href="#i-folder"/></svg>
-                    <button class="more-btn" data-action="folder-menu" data-id="${escapeHTML(f.id)}" aria-label="Folder options"><svg class="i"><use href="#i-more"/></svg></button>
-                </div>
-                <h3>${escapeHTML(f.name)}</h3>
-                <p class="folder-meta">${shortDate(new Date(f.createdAt))} · ${count} ${count === 1 ? 'entry' : 'entries'}</p>
-            </article>`;
-    }
-
+    // Pastel note card in the style of a notes app: tags, title, optional photo and excerpt, date + edit
     function noteCard(n, trash) {
         const q = state.query;
         const date = new Date(n.createdAt);
-        const time = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-        const weekday = date.toLocaleDateString(undefined, { weekday: 'long' });
         const id = escapeHTML(n.id);
         const hidden = n.private && !privateUnlocked;
 
-        let title;
-        let body;
-        if (hidden) {
-            title = 'Private entry';
-            body = '';
-        } else {
+        let title = 'Private entry';
+        let body = '';
+        if (!hidden) {
             const lines = n.text.split('\n');
             title = n.title || lines[0].trim() || (n.kind !== 'free' ? `${KINDS[n.kind].label} journal` : 'Untitled');
-            body = n.title ? n.text : lines.slice(1).join('\n').trim();
+            body = (n.title ? n.text : lines.slice(1).join('\n')).trim();
             if (!body) body = Object.values(n.sections).find(v => v.trim()) || '';
         }
 
-        const thumb = !hidden && n.attachments.find(a => a.kind === 'image' || a.kind === 'drawing');
-        const badges = [
-            n.kind !== 'free' ? `<span title="${KINDS[n.kind].label} journal">${KINDS[n.kind].icon}</span>` : '',
-            n.private ? '<span title="Private"><svg class="i"><use href="#i-lock"/></svg></span>' : '',
-            n.attachments.some(a => a.kind === 'audio') ? '<span title="Voice note"><svg class="i"><use href="#i-mic"/></svg></span>' : '',
-            n.attachments.some(a => a.kind === 'file') ? '<span title="Attachments"><svg class="i"><use href="#i-paperclip"/></svg></span>' : '',
-            n.mood ? `<span class="note-mood" title="${MOOD_LABELS[n.mood]}">${MOODS[n.mood]}</span>` : ''
-        ].join('');
+        const folder = folders.find(f => f.id === n.folderId);
+        const tags = [
+            folder ? escapeHTML(folder.name) : '',
+            n.kind !== 'free' ? KINDS[n.kind].label : '',
+            n.private ? 'Private' : '',
+            n.shared ? 'Shared' : '',
+            !hidden && n.attachments.some(a => a.kind === 'audio') ? 'Voice' : '',
+            !hidden && n.goals.length ? `${n.goals.filter(g => g.done).length}/${n.goals.length} goals` : ''
+        ].filter(Boolean).slice(0, 2);
+        const photo = !hidden && n.attachments.find(a => a.kind === 'image' || a.kind === 'drawing');
 
-        const openAttrs = trash ? '' : `data-action="open-note" data-id="${id}" tabindex="0" role="button"`;
-        const foot = trash
-            ? `<div class="note-actions">
+        const openAttrs = trash ? '' : `data-action="open-note" data-id="${id}" tabindex="0" role="button" aria-label="Open ${escapeHTML(title)}"`;
+        const actions = trash
+            ? `<span class="mcard-actions">
                    <button class="chip" data-action="restore" data-id="${id}">Restore</button>
-                   <button class="chip danger" data-action="destroy" data-id="${id}">Delete forever</button>
-               </div>`
-            : `<div class="note-foot"><svg class="i"><use href="#i-clock"/></svg><span>${time}, ${weekday}</span><span class="note-badges">${badges}</span></div>`;
+                   <button class="chip danger" data-action="destroy" data-id="${id}">Delete</button>
+               </span>`
+            : `<span class="mcard-edit" aria-hidden="true"><svg class="i"><use href="#i-pencil"/></svg></span>`;
 
         return `
-            <article class="note-card c-${n.color}${thumb ? ' has-thumb' : ''}${hidden ? ' is-private' : ''}" ${openAttrs}>
-                <div class="note-date">${shortDate(date)}${n.location && !hidden ? ` · ${escapeHTML(n.location.weather ? n.location.weather.emoji : '📍')}` : ''}</div>
-                <div class="note-head">
-                    <h3>${hidden ? '🔒 Private entry' : highlight(title, q)}</h3>
-                    ${trash ? '' : '<svg class="note-edit"><use href="#i-edit"/></svg>'}
+            <article class="mcard c-${n.color}${photo ? ' has-photo' : ''}${hidden ? ' is-private' : ''}" ${openAttrs}>
+                ${tags.length ? `<div class="mcard-tags">${tags.map(t => `<span>${t}</span>`).join('')}</div>` : ''}
+                <h3>${hidden ? '🔒 Private entry' : highlight(title, q)}</h3>
+                ${photo ? `<img class="mcard-photo" data-media="${escapeHTML(photo.id)}" alt="">` : ''}
+                ${body ? `<p class="mcard-body">${highlight(body, q)}</p>` : hidden ? '<p class="mcard-body">Open to read this entry.</p>' : ''}
+                <div class="mcard-foot">
+                    <span class="mcard-date">${date.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}${n.mood && !hidden ? ` · ${MOODS[n.mood]}` : ''}</span>
+                    ${actions}
                 </div>
-                ${thumb ? `<img class="note-thumb" data-media="${escapeHTML(thumb.id)}" alt="">` : ''}
-                <p class="note-body">${hidden ? 'Open to read this entry.' : highlight(body, q)}</p>
-                ${foot}
             </article>`;
     }
 
     // ---------- Content actions ----------
     content.addEventListener('click', e => {
-        // A click on a checklist label is re-dispatched to its checkbox; don't also open the card
-        if (e.target.closest('label') && e.target.tagName !== 'INPUT' && e.target.closest('.task-checks, .goal-list')) return;
         const el = e.target.closest('[data-action]');
         if (!el || !content.contains(el)) return;
         const { action, id } = el.dataset;
 
         switch (action) {
-            case 'home-tab':
-                state.homeTab = el.dataset.tab;
-                render();
-                break;
-            case 'board-folder': {
-                const set = new Set(state.boardFolders);
-                if (set.has(id)) set.delete(id);
-                else set.add(id);
-                state.boardFolders = [...set];
-                render();
-                break;
-            }
-            case 'col-new':
-                openEditor(null, { status: el.dataset.status });
-                break;
-            case 'card-menu': {
-                const n = notes.find(x => x.id === id);
-                if (!n) break;
-                const current = statusOf(n);
-                openPopover(el, [
-                    ...STATUSES.filter(([key]) => key !== current).map(([key, label]) =>
-                        ({ label: `Move to ${label}`, icon: 'i-right', onClick: () => setStatus(id, key) })),
-                    ...(n.status ? [{ label: 'Let goals decide', icon: 'i-refresh', onClick: () => { n.status = null; persist(); render(); } }] : []),
-                    { sep: true },
-                    { label: 'Archive', icon: 'i-archive', onClick: () => { n.archived = true; persist(); render(); showToast('Entry archived', () => { n.archived = false; persist(); render(); }); } }
-                ]);
-                break;
-            }
-            case 'board-menu':
-                openPopover(el, [
-                    { label: 'New entry', icon: 'i-edit', onClick: () => openEditor(null) },
-                    { label: 'Morning journal', icon: 'i-sun', onClick: () => openJournal('morning') },
-                    { label: 'Evening reflection', icon: 'i-moon', onClick: () => openJournal('evening') },
-                    { label: 'New folder', icon: 'i-folder-new', onClick: createFolder },
-                    { label: 'Export entries', icon: 'i-download', onClick: exportData }
-                ]);
-                break;
-            case 'board-invite':
-                if (hooks.invite) hooks.invite();
-                else showToast('Friends need an internet connection');
-                break;
             case 'range':
                 state[el.dataset.key] = el.dataset.range;
                 render();
@@ -916,8 +657,8 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'journal':
                 openJournal(el.dataset.kind);
                 break;
-            case 'toggle-goal':
-                toggleGoal(el.dataset.note, el.dataset.goal);
+            case 'template':
+                startTemplate(el.dataset.id);
                 break;
             case 'view-photo':
                 Media.url(el.dataset.mediaId).then(u => u && Media.lightbox(u, el.dataset.caption));
@@ -972,50 +713,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Drag cards between board columns
-    content.addEventListener('dragstart', e => {
-        const card = e.target.closest && e.target.closest('.task-card');
-        if (!card) return;
-        e.dataTransfer.setData('text/plain', card.dataset.id);
-        e.dataTransfer.effectAllowed = 'move';
-        card.classList.add('dragging');
-    });
-    content.addEventListener('dragend', e => {
-        const card = e.target.closest && e.target.closest('.task-card');
-        if (card) card.classList.remove('dragging');
-        content.querySelectorAll('.drop-over').forEach(el => el.classList.remove('drop-over'));
-    });
-    content.addEventListener('dragover', e => {
-        const zone = e.target.closest && e.target.closest('[data-drop]');
-        if (!zone) return;
-        e.preventDefault();
-        content.querySelectorAll('.drop-over').forEach(el => el !== zone && el.classList.remove('drop-over'));
-        zone.classList.add('drop-over');
-    });
-    content.addEventListener('drop', e => {
-        const zone = e.target.closest && e.target.closest('[data-drop]');
-        if (!zone) return;
-        e.preventDefault();
-        const id = e.dataTransfer.getData('text/plain');
-        if (id) setStatus(id, zone.dataset.drop);
-    });
-
     function openJournal(kind) {
         const today = dayKey(new Date());
         const existing = activeNotes().find(n => n.kind === kind && dayKey(new Date(n.createdAt)) === today);
         if (existing) openNote(existing);
         else openEditor(null, { kind, color: kind === 'morning' ? 'yellow' : 'purple' });
-    }
-
-    function toggleGoal(noteId, goalId) {
-        const n = notes.find(x => x.id === noteId);
-        const g = n && n.goals.find(x => x.id === goalId);
-        if (!g) return;
-        g.done = !g.done;
-        n.updatedAt = Date.now();
-        persist();
-        render();
-        if (g.done) showToast('Goal done — nice work 🎉');
     }
 
     // ---------- Private entries ----------
@@ -1088,20 +790,20 @@ document.addEventListener('DOMContentLoaded', () => {
             editing = {
                 id: null, color: defaults.color || COLORS[notes.length % COLORS.length], mood: null, emotions: [],
                 kind: defaults.kind || 'free', sections: emptySections(), goals: [], attachments: [], location: null,
-                private: false, shared: !!defaults.shared, status: defaults.status || null, createdAt
+                private: false, shared: !!defaults.shared, createdAt
             };
         } else {
             editing = {
                 id: note.id, color: note.color, mood: note.mood, emotions: [...note.emotions], kind: note.kind,
                 sections: { ...emptySections(), ...note.sections }, goals: note.goals.map(g => ({ ...g })),
                 attachments: note.attachments.map(a => ({ ...a })), location: note.location,
-                private: note.private, shared: note.shared, status: note.status, createdAt: note.createdAt
+                private: note.private, shared: note.shared, createdAt: note.createdAt
             };
         }
-        Object.assign(editing, { shownSections: new Set(), showGoals: false, changed: false, created: false });
+        Object.assign(editing, { shownSections: new Set(), showGoals: !!defaults.showGoals, changed: false, created: false });
 
-        edTitle.value = note ? note.title : '';
-        edBody.innerHTML = note ? Rich.sanitize(note.html) : '';
+        edTitle.value = note ? note.title : (defaults.title || '');
+        edBody.innerHTML = note ? Rich.sanitize(note.html) : Rich.sanitize(defaults.html || '');
         edFolder.innerHTML = '<option value="">No folder</option>' +
             folders.map(f => `<option value="${escapeHTML(f.id)}">${escapeHTML(f.name)}</option>`).join('');
         edFolder.value = (note ? note.folderId : defaults.folderId) || '';
@@ -1117,6 +819,8 @@ document.addEventListener('DOMContentLoaded', () => {
         renderAttachments();
         renderReflection();
         updateWords();
+        // A template the user never touches shouldn't turn into a note
+        editing.pristine = note ? null : JSON.stringify(collectFields(editing));
         editor.showModal();
         edReflection.querySelectorAll('textarea').forEach(autoGrow);
         if (note) {
@@ -1432,9 +1136,7 @@ document.addEventListener('DOMContentLoaded', () => {
             attachments: session.attachments.map(a => ({ ...a })),
             location: session.location,
             private: session.private,
-            shared: session.shared && !session.private,
-            // Board moves made while the editor was open take precedence
-            status: (session.id && notes.find(x => x.id === session.id)?.status) || session.status || null
+            shared: session.shared && !session.private
         };
     }
 
@@ -1446,6 +1148,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function save(session) {
         const fields = collectFields(session);
         if (isEmpty(fields)) return false;
+        if (!session.id && session.pristine && JSON.stringify(fields) === session.pristine && !(session.shared && fields.attachments.length)) return false;
 
         let n;
         if (session.id) {
@@ -1835,6 +1538,25 @@ document.addEventListener('DOMContentLoaded', () => {
         on(type, fn) { (listeners[type] = listeners[type] || []).push(fn); },
         getNotes: () => notes,
         newEntry: defaults => openEditor(null, defaults),
+        // Used by the feed composer: stores the files on this device and saves the entry in one go
+        async createEntry({ title = '', text = '', shared = false, color = null }, files = []) {
+            const attachments = [];
+            for (const file of files) {
+                const att = { id: uid(), kind: Media.kindOf(file.type || ''), name: file.name || 'photo', type: file.type, size: file.size };
+                await Media.put(att.id, file);
+                attachments.push(att);
+            }
+            const n = migrateNote({
+                id: uid(), title, text, html: Rich.textToHTML(text), shared, attachments,
+                color: color || COLORS[notes.length % COLORS.length], createdAt: Date.now()
+            }, notes.length);
+            notes.push(n);
+            sortNotes();
+            persist();
+            emit('note', n);
+            render();
+            return n;
+        },
         openNote: id => openNote(notes.find(n => n.id === id)),
         updateNote(id, patch) {
             const n = notes.find(x => x.id === id);
@@ -1908,7 +1630,6 @@ document.addEventListener('DOMContentLoaded', () => {
             archived: !!n.archived,
             private: !!n.private,
             shared: !!n.shared && !n.private,
-            status: ['todo', 'doing', 'done'].includes(n.status) ? n.status : null,
             trashedAt: n.trashedAt ?? null,
             createdAt,
             updatedAt: n.updatedAt ?? createdAt

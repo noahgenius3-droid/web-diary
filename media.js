@@ -90,12 +90,33 @@ window.Media = (() => {
         return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
     }
 
-    function pickFiles(accept, multiple = true) {
+    // Downscale big photos (phone cameras) to at most `max` px as JPEG; GIFs and small images pass through
+    async function compressImage(file, max = 1920, quality = 0.85) {
+        if (!file.type.startsWith('image/') || file.type === 'image/gif') return file;
+        let bitmap;
+        try {
+            bitmap = await createImageBitmap(file);
+        } catch (e) {
+            return file; // formats the browser can't decode (e.g. HEIC) are returned as-is
+        }
+        const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+        if (scale === 1 && file.size < 1.5 * 1048576 && ['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) return file;
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(bitmap.width * scale);
+        canvas.height = Math.round(bitmap.height * scale);
+        canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', quality));
+        if (!blob) return file;
+        return new File([blob], `${(file.name || 'photo').replace(/\.[^.]+$/, '')}.jpg`, { type: 'image/jpeg' });
+    }
+
+    function pickFiles(accept, multiple = true, capture = null) {
         return new Promise(resolve => {
             const input = document.createElement('input');
             input.type = 'file';
             input.accept = accept;
             input.multiple = multiple;
+            if (capture) input.setAttribute('capture', capture);
             input.addEventListener('change', () => resolve([...input.files]));
             input.addEventListener('cancel', () => resolve([]));
             input.click();
@@ -401,5 +422,5 @@ window.Media = (() => {
         });
     }
 
-    return { put, get, del, url, hydrate, kindOf, formatSize, formatDuration, pickFiles, recordVoice, createRecorder, drawPad, lightbox, locate };
+    return { put, get, del, url, hydrate, kindOf, formatSize, formatDuration, pickFiles, compressImage, recordVoice, createRecorder, drawPad, lightbox, locate };
 })();
