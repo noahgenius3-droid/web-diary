@@ -31,8 +31,32 @@ window.Media = (() => {
         });
     }
 
-    const put = (id, blob) => tx('readwrite', s => s.put(blob, id));
-    const get = id => tx('readonly', s => s.get(id));
+    // Stored as raw bytes: WebKit (all iPhone browsers) can hand back unreadable Blobs from IndexedDB,
+    // which then upload as empty files.
+    async function put(id, blob) {
+        const buf = await blob.arrayBuffer();
+        return tx('readwrite', s => s.put({ buf, type: blob.type || '', name: blob.name || '' }, id));
+    }
+
+    async function get(id) {
+        const value = await tx('readonly', s => s.get(id));
+        if (!value) return null;
+        if (value instanceof Blob) return value; // saved by an earlier version
+        if (value.buf) return new Blob([value.buf], { type: value.type });
+        return null;
+    }
+
+    // Bytes ready for upload; null when missing or empty
+    async function bytes(idOrBlob) {
+        const blob = typeof idOrBlob === 'string' ? await get(idOrBlob) : idOrBlob;
+        if (!blob) return null;
+        try {
+            const buf = await blob.arrayBuffer();
+            return buf.byteLength ? { buf, type: blob.type } : null;
+        } catch (e) {
+            return null;
+        }
+    }
     const urls = new Map();
 
     async function del(id) {
@@ -422,5 +446,5 @@ window.Media = (() => {
         });
     }
 
-    return { put, get, del, url, hydrate, kindOf, formatSize, formatDuration, pickFiles, compressImage, recordVoice, createRecorder, drawPad, lightbox, locate };
+    return { put, get, bytes, del, url, hydrate, kindOf, formatSize, formatDuration, pickFiles, compressImage, recordVoice, createRecorder, drawPad, lightbox, locate };
 })();

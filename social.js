@@ -58,6 +58,7 @@ document.addEventListener('DOMContentLoaded', () => {
         seenStories: new Set(load('diarySeenStories', [])),
         suggestions: [],
         feedDraft: { text: '', photos: [] }, // the feed composer survives re-renders
+        comments: new Map(),                  // "entry:<id>" | "post:<id>" -> { open, loading, items, ownerId }
         posting: false,
         rec: null,           // in-progress chat voice recording
         channel: null,
@@ -175,6 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Keep shared entries in sync with the feed (private entries are never shared).
     // Autosave fires often, so syncs are debounced per entry and run one at a time.
     const shareTimers = new Map();
+    const freshFiles = new Map(); // attachment id -> File picked in the feed composer, until uploaded
     let shareChain = Promise.resolve();
     const queue = job => { shareChain = shareChain.then(job).catch(() => {}); };
 
@@ -315,8 +317,9 @@ document.addEventListener('DOMContentLoaded', () => {
         Object.assign(s, {
             profile: null, friends: [], incoming: [], outgoing: [], unread: {}, last: {}, feed: null, feedAuthor: null,
             threads: {}, activeFriend: null, drafts: {}, pending: {}, online: new Set(), urls: new Map(),
-            remoteIds: new Set(), channel: null, presence: null
+            remoteIds: new Set(), channel: null, presence: null, comments: new Map()
         });
+        if (window.diaryCommunities) window.diaryCommunities.reset();
         updateBadge();
     }
 
@@ -371,6 +374,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     await loadFriends();
                     if (['messages', 'feed'].includes(app.state.view)) app.render();
                 })
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'diary_comments' },
+                payload => onCommentInsert(payload.new))
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_community_posts' },
+                payload => window.diaryCommunities && window.diaryCommunities.onRemoteChange(payload))
             .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_shared_entries' },
                 () => {
                     s.feed = null;
@@ -904,7 +911,8 @@ document.addEventListener('DOMContentLoaded', () => {
             client.from('diary_shared_entries').select(`
                 id, author, local_id, title, body, html, color, mood, photos, written_at, shared_at,
                 author_profile:diary_profiles!diary_shared_entries_author_fkey(username, display_name),
-                likes:diary_entry_likes(user_id)
+                likes:diary_entry_likes(user_id),
+                comments:diary_comments(count)
             `).order('shared_at', { ascending: false }).limit(60),
             client.rpc('diary_friend_suggestions')
         ]);
@@ -944,10 +952,28 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Upload new entry photos to the friends-only bucket and drop ones that were removed
+    // Upload one picture as raw bytes (never FormData — iPhone WebKit sends those empty).
+    // Big or unusual formats (e.g. HEIC) are converted to JPEG first. Returns the stored path or null.
+    async function uploadImage(bucket, pathWithoutExt, source) {
+        let blob = source;
+        try {
+            blob = await Media.compressImage(source instanceof File ? source : new File([source], 'photo', { type: source.type }));
+        } catch (e) { /* upload the original */ }
+        const data = await Media.bytes(blob);
+        if (!data || !FEED_TYPES.includes(data.type)) return null;
+        const path = `${pathWithoutExt}${extFor(data.type)}`;
+        const { error } = await client.storage.from(bucket).upload(path, data.buf, { contentType: data.type, upsert: false });
+        if (error && !/exist|duplicate/i.test(error.message)) {
+            console.warn('Photo upload failed', path, error.message);
+            return null;
+        }
+        return path;
+    }
+
     async function syncPhotos(note) {
         const me = s.profile.id;
         const images = note.attachments
-            .filter(a => (a.kind === 'image' || a.kind === 'drawing') && FEED_TYPES.includes(a.type))
+            .filter(a => a.kind === 'image' || a.kind === 'drawing')
             .slice(0, 10);
         const previous = s.remotePhotos.get(note.id) || [];
         const photos = [];
@@ -957,13 +983,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 photos.push(existing);
                 continue;
             }
-            const blob = await Media.get(img.id);
-            if (!blob) continue;
-            const path = `${me}/${note.id}/${img.id}${extFor(img.type)}`;
-            const { error } = await client.storage.from(FEED_BUCKET).upload(path, blob, { contentType: img.type, upsert: false });
-            if (error && !/exist/i.test(error.message)) continue;
-            photos.push({ id: img.id, path, name: String(img.name || '').slice(0, 120) });
+            // Photos just picked in the feed composer are still in memory — skip the device-storage round trip
+            const source = freshFiles.get(img.id) || await Media.get(img.id);
+            if (!source) continue;
+            const path = await uploadImage(FEED_BUCKET, `${me}/${note.id}/${img.id}`, source);
+            if (path) photos.push({ id: img.id, path, name: String(img.name || '').slice(0, 120) });
         }
+        images.forEach(img => freshFiles.delete(img.id));
         const stale = previous.filter(p => !photos.some(x => x.id === p.id)).map(p => p.path);
         if (stale.length) await client.storage.from(FEED_BUCKET).remove(stale);
         return photos;
@@ -1234,6 +1260,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         try {
             const note = await app.createEntry({ text, shared: true }, photos.map(p => p.file));
+            note.attachments.forEach((att, i) => { if (photos[i]) freshFiles.set(att.id, photos[i].file); });
             // Share right away instead of waiting for the autosave debounce
             clearTimeout(shareTimers.get(note.id));
             const result = await new Promise(resolve => queue(async () => {
@@ -1265,52 +1292,246 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function postCard(p) {
         const me = s.profile.id;
-        const author = p.author_profile || { username: 'unknown', display_name: 'Someone' };
-        const person = { id: p.author, display_name: author.display_name };
-        const liked = p.likes.some(l => l.user_id === me);
-        const saved = s.saved.has(p.id);
-        const long = p.body.length > 320 || p.body.split('\n').length > 5;
-        const body = p.html ? Rich.sanitize(p.html) : esc(p.body);
-        const tags = hashtags(p);
-        const photos = (p.photos || []).filter(ph => ph && typeof ph.path === 'string');
+        return renderPost({
+            kind: 'entry',
+            id: p.id,
+            author: p.author,
+            profile: p.author_profile,
+            createdAt: p.shared_at,
+            title: p.title,
+            body: p.body,
+            html: p.html,
+            mood: p.mood,
+            photos: p.photos,
+            bucket: FEED_BUCKET,
+            likes: p.likes,
+            commentCount: commentCount(p),
+            saved: s.saved.has(p.id),
+            canComment: true,
+            tags: hashtags(p),
+            mine: p.author === me
+        });
+    }
 
-        let grid = '';
-        if (photos.length) {
-            const shown = photos.slice(0, 5);
-            const extra = photos.length - shown.length;
-            grid = `<div class="post-photos n${Math.min(shown.length, 5)}">${shown.map((ph, i) => `
-                <button class="post-photo" data-action="feed-photo" data-img="${esc(ph.path)}" aria-label="View photo">
-                    <img data-path="${esc(ph.path)}" data-bucket="${FEED_BUCKET}" alt="" loading="lazy">
-                    ${i === shown.length - 1 && extra > 0 ? `<span class="photo-more">+${extra}</span>` : ''}
-                </button>`).join('')}</div>`;
-        }
+    function commentCount(p) {
+        return Array.isArray(p.comments) && p.comments[0] ? p.comments[0].count : 0;
+    }
+
+    // Instagram / Facebook style post, shared by the feed and communities.
+    // o.kind: 'entry' (feed) | 'post' (community). Photo posts show media first, text posts lead with the text.
+    function renderPost(o) {
+        const me = s.profile.id;
+        const profile = o.profile || { username: 'unknown', display_name: 'Someone' };
+        const person = { id: o.author, display_name: profile.display_name };
+        const liked = o.likes.some(l => l.user_id === me);
+        const photos = (o.photos || []).filter(ph => ph && typeof ph.path === 'string');
+        const body = o.html ? Rich.sanitize(o.html) : esc(o.body || '');
+        const long = (o.body || '').length > 280 || (o.body || '').split('\n').length > 5;
+        const name = o.mine ? 'You' : esc(profile.display_name);
+        const key = `${o.kind}:${o.id}`;
+
+        const media = photos.length ? `
+            <div class="post-media" data-like-kind="${o.kind}" data-like-id="${esc(o.id)}">
+                <div class="carousel" data-count="${photos.length}">
+                    ${photos.map(ph => `
+                        <button type="button" class="slide" data-action="post-photo" data-bucket="${o.bucket}" data-img="${esc(ph.path)}" aria-label="View photo">
+                            <img data-path="${esc(ph.path)}" data-bucket="${o.bucket}" alt="" loading="lazy">
+                        </button>`).join('')}
+                </div>
+                ${photos.length > 1 ? `
+                    <span class="slide-count">1/${photos.length}</span>
+                    <div class="dots">${photos.map((_, i) => `<span${i === 0 ? ' class="on"' : ''}></span>`).join('')}</div>` : ''}
+                <span class="burst" aria-hidden="true"><svg class="i"><use href="#i-heart-fill"/></svg></span>
+            </div>` : '';
+
+        const caption = `
+            <div class="post-caption${photos.length ? '' : ' text-only'}">
+                ${photos.length ? `<strong class="cap-name">${name}</strong> ` : ''}
+                ${o.title ? `<strong class="cap-title">${esc(o.title)}</strong>` : ''}
+                <div class="post-text rich-content${long ? ' clamped' : ''}">${body}</div>
+                ${long ? '<button class="read-more" data-action="expand-post">more</button>' : ''}
+            </div>
+            ${o.tags && o.tags.length ? `<div class="post-tags">${o.tags.map(t => `<button class="tag-link" data-action="feed-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('')}</div>` : ''}`;
 
         return `
-            <article class="post" data-search="${esc(`${author.display_name} ${author.username} ${p.title} ${p.body}`.toLowerCase())}">
+            <article class="post ig" data-search="${esc(`${profile.display_name} ${profile.username} ${o.title || ''} ${o.body || ''}`.toLowerCase())}">
                 <header class="post-head">
                     ${avatar(person, 'md')}
                     <div class="post-who">
-                        <strong>${p.author === me ? 'You' : esc(author.display_name)}</strong>
-                        <span class="muted">@${esc(author.username)} · ${timeAgo(p.shared_at)}${p.mood ? ` · ${MOOD_EMOJI[p.mood] || ''}` : ''}</span>
+                        <strong>${name}${o.badge ? ` <span class="post-badge">${o.badge}</span>` : ''}</strong>
+                        <span class="muted">@${esc(profile.username)} · ${timeAgo(o.createdAt)}${o.mood ? ` · ${MOOD_EMOJI[o.mood] || ''}` : ''}</span>
                     </div>
-                    <button class="more-btn" data-action="post-menu" data-id="${esc(p.id)}" aria-label="Post options"><svg class="i"><use href="#i-more"/></svg></button>
+                    <button class="more-btn" data-action="post-menu" data-kind="${o.kind}" data-id="${esc(o.id)}" aria-label="Post options"><svg class="i"><use href="#i-more"/></svg></button>
                 </header>
-                ${grid}
-                ${p.title ? `<h3 class="post-title">${esc(p.title)}</h3>` : ''}
-                <div class="post-text rich-content${long ? ' clamped' : ''}">${body}</div>
-                ${long ? '<button class="read-more" data-action="expand-post">read more</button>' : ''}
-                ${tags.length ? `<div class="post-tags">${tags.map(t => `<button class="tag-link" data-action="feed-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('')}</div>` : ''}
-                <footer class="post-foot">
-                    <button class="like-btn" data-action="like" data-id="${esc(p.id)}" aria-pressed="${liked}" aria-label="${liked ? 'Unlike' : 'Like'}">
-                        <svg class="i"><use href="#${liked ? 'i-heart-fill' : 'i-heart'}"/></svg><span>${p.likes.length || ''}</span>
+                ${photos.length ? media : caption}
+                <div class="post-actions">
+                    <button class="act like-btn" data-action="like" data-kind="${o.kind}" data-id="${esc(o.id)}" aria-pressed="${liked}" aria-label="${liked ? 'Unlike' : 'Like'}">
+                        <svg class="i"><use href="#${liked ? 'i-heart-fill' : 'i-heart'}"/></svg>
                     </button>
-                    ${p.author === me ? '' : `<button class="like-btn" data-action="message-friend" data-id="${esc(p.author)}" aria-label="Reply privately"><svg class="i"><use href="#i-chat"/></svg><span>Reply</span></button>`}
-                    <button class="save-btn" data-action="save-post" data-id="${esc(p.id)}" aria-pressed="${saved}" aria-label="${saved ? 'Remove from favorites' : 'Save to favorites'}">
-                        <svg class="i"><use href="#${saved ? 'i-bookmark-fill' : 'i-bookmark'}"/></svg>
-                    </button>
-                </footer>
+                    <button class="act" data-action="comments-focus" data-key="${key}" aria-label="Comment"><svg class="i"><use href="#i-chat"/></svg></button>
+                    ${o.mine || !s.friends.some(f => f.id === o.author) ? '' : `<button class="act" data-action="message-friend" data-id="${esc(o.author)}" aria-label="Message ${esc(profile.display_name)}"><svg class="i"><use href="#i-send"/></svg></button>`}
+                    ${o.kind === 'entry' ? `
+                        <button class="act save-btn" data-action="save-post" data-id="${esc(o.id)}" aria-pressed="${o.saved}" aria-label="${o.saved ? 'Remove from favorites' : 'Save to favorites'}">
+                            <svg class="i"><use href="#${o.saved ? 'i-bookmark-fill' : 'i-bookmark'}"/></svg>
+                        </button>` : ''}
+                </div>
+                ${o.likes.length ? `<p class="post-likes">${o.likes.length} ${o.likes.length === 1 ? 'like' : 'likes'}</p>` : ''}
+                ${photos.length ? caption : ''}
+                ${commentsBlock(o.kind, o.id, o.commentCount, o.canComment)}
             </article>`;
     }
+
+    // ---------- Comments ----------
+    // Threads are cached per post as "entry:<id>" / "post:<id>"; blocks re-render in place so typing isn't lost elsewhere
+    function commentsBlock(kind, id, count, canComment) {
+        const key = `${kind}:${id}`;
+        const thread = s.comments.get(key);
+        const me = s.profile.id;
+        let list = '';
+        if (thread && thread.open) {
+            list = thread.loading
+                ? '<p class="muted small">Loading comments…</p>'
+                : thread.items.map(c => {
+                    const author = c.author_profile || { display_name: 'Someone' };
+                    const canDelete = c.author === me || thread.ownerId === me;
+                    return `
+                        <div class="comment">
+                            <span class="avatar xs">${esc(app.initials(author.display_name))}</span>
+                            <p><strong>${c.author === me ? 'You' : esc(author.display_name)}</strong> ${esc(c.body)}
+                                <span class="comment-meta">${timeAgo(c.created_at)}${canDelete ? ` · <button class="link-btn" data-action="comment-delete" data-key="${key}" data-id="${esc(c.id)}">Delete</button>` : ''}</span></p>
+                        </div>`;
+                }).join('') || '<p class="muted small">No comments yet — start the conversation.</p>';
+        }
+        const total = thread && thread.open && !thread.loading ? thread.items.length : count;
+        return `
+            <div class="comments" data-comments="${key}">
+                ${!(thread && thread.open) && total ? `<button class="link-btn muted-link" data-action="comments-open" data-key="${key}">View ${total === 1 ? '1 comment' : `all ${total} comments`}</button>` : ''}
+                ${list ? `<div class="comment-list">${list}</div>` : ''}
+                ${canComment ? `
+                    <form class="comment-form" data-form="comment" data-key="${key}">
+                        <input name="body" maxlength="2000" placeholder="Add a comment…" autocomplete="off" aria-label="Add a comment">
+                        <button class="link-btn accent">Post</button>
+                    </form>` : ''}
+            </div>`;
+    }
+
+    function commentTarget(key) {
+        const [kind, id] = key.split(':');
+        return kind === 'entry' ? { column: 'entry_id', id } : { column: 'post_id', id };
+    }
+
+    // Whose post it is, so the owner can also delete comments on it
+    function postOwner(key) {
+        const [kind, id] = key.split(':');
+        const list = kind === 'entry' ? (s.feed || []) : (window.diaryCommunities ? window.diaryCommunities.posts() : []);
+        const post = list.find(p => p.id === id);
+        return post ? post.author : null;
+    }
+
+    async function openComments(key) {
+        const thread = { open: true, loading: true, items: [], ownerId: postOwner(key) };
+        s.comments.set(key, thread);
+        repaintComments(key);
+        const target = commentTarget(key);
+        const { data } = await client.from('diary_comments')
+            .select('id, body, created_at, author, author_profile:diary_profiles!diary_comments_author_fkey(username, display_name)')
+            .eq(target.column, target.id)
+            .order('created_at')
+            .limit(200);
+        thread.items = data || [];
+        thread.loading = false;
+        repaintComments(key);
+    }
+
+    async function addComment(key, body) {
+        const target = commentTarget(key);
+        const { data, error } = await client.from('diary_comments')
+            .insert({ [target.column]: target.id, body: body.slice(0, 2000) })
+            .select('id, body, created_at, author, author_profile:diary_profiles!diary_comments_author_fkey(username, display_name)')
+            .single();
+        if (error) {
+            app.showToast(key.startsWith('post:') ? 'Join the community to comment' : 'Couldn’t post your comment');
+            return false;
+        }
+        const thread = s.comments.get(key);
+        if (thread && thread.open && !thread.loading) {
+            if (!thread.items.some(c => c.id === data.id)) thread.items.push(data);
+        } else {
+            await openComments(key);
+        }
+        bumpCommentCount(key, 1);
+        repaintComments(key);
+        return true;
+    }
+
+    async function deleteComment(key, id) {
+        const { error } = await client.from('diary_comments').delete().eq('id', id);
+        if (error) return app.showToast('Couldn’t delete that comment');
+        const thread = s.comments.get(key);
+        if (thread) thread.items = thread.items.filter(c => c.id !== id);
+        bumpCommentCount(key, -1);
+        repaintComments(key);
+    }
+
+    function bumpCommentCount(key, delta) {
+        const [kind, id] = key.split(':');
+        const list = kind === 'entry' ? (s.feed || []) : (window.diaryCommunities ? window.diaryCommunities.posts() : []);
+        const post = list.find(p => p.id === id);
+        if (post) post.comments = [{ count: Math.max(0, commentCount(post) + delta) }];
+    }
+
+    function repaintComments(key) {
+        const el = content.querySelector(`[data-comments="${CSS.escape(key)}"]`);
+        if (!el) return;
+        const [kind, id] = key.split(':');
+        const list = kind === 'entry' ? (s.feed || []) : (window.diaryCommunities ? window.diaryCommunities.posts() : []);
+        const post = list.find(p => p.id === id);
+        const canComment = kind === 'entry' || (window.diaryCommunities && window.diaryCommunities.canInteract());
+        el.outerHTML = commentsBlock(kind, id, post ? commentCount(post) : 0, canComment);
+    }
+
+    // Realtime: new comments from others land in open threads
+    function onCommentInsert(c) {
+        const key = c.entry_id ? `entry:${c.entry_id}` : `post:${c.post_id}`;
+        const thread = s.comments.get(key);
+        if (thread && thread.open && !thread.loading && !thread.items.some(x => x.id === c.id)) {
+            if (c.author === s.profile.id) return;
+            const friend = s.friends.find(f => f.id === c.author);
+            thread.items.push({ ...c, author_profile: friend ? { display_name: friend.display_name, username: friend.username } : null });
+            bumpCommentCount(key, 1);
+            repaintComments(key);
+        }
+    }
+
+    // Carousel position → dots + counter
+    content.addEventListener('scroll', e => {
+        const track = e.target;
+        if (!track.classList || !track.classList.contains('carousel')) return;
+        const index = Math.round(track.scrollLeft / track.clientWidth);
+        const media = track.parentElement;
+        media.querySelectorAll('.dots span').forEach((d, i) => d.classList.toggle('on', i === index));
+        const counter = media.querySelector('.slide-count');
+        if (counter) counter.textContent = `${index + 1}/${track.children.length}`;
+    }, true);
+
+    // Double-tap / double-click a photo to like it
+    content.addEventListener('dblclick', e => {
+        const media = e.target.closest('.post-media');
+        if (!media) return;
+        e.preventDefault();
+        const burst = media.querySelector('.burst');
+        burst.classList.remove('pop');
+        void burst.offsetWidth;
+        burst.classList.add('pop');
+        const btn = media.closest('.post').querySelector('.like-btn');
+        if (btn && btn.getAttribute('aria-pressed') !== 'true') btn.click();
+    });
+
+    // Shared with community.js
+    window.diarySocial.internals = {
+        client, state: s, esc, avatar, timeAgo, gate, extFor, randomId, uploadImage, hydrateStorage,
+        renderPost, commentCount, openComments, repaintComments, MOOD_EMOJI: () => MOOD_EMOJI
+    };
 
     // One story group per person who shared in the last 24 hours (you first)
     function storyGroups() {
@@ -1667,6 +1888,7 @@ document.addEventListener('DOMContentLoaded', () => {
             app.render();
         },
         'post-menu': el => {
+            if (el.dataset.kind === 'post' && window.diaryCommunities) return window.diaryCommunities.postMenu(el);
             const post = (s.feed || []).find(p => p.id === el.dataset.id);
             if (!post) return;
             const mine = post.author === s.profile.id;
@@ -1707,7 +1929,20 @@ document.addEventListener('DOMContentLoaded', () => {
             if (entry) Media.lightbox(entry.url);
         },
         'find-friends': () => app.setView('messages'),
-        'like': el => toggleLike(el.dataset.id),
+        'like': el => (el.dataset.kind === 'post' && window.diaryCommunities
+            ? window.diaryCommunities.toggleLike(el.dataset.id)
+            : toggleLike(el.dataset.id)),
+        'comments-open': el => openComments(el.dataset.key),
+        'comments-focus': el => {
+            const input = content.querySelector(`[data-comments="${CSS.escape(el.dataset.key)}"] input`);
+            if (input) input.focus();
+            else app.showToast('Join the community to comment');
+        },
+        'comment-delete': el => deleteComment(el.dataset.key, el.dataset.id),
+        'post-photo': el => {
+            const entry = s.urls.get(`${el.dataset.bucket}:${el.dataset.img}`);
+            if (entry) Media.lightbox(entry.url);
+        },
         'expand-post': el => {
             const text = el.previousElementSibling;
             const open = text.classList.toggle('clamped');
@@ -1813,6 +2048,12 @@ document.addEventListener('DOMContentLoaded', () => {
             sendMessage();
         } else if (form.dataset.form === 'feed-post') {
             postToFeed();
+        } else if (form.dataset.form === 'comment') {
+            const input = form.querySelector('input');
+            const body = input.value.trim();
+            if (!body) return;
+            input.value = '';
+            addComment(form.dataset.key, body).then(ok => { if (!ok) input.value = body; });
         }
     });
 

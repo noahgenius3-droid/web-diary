@@ -228,7 +228,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Rendering ----------
     function render() {
-        const navView = state.view === 'folder' ? 'home' : state.view;
+        const navView = state.view === 'folder' ? 'home' : state.view === 'community' ? 'communities' : state.view;
         document.querySelectorAll('.nav-item[data-view], .tab-item[data-view]').forEach(b => {
             b.classList.toggle('active', b.dataset.view === navView);
             if (b.classList.contains('tab-item')) b.setAttribute('aria-current', b.dataset.view === navView ? 'page' : 'false');
@@ -1368,7 +1368,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function openMainMenu(anchor) {
         const nav = [['home', 'Notes', 'i-notes'], ['calendar', 'Calendar', 'i-calendar'], ['insights', 'Insights', 'i-chart'],
-            ['photos', 'Photos', 'i-image'], ['feed', 'Feed', 'i-feed'], ['messages', 'Messages', 'i-chat'],
+            ['photos', 'Photos', 'i-image'], ['feed', 'Feed', 'i-feed'], ['communities', 'Communities', 'i-users'], ['messages', 'Messages', 'i-chat'],
             ['archive', 'Archive', 'i-archive'], ['trash', 'Trash', 'i-trash']]
             .map(([view, label, icon]) => ({ label, icon, cls: 'mobile-only', onClick: () => setView(view) }));
         openPopover(anchor, [
