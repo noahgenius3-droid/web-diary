@@ -33,7 +33,10 @@ document.addEventListener('DOMContentLoaded', () => {
         strip,
         reels: () => st.reels || [],
         paintCounts,
-        openReelComments
+        openReelComments,
+        addStory: fileArg => addStory(fileArg),
+        addReel: (fileArg, opts) => addReel(fileArg, opts),
+        shareEntry: (localId, text, post) => shareEntry(localId, text, post)
     };
 
     // ---------- Lifecycle ----------
@@ -65,7 +68,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (st.storiesLoading) return;
         st.storiesLoading = true;
         const { data } = await client.from('diary_stories')
-            .select(`id, author, media_path, media_type, caption, duration, created_at, expires_at,
+            .select(`id, author, media_path, media_type, bucket, caption, duration, created_at, expires_at,
                 author_profile:diary_profiles!diary_stories_author_fkey(${PROFILE})`)
             .order('created_at')
             .limit(200);
@@ -120,52 +123,173 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Adding a story or a reel ----------
-    // Reads a video's length (and, for reels, grabs a poster frame) without playing it
+    // Reads a video's length and (for reels) a poster frame. iPhones only load a video that's on the page
+    // and has been asked to play, so the element is attached off-screen and nudged if it stalls.
+    // Never fails outright: if the browser can't decode the format, it says so and the upload still goes ahead.
     function probeVideo(file, wantPoster) {
         return new Promise(resolve => {
             const url = URL.createObjectURL(file);
             const video = document.createElement('video');
             let done = false;
+            let duration = null;
+            let nudge = null;
+            let giveUp = null;
             const finish = result => {
                 if (done) return;
                 done = true;
+                clearTimeout(nudge);
+                clearTimeout(giveUp);
+                try { video.pause(); } catch (e) {}
+                video.removeAttribute('src');
+                video.remove();
                 URL.revokeObjectURL(url);
-                resolve(result);
+                resolve({ duration, poster: null, width: video.videoWidth || 0, height: video.videoHeight || 0, ...result });
+            };
+            const readDuration = () => {
+                const d = video.duration;
+                if (Number.isFinite(d) && d > 0) duration = d;
+            };
+            const grab = () => {
+                try {
+                    if (!video.videoWidth) return finish({});
+                    const scale = Math.min(1, 720 / Math.max(video.videoWidth, video.videoHeight));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = Math.round(video.videoWidth * scale);
+                    canvas.height = Math.round(video.videoHeight * scale);
+                    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+                    canvas.toBlob(blob => finish({ poster: blob }), 'image/jpeg', 0.8);
+                } catch (e) {
+                    finish({});
+                }
             };
             video.muted = true;
             video.playsInline = true;
+            video.setAttribute('playsinline', '');
+            video.setAttribute('muted', '');
             video.preload = 'auto';
-            video.src = url;
-            video.addEventListener('error', () => finish(null));
+            video.style.cssText = 'position:fixed;left:-10000px;top:0;width:4px;height:4px;opacity:0;pointer-events:none';
             video.addEventListener('loadedmetadata', () => {
-                const duration = video.duration;
-                if (!wantPoster) return finish({ duration });
-                video.currentTime = Math.min(0.5, duration / 2 || 0);
-                video.addEventListener('seeked', () => {
-                    try {
-                        const scale = Math.min(1, 720 / Math.max(video.videoWidth, video.videoHeight));
-                        const canvas = document.createElement('canvas');
-                        canvas.width = Math.round(video.videoWidth * scale) || 360;
-                        canvas.height = Math.round(video.videoHeight * scale) || 640;
-                        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-                        canvas.toBlob(blob => finish({ duration, poster: blob }), 'image/jpeg', 0.8);
-                    } catch (e) {
-                        finish({ duration, poster: null });
-                    }
-                }, { once: true });
+                readDuration();
+                if (!wantPoster) finish({});
             });
-            setTimeout(() => finish(null), 15000);
+            video.addEventListener('durationchange', readDuration);
+            video.addEventListener('loadeddata', () => {
+                readDuration();
+                if (!wantPoster) return finish({});
+                if (duration && duration > 1 && video.currentTime < 0.2) video.currentTime = Math.min(0.5, duration / 2);
+                else grab();
+            });
+            video.addEventListener('seeked', () => { if (wantPoster) grab(); });
+            video.addEventListener('error', () => finish({ unreadable: true }));
+            document.body.append(video);
+            video.src = url;
+            video.load();
+            nudge = setTimeout(() => {
+                const p = video.play();
+                if (p && p.then) p.then(() => video.pause()).catch(() => {});
+            }, 1200);
+            giveUp = setTimeout(() => finish({}), 9000);
         });
     }
 
+    // Big phone videos (4K, high frame rate) are re-recorded at 720p so they fit under the 50 MB limit.
+    // Runs in real time while the video plays silently off-screen. Returns a File, or null if the browser can't.
+    async function shrinkVideo(file, { maxSeconds, onProgress }) {
+        const mime = window.MediaRecorder && ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+            .find(t => MediaRecorder.isTypeSupported(t));
+        if (!mime || !HTMLCanvasElement.prototype.captureStream) return null;
+        const url = URL.createObjectURL(file);
+        const video = document.createElement('video');
+        video.playsInline = true;
+        video.setAttribute('playsinline', '');
+        video.style.cssText = 'position:fixed;left:-10000px;top:0;width:4px;height:4px;opacity:0;pointer-events:none';
+        document.body.append(video);
+        let audioCtx = null;
+        try {
+            await new Promise((resolve, reject) => {
+                video.onloadedmetadata = resolve;
+                video.onerror = reject;
+                setTimeout(reject, 12000);
+                video.src = url;
+                video.load();
+            });
+            const scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight));
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.round(video.videoWidth * scale / 2) * 2;
+            canvas.height = Math.round(video.videoHeight * scale / 2) * 2;
+            const ctx = canvas.getContext('2d');
+            const stream = canvas.captureStream(30);
+            // Route the sound into the recording only — nothing plays out loud
+            try {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const source = audioCtx.createMediaElementSource(video);
+                const dest = audioCtx.createMediaStreamDestination();
+                source.connect(dest);
+                dest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+            } catch (e) { /* no sound track */ }
+            const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 2200000, audioBitsPerSecond: 96000 });
+            const chunks = [];
+            recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+            const stopped = new Promise(resolve => { recorder.onstop = resolve; });
+            const limit = Math.min(video.duration || maxSeconds, maxSeconds);
+            let finished = false;
+            const stop = () => {
+                if (finished) return;
+                finished = true;
+                video.pause();
+                if (recorder.state !== 'inactive') recorder.stop();
+            };
+            const draw = () => {
+                if (finished) return;
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                if (onProgress) onProgress(Math.min(1, video.currentTime / limit));
+                if (video.currentTime >= limit) stop();
+                else requestAnimationFrame(draw);
+            };
+            video.onended = stop;
+            recorder.start(1000);
+            try {
+                await video.play();
+            } catch (e) {
+                video.muted = true; // sound not allowed without a tap — keep the picture at least
+                await video.play();
+            }
+            draw();
+            await stopped;
+            const type = mime.split(';')[0];
+            const out = new File(chunks, `video${VIDEO_TYPES[type] || '.mp4'}`, { type });
+            return out.size ? out : null;
+        } catch (e) {
+            return null;
+        } finally {
+            if (audioCtx) audioCtx.close().catch(() => {});
+            video.remove();
+            URL.revokeObjectURL(url);
+        }
+    }
+
+    // Upload a picked video, shrinking it first if it's over the limit. Updates the Share button as it goes.
+    async function prepareVideo(file, maxSeconds) {
+        if (file.size <= MAX_BYTES) return file;
+        const btn = $('mc-share');
+        app.showToast('Making your video smaller so it can upload — keep Cordial open…');
+        const small = await shrinkVideo(file, {
+            maxSeconds,
+            onProgress: p => { if (btn) btn.textContent = `Compressing ${Math.round(p * 100)}%`; }
+        });
+        if (!small || small.size > MAX_BYTES) return null;
+        return small;
+    }
+
     function videoType(file) {
-        if (VIDEO_TYPES[file.type]) return file.type;
+        const base = (file.type || '').split(';')[0];
+        if (VIDEO_TYPES[base]) return base;
         const ext = (file.name || '').toLowerCase().split('.').pop();
         return { mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm' }[ext] || null;
     }
 
-    // The compose sheet: preview, caption, Share. Resolves with the caption or null if cancelled.
-    function compose({ title, file, isVideo, maxCaption, note }) {
+    // The compose sheet: preview, caption, Share. Resolves with { caption, alsoStory } or null if cancelled.
+    function compose({ title, file, isVideo, maxCaption, note, offerStory = false, storyDefault = false }) {
         const dialog = $('media-compose');
         const preview = $('mc-preview');
         const caption = $('mc-caption');
@@ -176,6 +300,8 @@ document.addEventListener('DOMContentLoaded', () => {
         caption.value = '';
         caption.maxLength = maxCaption;
         $('mc-note').lastChild.textContent = note;
+        $('mc-also').hidden = !offerStory;
+        $('mc-story').checked = storyDefault;
         preview.innerHTML = isVideo
             ? `<video src="${url}" playsinline autoplay muted loop></video>`
             : `<img src="${url}" alt="">`;
@@ -192,11 +318,95 @@ document.addEventListener('DOMContentLoaded', () => {
             };
             $('mc-form').onsubmit = e => {
                 e.preventDefault();
-                cleanup(caption.value.trim());
+                $('mc-share').disabled = true;
+                $('mc-share').textContent = 'Sharing…';
+                // Keep the sheet up (showing progress) until the caller is done
+                resolve({ caption: caption.value.trim(), alsoStory: offerStory && $('mc-story').checked, done: () => cleanup(undefined) });
             };
             $('mc-cancel').onclick = () => cleanup(null);
             dialog.onclose = () => cleanup(null);
         });
+    }
+
+    // Put something you already posted on your story — the file stays where it is
+    async function shareToStory({ bucket, path, type, caption = '', duration = null }) {
+        const { error } = await client.from('diary_stories').insert({
+            media_path: path, media_type: type, bucket, caption: caption.slice(0, 300),
+            duration: duration ? Math.min(180, Math.max(1, Math.round(duration * 10) / 10)) : null
+        });
+        if (error) throw error;
+    }
+
+    // A text-only post becomes a coloured card, like Instagram's "Create" stories
+    function textCard(text, color) {
+        const palette = {
+            yellow: ['#f7d774', '#f59e0b'], pink: ['#f9a8d4', '#db2777'], blue: ['#93c5fd', '#2563eb'],
+            green: ['#86efac', '#059669'], purple: ['#c4b5fd', '#7c3aed']
+        }[color] || ['#a5b4fc', '#6366f1'];
+        const canvas = document.createElement('canvas');
+        canvas.width = 1080;
+        canvas.height = 1920;
+        const ctx = canvas.getContext('2d');
+        const g = ctx.createLinearGradient(0, 0, 1080, 1920);
+        g.addColorStop(0, palette[0]);
+        g.addColorStop(1, palette[1]);
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, 1080, 1920);
+        const words = String(text).replace(/\s+/g, ' ').trim().slice(0, 400).split(' ');
+        const size = words.length > 60 ? 54 : words.length > 25 ? 66 : 84;
+        ctx.font = `700 ${size}px "Mulish", system-ui, sans-serif`;
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+        ctx.shadowColor = 'rgba(0,0,0,0.18)';
+        ctx.shadowBlur = 12;
+        const lines = [];
+        let line = '';
+        words.forEach(w => {
+            const next = line ? `${line} ${w}` : w;
+            if (ctx.measureText(next).width > 900 && line) {
+                lines.push(line);
+                line = w;
+            } else {
+                line = next;
+            }
+        });
+        if (line) lines.push(line);
+        const shown = lines.slice(0, 16);
+        const height = shown.length * size * 1.3;
+        shown.forEach((l, i) => ctx.fillText(i === 15 && lines.length > 16 ? `${l}…` : l, 540, 960 - height / 2 + i * size * 1.3 + size));
+        ctx.shadowBlur = 0;
+        ctx.font = '600 40px "Mulish", system-ui, sans-serif';
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.fillText(`Cordial · @${s.profile.username}`, 540, 1800);
+        return new Promise(resolve => canvas.toBlob(b => resolve(new File([b], 'story.jpg', { type: 'image/jpeg' })), 'image/jpeg', 0.9));
+    }
+
+    // A feed post → your story: its photos (up to 5) if it has any, otherwise a text card
+    async function shareEntry(localId, text, post) {
+        try {
+            let row = post;
+            if (!row || !row.photos) {
+                const { data } = await client.from('diary_shared_entries')
+                    .select('photos, color, title, body').eq('author', s.profile.id).eq('local_id', localId).maybeSingle();
+                row = data;
+            }
+            if (!row) throw new Error('missing');
+            const photos = (row.photos || []).filter(p => p && p.path).slice(0, 5);
+            const caption = String(text || row.title || row.body || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+            if (photos.length) {
+                for (const p of photos) await shareToStory({ bucket: 'diary-feed', path: p.path, type: 'image', caption });
+            } else {
+                const card = await textCard(text || row.body || row.title, row.color);
+                const path = await uploadImage(STORY_BUCKET, `${s.profile.id}/${randomId()}`, card);
+                if (!path) throw new Error('upload');
+                await shareToStory({ bucket: STORY_BUCKET, path, type: 'image' });
+            }
+            app.showToast('Added to your story ✨');
+        } catch (e) {
+            app.showToast('Couldn’t add that to your story');
+        }
+        await loadStories();
+        paintStrip();
     }
 
     async function uploadVideo(bucket, file, type) {
@@ -210,39 +420,42 @@ document.addEventListener('DOMContentLoaded', () => {
         return path;
     }
 
-    async function addStory() {
+    async function addStory(picked) {
         if (st.busy) return app.showToast('Still posting your last one…');
-        const [file] = await Media.pickFiles('image/*,video/*', false);
+        const file = picked || (await Media.pickFiles('image/*,video/*', false))[0];
         if (!file) return;
         const type = videoType(file);
         const isVideo = !!type || (file.type || '').startsWith('video/');
-        let duration = null;
+        let info = null;
         if (isVideo) {
             if (!type) return app.showToast('That video format isn’t supported — try MP4 or MOV');
-            if (file.size > MAX_BYTES) return app.showToast('Videos can be up to 50 MB');
-            const info = await probeVideo(file, false);
-            if (!info) return app.showToast('Couldn’t read that video');
-            if (info.duration > MAX_STORY_VIDEO + 0.5) {
+            info = await probeVideo(file, false);
+            if (info.duration && info.duration > MAX_STORY_VIDEO + 0.5) {
                 return app.showToast(`Stories can be up to ${MAX_STORY_VIDEO} seconds — post longer videos as a reel`);
             }
-            duration = Math.max(1, Math.round(info.duration * 10) / 10);
         } else if (!(file.type || '').startsWith('image/') && !/\.(heic|heif)$/i.test(file.name || '')) {
             return app.showToast('Pick a photo or a video');
         }
 
-        const caption = await compose({ title: 'New story', file, isVideo, maxCaption: 300, note: 'Friends only · disappears after 24 hours' });
-        if (caption === null) return;
+        const result = await compose({ title: 'New story', file, isVideo, maxCaption: 300, note: 'Friends only · disappears after 24 hours' });
+        if (!result) return;
 
         st.busy = true;
         paintStrip();
-        app.showToast('Posting your story…');
         try {
-            const path = isVideo
-                ? await uploadVideo(STORY_BUCKET, file, type)
-                : await uploadImage(STORY_BUCKET, `${s.profile.id}/${randomId()}`, file);
+            let path;
+            let upload = file;
+            if (isVideo) {
+                upload = await prepareVideo(file, MAX_STORY_VIDEO);
+                if (!upload) throw new Error('too big');
+                path = await uploadVideo(STORY_BUCKET, upload, videoType(upload) || type);
+            } else {
+                path = await uploadImage(STORY_BUCKET, `${s.profile.id}/${randomId()}`, file);
+            }
             if (!path) throw new Error('upload');
             const { error } = await client.from('diary_stories').insert({
-                media_path: path, media_type: isVideo ? 'video' : 'image', caption, duration
+                media_path: path, media_type: isVideo ? 'video' : 'image', caption: result.caption,
+                duration: info && info.duration ? Math.min(60, Math.max(1, Math.round(info.duration * 10) / 10)) : null
             });
             if (error) {
                 client.storage.from(STORY_BUCKET).remove([path]);
@@ -250,8 +463,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             app.showToast('Added to your story ✨');
         } catch (e) {
-            app.showToast('Couldn’t post your story — check your connection and try again');
+            app.showToast(e.message === 'too big'
+                ? 'That video is too large to upload — try a shorter clip, or record at 1080p'
+                : 'Couldn’t post your story — check your connection and try again');
         } finally {
+            result.done();
             st.busy = false;
             await loadStories();
             paintStrip();
@@ -285,7 +501,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try { localStorage.setItem('diarySeenStories', JSON.stringify([...s.seenStories].slice(-400))); } catch (e) {}
 
         const mine = group.author === s.profile.id;
-        const seconds = item.media_type === 'video' ? (item.duration || 15) : IMAGE_SECONDS;
+        const seconds = item.media_type === 'video' ? Math.min(item.duration || 15, MAX_STORY_VIDEO) : IMAGE_SECONDS;
         $('story-bars').innerHTML = group.items.map((x, i) =>
             `<span class="${i < view.ii ? 'done' : i === view.ii ? 'active' : ''}"><i style="animation-duration:${seconds}s"></i></span>`).join('');
         $('story-avatar').outerHTML = avatar(group.person, 'sm').replace('<span class="avatar', '<span id="story-avatar" class="avatar');
@@ -309,9 +525,12 @@ document.addEventListener('DOMContentLoaded', () => {
         card.className = 'story-card media';
         card.innerHTML = `
             ${item.media_type === 'video'
-                ? `<video class="story-media" data-path="${esc(item.media_path)}" data-bucket="${STORY_BUCKET}" playsinline autoplay></video>`
-                : `<img class="story-media" data-path="${esc(item.media_path)}" data-bucket="${STORY_BUCKET}" alt="">`}
-            ${item.caption ? `<p class="story-caption">${esc(item.caption)}</p>` : ''}`;
+                ? `<video class="story-media" data-path="${esc(item.media_path)}" data-bucket="${esc(item.bucket || STORY_BUCKET)}" playsinline autoplay></video>`
+                : `<img class="story-media" data-path="${esc(item.media_path)}" data-bucket="${esc(item.bucket || STORY_BUCKET)}" alt="">`}
+            ${item.caption ? `<p class="story-caption">${esc(item.caption)}</p>` : ''}
+            ${mine ? `<button type="button" class="story-seen" id="story-seen" data-id="${esc(item.id)}"><svg class="i"><use href="#i-eye"/></svg><span>Seen by …</span></button>` : ''}`;
+        if (mine) paintSeen(item.id);
+        else recordView(item.id);
         const media = card.querySelector('.story-media');
         hydrateStorage(card).then(() => {
             if (item.media_type === 'video' && current() === item) {
@@ -328,7 +547,58 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         view.paused = false;
         viewer.classList.remove('paused');
-        run(seconds * 1000 + (item.media_type === 'video' ? 1500 : 0)); // videos end on 'ended'; the timer is a safety net
+        $('story-viewers').hidden = true;
+        // Videos end on 'ended' (or after a minute for a shared reel); the timer is the backstop
+        run(seconds * 1000 + (item.media_type === 'video' && (item.duration || 0) <= MAX_STORY_VIDEO ? 1500 : 0));
+    }
+
+    // ---------- Who viewed your story ----------
+    const viewed = new Set(); // views already recorded this session
+    function recordView(id) {
+        if (viewed.has(id)) return;
+        viewed.add(id);
+        client.from('diary_story_views')
+            .upsert({ story_id: id }, { onConflict: 'story_id,viewer', ignoreDuplicates: true })
+            .then(() => {});
+    }
+
+    async function loadViews(id) {
+        const { data } = await client.from('diary_story_views')
+            .select(`viewer, viewed_at, profile:diary_profiles!diary_story_views_viewer_fkey(id, ${PROFILE})`)
+            .eq('story_id', id)
+            .order('viewed_at', { ascending: false });
+        return data || [];
+    }
+
+    async function paintSeen(id) {
+        const views = await loadViews(id);
+        const btn = $('story-seen');
+        if (!btn || btn.dataset.id !== id) return;
+        btn.querySelector('span').textContent = views.length ? `Seen by ${views.length}` : 'No views yet';
+    }
+
+    async function openSeen(id) {
+        pause();
+        const panel = $('story-viewers');
+        panel.hidden = false;
+        panel.innerHTML = '<p class="muted small">Loading…</p>';
+        const views = await loadViews(id);
+        panel.innerHTML = `
+            <header><strong>${views.length ? `Seen by ${views.length}` : 'No one has seen this yet'}</strong>
+                <button type="button" class="icon-btn" data-sv="close" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button></header>
+            <div class="sv-list">
+                ${views.map(v => {
+                    const p = v.profile || { id: v.viewer, display_name: 'Someone', username: '' };
+                    return `<div class="sv-row">${avatar(p, 'md')}<span><strong>${esc(p.display_name)}</strong><small>${timeAgo(v.viewed_at)}</small></span></div>`;
+                }).join('') || '<p class="sv-empty">When friends watch your story, they’ll show up here.</p>'}
+            </div>`;
+    }
+
+    function closeSeen() {
+        const panel = $('story-viewers');
+        if (panel.hidden) return;
+        panel.hidden = true;
+        resume();
     }
 
     function run(ms) {
@@ -382,7 +652,8 @@ document.addEventListener('DOMContentLoaded', () => {
             app.showToast('Couldn’t delete that story');
             return resume();
         }
-        client.storage.from(STORY_BUCKET).remove([item.media_path]);
+        // Only files made for the story are deleted — a shared post or reel keeps its media
+        if ((item.bucket || STORY_BUCKET) === STORY_BUCKET) client.storage.from(STORY_BUCKET).remove([item.media_path]);
         st.stories = (st.stories || []).filter(x => x.id !== item.id);
         const group = view.groups[view.gi];
         group.items = group.items.filter(x => x.id !== item.id);
@@ -403,8 +674,17 @@ document.addEventListener('DOMContentLoaded', () => {
     // Press and hold to pause, like Instagram
     let holdTimer = null;
     let held = false;
+    viewer.addEventListener('click', e => {
+        const seen = e.target.closest('#story-seen');
+        if (seen) {
+            e.stopPropagation();
+            openSeen(seen.dataset.id);
+            return;
+        }
+        if (e.target.closest('[data-sv="close"]')) closeSeen();
+    });
     viewer.addEventListener('pointerdown', e => {
-        if (e.target.closest('.story-head')) return;
+        if (e.target.closest('.story-head, #story-seen, .story-viewers')) return;
         held = false;
         holdTimer = setTimeout(() => { held = true; pause(); }, 220);
     });
@@ -520,6 +800,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <button class="reel-act" data-action="reel-mute" aria-label="${st.muted ? 'Turn sound on' : 'Mute'}">
                         <svg class="i"><use href="#${st.muted ? 'i-volume-off' : 'i-volume'}"/></svg>
                     </button>
+                    ${r.author === me ? `<button class="reel-act" data-action="reel-story" data-id="${esc(r.id)}" aria-label="Add to your story"><svg class="i"><use href="#i-plus"/></svg><span>Story</span></button>` : ''}
                     ${r.author === me ? `<button class="reel-act" data-action="reel-delete" data-id="${esc(r.id)}" aria-label="Delete reel"><svg class="i"><use href="#i-trash"/></svg></button>` : ''}
                 </div>
                 <div class="reel-progress"><i></i></div>
@@ -619,27 +900,30 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    async function addReel() {
+    async function addReel(picked, opts = {}) {
         if (st.busy) return app.showToast('Still posting your last one…');
-        const [file] = await Media.pickFiles('video/*', false);
+        const file = picked || (await Media.pickFiles('video/*', false))[0];
         if (!file) return;
         const type = videoType(file);
         if (!type) return app.showToast('That video format isn’t supported — try MP4 or MOV');
-        if (file.size > MAX_BYTES) return app.showToast('Reels can be up to 50 MB — try a shorter clip');
         const info = await probeVideo(file, true);
-        if (!info) return app.showToast('Couldn’t read that video');
-        if (info.duration > MAX_REEL + 0.5) return app.showToast('Reels can be up to 3 minutes');
+        if (info.duration && info.duration > MAX_REEL + 0.5) return app.showToast('Reels can be up to 3 minutes');
 
-        const caption = await compose({ title: 'New reel', file, isVideo: true, maxCaption: 2200, note: 'Friends only' });
-        if (caption === null) return;
+        const result = await compose({
+            title: 'New reel', file, isVideo: true, maxCaption: 2200, note: 'Friends only',
+            offerStory: true, storyDefault: !!opts.alsoStory
+        });
+        if (!result) return;
 
         st.busy = true;
-        app.render();
-        app.showToast('Uploading your reel…');
+        if (app.state.view === 'reels') app.render();
         let videoPath = null;
         let posterPath = null;
         try {
-            videoPath = await uploadVideo(REEL_BUCKET, file, type);
+            const upload = await prepareVideo(file, MAX_REEL);
+            if (!upload) throw new Error('too big');
+            if ($('mc-share')) $('mc-share').textContent = 'Uploading…';
+            videoPath = await uploadVideo(REEL_BUCKET, upload, videoType(upload) || type);
             if (!videoPath) throw new Error('upload');
             if (info.poster) {
                 const path = `${s.profile.id}/${randomId()}.jpg`;
@@ -647,21 +931,40 @@ document.addEventListener('DOMContentLoaded', () => {
                     .upload(path, await info.poster.arrayBuffer(), { contentType: 'image/jpeg', upsert: false });
                 if (!error) posterPath = path;
             }
+            const duration = info.duration ? Math.max(1, Math.round(info.duration * 10) / 10) : null;
             const { error } = await client.from('diary_reels').insert({
-                video_path: videoPath, poster_path: posterPath, caption,
-                duration: Math.max(1, Math.round(info.duration * 10) / 10)
+                video_path: videoPath, poster_path: posterPath, caption: result.caption, duration
             });
             if (error) throw error;
-            app.showToast('Your reel is live 🎬');
+            if (result.alsoStory) {
+                await shareToStory({ bucket: REEL_BUCKET, path: videoPath, type: 'video', caption: result.caption, duration }).catch(() => {});
+                loadStories();
+            }
+            app.showToast(result.alsoStory ? 'Your reel is live — and on your story 🎬' : 'Your reel is live 🎬');
             app.state.reelFilter = 'all';
         } catch (e) {
             const leftovers = [videoPath, posterPath].filter(Boolean);
             if (leftovers.length) client.storage.from(REEL_BUCKET).remove(leftovers);
-            app.showToast('Couldn’t post your reel — check your connection and try again');
+            app.showToast(e.message === 'too big'
+                ? 'That video is too large to upload — try a shorter clip, or record at 1080p'
+                : 'Couldn’t post your reel — check your connection and try again');
         } finally {
+            result.done();
             st.busy = false;
             st.reels = null;
             if (app.state.view === 'reels') app.render();
+        }
+    }
+
+    async function reelToStory(id) {
+        const r = (st.reels || []).find(x => x.id === id);
+        if (!r) return;
+        try {
+            await shareToStory({ bucket: REEL_BUCKET, path: r.video_path, type: 'video', caption: r.caption.slice(0, 140), duration: r.duration });
+            app.showToast('Added to your story ✨');
+            loadStories();
+        } catch (e) {
+            app.showToast('Couldn’t add that to your story');
         }
     }
 
@@ -717,6 +1020,7 @@ document.addEventListener('DOMContentLoaded', () => {
         'story-add': () => addStory(),
         'story-open': el => openStories(el.dataset.id || null),
         'reel-add': () => addReel(),
+        'reel-story': el => reelToStory(el.dataset.id),
         'reels-back': () => app.setView('feed'),
         'reels-filter': el => { app.state.reelFilter = el.dataset.filter; st.scrollTop = 0; app.render(); },
         'reel-toggle': el => {

@@ -63,6 +63,10 @@ document.addEventListener('DOMContentLoaded', () => {
         comments: new Map(),                  // "entry:<id>" | "post:<id>" -> { open, loading, items, ownerId }
         posting: false,
         rec: null,           // in-progress chat voice recording
+        replyTo: {},         // friend id -> message id being replied to
+        typing: null,        // { friendId, channel } for the open chat
+        typingFrom: null,    // friend id currently typing to you
+        feedStory: false,    // "Add to my story" in the feed composer
         channel: null,
         presence: null
     };
@@ -198,6 +202,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 renderFeedPhotos();
             }
         }
+        ensureTyping();
         if (view !== 'messages' || !signedIn()) return;
         const thread = $('chat-thread');
         if (thread) {
@@ -215,6 +220,8 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             input.innerHTML = Rich.sanitize(s.drafts[s.activeFriend] || '');
             renderPending();
+            renderReplyBar();
+            if (s.typingFrom === s.activeFriend) showTyping(s.activeFriend);
             if (s.rec) showRecBar();
             if (s.chatFocused) {
                 input.focus();
@@ -419,7 +426,9 @@ document.addEventListener('DOMContentLoaded', () => {
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'diary_messages', filter: `recipient=eq.${me}` },
                 payload => onIncomingMessage(payload.new))
             .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'diary_messages', filter: `sender=eq.${me}` },
-                payload => onMessageRead(payload.new))
+                payload => onMessageUpdate(payload.new))
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'diary_messages', filter: `recipient=eq.${me}` },
+                payload => onMessageUpdate(payload.new))
             .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_friendships' },
                 async () => {
                     await loadFriends();
@@ -634,20 +643,26 @@ document.addEventListener('DOMContentLoaded', () => {
         saveDraft();
         s.pending[friendId] = [];
         renderPending();
+        const replyTo = s.replyTo[friendId] || null;
+        delete s.replyTo[friendId];
+        renderReplyBar();
+        sendTyping(true);
 
-        const ok = await deliver(friendId, text ? html : '', pending);
+        const ok = await deliver(friendId, text ? html : '', pending, replyTo);
         if (!ok) {
             const current = $('chat-input');
             if (current && s.activeFriend === friendId) current.innerHTML = html;
             s.drafts[friendId] = html;
             s.pending[friendId] = pending;
+            if (replyTo) s.replyTo[friendId] = replyTo;
             renderPending();
+            renderReplyBar();
         }
         updateComposerButton();
     }
 
     // Upload attachments, then insert the message. Returns false (after telling the user) on failure.
-    async function deliver(friendId, html, items) {
+    async function deliver(friendId, html, items, replyTo = null) {
         s.sending = true;
         content.querySelector('.composer')?.classList.add('busy');
         const me = s.profile.id;
@@ -665,7 +680,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             }
             const { data, error } = await client.from('diary_messages')
-                .insert({ recipient: friendId, body: html.slice(0, 20000), attachments: uploaded })
+                .insert({ recipient: friendId, body: html.slice(0, 20000), attachments: uploaded, ...(replyTo ? { reply_to: replyTo } : {}) })
                 .select().single();
             if (error) throw error;
             items.forEach(p => p.preview && URL.revokeObjectURL(p.preview));
@@ -866,6 +881,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function onIncomingMessage(m) {
+        if (s.typingFrom === m.sender) hideTyping();
         const thread = s.threads[m.sender];
         if (thread && !thread.some(x => x.id === m.id)) thread.push(m);
         s.last[m.sender] = m;
@@ -885,15 +901,37 @@ document.addEventListener('DOMContentLoaded', () => {
         if (app.state.view === 'messages') updateConvoRow(m.sender);
     }
 
-    function onMessageRead(m) {
-        const thread = s.threads[m.recipient];
+    // Read receipts, reactions and unsends arrive as updates to the row
+    function onMessageUpdate(m) {
+        const other = m.sender === s.profile.id ? m.recipient : m.sender;
+        const thread = s.threads[other];
         const local = thread && thread.find(x => x.id === m.id);
-        if (local) local.read_at = m.read_at;
-        const tick = content.querySelector(`[data-msg="${m.id}"] .ticks`);
-        if (tick && m.read_at) {
-            tick.classList.add('read');
-            tick.title = 'Read';
+        if (local) {
+            const changed = local.deleted_at !== m.deleted_at || JSON.stringify(local.reactions || {}) !== JSON.stringify(m.reactions || {});
+            Object.assign(local, { read_at: m.read_at, reactions: m.reactions || {}, deleted_at: m.deleted_at, body: m.body, attachments: m.attachments });
+            if (changed) repaintMessage(m.id);
+            else {
+                const tick = content.querySelector(`[data-msg="${m.id}"] .ticks`);
+                if (tick && m.read_at) {
+                    tick.classList.add('read');
+                    tick.title = 'Read';
+                }
+            }
         }
+        if (s.last[other] && s.last[other].id === m.id) {
+            Object.assign(s.last[other], m);
+            if (app.state.view === 'messages') updateConvoRow(other);
+        }
+    }
+
+    function repaintMessage(id) {
+        const el = content.querySelector(`[data-msg="${id}"]`);
+        const other = s.activeFriend;
+        const thread = s.threads[other] || [];
+        const i = thread.findIndex(x => String(x.id) === String(id));
+        if (!el || i < 0) return;
+        el.outerHTML = messageHTML(thread[i], thread[i - 1] || null, true);
+        hydrateStorage($('chat-thread'));
     }
 
     function appendMessage(m) {
@@ -904,9 +942,267 @@ document.addEventListener('DOMContentLoaded', () => {
         if (empty) empty.remove();
         const list = s.threads[other] || [];
         const prev = list[list.indexOf(m) - 1] || null;
-        threadEl.insertAdjacentHTML('beforeend', messageHTML(m, prev));
+        const nearBottom = threadEl.scrollHeight - threadEl.scrollTop - threadEl.clientHeight < 160;
+        const typing = threadEl.querySelector('.typing-row');
+        if (typing) typing.insertAdjacentHTML('beforebegin', messageHTML(m, prev));
+        else threadEl.insertAdjacentHTML('beforeend', messageHTML(m, prev));
         hydrateStorage(threadEl);
-        threadEl.scrollTop = threadEl.scrollHeight;
+        const fresh = threadEl.querySelector(`[data-msg="${m.id}"]`);
+        if (fresh) fresh.classList.add('pop-in');
+        if (nearBottom || m.sender === s.profile.id) {
+            threadEl.scrollTo({ top: threadEl.scrollHeight, behavior: 'smooth' });
+        } else {
+            showJump(true);
+        }
+    }
+
+    function showJump(fresh) {
+        const btn = $('chat-jump');
+        if (!btn) return;
+        btn.hidden = false;
+        btn.classList.toggle('fresh', !!fresh);
+        btn.querySelector('span').textContent = fresh ? 'New message' : '';
+    }
+
+    // ---------- Reactions, replies, unsend ----------
+    const REACTIONS = ['❤️', '😂', '😮', '😢', '🙏', '👍', '🔥', '🎉'];
+
+    function findMessage(id) {
+        return (s.threads[s.activeFriend] || []).find(x => String(x.id) === String(id));
+    }
+
+    async function react(id, emoji) {
+        const m = findMessage(id);
+        if (!m || m.deleted_at) return;
+        const me = s.profile.id;
+        const before = JSON.parse(JSON.stringify(m.reactions || {}));
+        const had = (before[emoji] || []).includes(me);
+        const next = {};
+        Object.entries(before).forEach(([k, users]) => {
+            const rest = users.filter(u => u !== me);
+            if (rest.length) next[k] = rest;
+        });
+        if (!had) next[emoji] = [...(next[emoji] || []), me];
+        m.reactions = next;
+        closeReactBar();
+        repaintMessage(id);
+        const el = content.querySelector(`[data-msg="${id}"] .react-chip[data-emoji="${emoji}"]`);
+        if (el) el.classList.add('pop');
+        const { data, error } = await client.rpc('diary_react_message', { p_id: Number(id), p_emoji: emoji });
+        if (error) {
+            m.reactions = before;
+            app.showToast('Couldn’t add that reaction');
+        } else {
+            m.reactions = data || {};
+        }
+        repaintMessage(id);
+    }
+
+    function startReply(id) {
+        const m = findMessage(id);
+        if (!m || m.deleted_at) return;
+        s.replyTo[s.activeFriend] = m.id;
+        closeReactBar();
+        renderReplyBar();
+        const input = $('chat-input');
+        if (input) {
+            input.focus();
+            Rich.placeCaretAtEnd(input);
+        }
+    }
+
+    function renderReplyBar() {
+        const bar = $('reply-bar');
+        if (!bar) return;
+        const m = findMessage(s.replyTo[s.activeFriend]);
+        bar.hidden = !m;
+        if (!m) return;
+        const friend = s.friends.find(f => f.id === s.activeFriend);
+        bar.innerHTML = `
+            <svg class="i"><use href="#i-reply"/></svg>
+            <span class="reply-text"><strong>Replying to ${m.sender === s.profile.id ? 'yourself' : esc(friend ? friend.display_name : 'them')}</strong><small>${esc(previewOf(m))}</small></span>
+            <button type="button" class="icon-btn ghost" data-action="cancel-reply" aria-label="Cancel reply"><svg class="i"><use href="#i-close"/></svg></button>`;
+    }
+
+    async function unsend(id) {
+        const m = findMessage(id);
+        if (!m || m.sender !== s.profile.id) return;
+        const ok = await app.ask({ title: 'Unsend this message?', text: 'It will be removed for both of you.', ok: 'Unsend', danger: true });
+        if (!ok) return;
+        const { data, error } = await client.rpc('diary_unsend_message', { p_id: Number(id) });
+        if (error) return app.showToast('Couldn’t unsend that message');
+        const paths = (data || []).map(a => a && a.path).filter(Boolean);
+        if (paths.length) client.storage.from(BUCKET).remove(paths);
+        Object.assign(m, { deleted_at: new Date().toISOString(), body: '', attachments: [], reactions: {} });
+        repaintMessage(id);
+        updateConvoRow(s.activeFriend);
+    }
+
+    function jumpTo(id) {
+        const el = content.querySelector(`[data-msg="${id}"]`);
+        if (!el) return app.showToast('That message is further back in the chat');
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.remove('flash');
+        void el.offsetWidth;
+        el.classList.add('flash');
+    }
+
+    // The floating bar: quick reactions + reply / copy / unsend
+    function openReactBar(id) {
+        closeReactBar();
+        const m = findMessage(id);
+        const el = content.querySelector(`[data-msg="${id}"]`);
+        if (!m || !el || m.deleted_at) return;
+        const mine = m.sender === s.profile.id;
+        const bar = document.createElement('div');
+        bar.className = 'react-bar';
+        bar.setAttribute('role', 'menu');
+        bar.innerHTML = `
+            <div class="react-emojis">${REACTIONS.map(e => `<button type="button" data-action="react" data-id="${esc(String(id))}" data-emoji="${e}" aria-label="React ${e}">${e}</button>`).join('')}</div>
+            <div class="react-actions">
+                <button type="button" data-action="msg-reply" data-id="${esc(String(id))}"><svg class="i"><use href="#i-reply"/></svg>Reply</button>
+                ${Rich.toText(m.body || '') ? `<button type="button" data-action="msg-copy" data-id="${esc(String(id))}"><svg class="i"><use href="#i-notes"/></svg>Copy</button>` : ''}
+                ${mine ? `<button type="button" class="danger" data-action="msg-unsend" data-id="${esc(String(id))}"><svg class="i"><use href="#i-trash"/></svg>Unsend</button>` : ''}
+            </div>`;
+        el.querySelector('.msg-card').append(bar);
+        el.classList.add('menu-open');
+        if (navigator.vibrate) navigator.vibrate(12);
+    }
+
+    function closeReactBar() {
+        content.querySelectorAll('.react-bar').forEach(b => {
+            b.closest('.msg')?.classList.remove('menu-open');
+            b.remove();
+        });
+    }
+
+    document.addEventListener('pointerdown', e => {
+        if (!e.target.closest('.react-bar') && !e.target.closest('[data-action="msg-menu"]')) closeReactBar();
+    });
+
+    // Touch: long-press opens the bar, swipe right replies; anywhere: double-tap loves
+    let press = null;
+    content.addEventListener('pointerdown', e => {
+        const card = e.target.closest('.msg:not(.unsent) .msg-card');
+        if (!card || e.target.closest('button, a, .vn, .react-bar')) return;
+        const msg = card.closest('.msg');
+        press = { card, id: msg.dataset.msg, x: e.clientX, y: e.clientY, dx: 0, moved: false, pointer: e.pointerType };
+        press.timer = setTimeout(() => {
+            if (press && !press.moved) {
+                openReactBar(press.id);
+                press.opened = true;
+            }
+        }, 450);
+    });
+    content.addEventListener('pointermove', e => {
+        if (!press) return;
+        const dx = e.clientX - press.x;
+        const dy = e.clientY - press.y;
+        if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+            press.moved = true;
+            clearTimeout(press.timer);
+        }
+        if (press.pointer === 'touch' && dx > 0 && Math.abs(dy) < 30) {
+            press.dx = Math.min(dx, 90);
+            press.card.style.transform = `translateX(${press.dx}px)`;
+            press.card.classList.toggle('will-reply', press.dx > 60);
+        }
+    });
+    const endPress = () => {
+        if (!press) return;
+        clearTimeout(press.timer);
+        press.card.style.transform = '';
+        press.card.classList.remove('will-reply');
+        if (press.dx > 60) startReply(press.id);
+        press = null;
+    };
+    content.addEventListener('pointerup', endPress);
+    content.addEventListener('pointercancel', endPress);
+    content.addEventListener('contextmenu', e => {
+        if (e.target.closest('.msg-card') && e.pointerType !== 'mouse') e.preventDefault();
+    });
+    content.addEventListener('dblclick', e => {
+        const card = e.target.closest('.msg:not(.unsent) .msg-card');
+        if (!card || e.target.closest('button, a, .vn, .react-bar')) return;
+        e.preventDefault();
+        const id = card.closest('.msg').dataset.msg;
+        const m = findMessage(id);
+        if (m && !((m.reactions || {})['❤️'] || []).includes(s.profile.id)) react(id, '❤️');
+    });
+
+    // Scrolled up? Offer a way back down
+    content.addEventListener('scroll', e => {
+        if (e.target.id !== 'chat-thread') return;
+        const t = e.target;
+        const away = t.scrollHeight - t.scrollTop - t.clientHeight > 400;
+        const btn = $('chat-jump');
+        if (!btn) return;
+        if (away) {
+            if (btn.hidden) showJump(false);
+        } else {
+            btn.hidden = true;
+        }
+    }, true);
+
+    // ---------- Typing indicator (a private channel just for the two of you) ----------
+    function ensureTyping() {
+        const want = app.state.view === 'messages' && signedIn() && s.activeFriend ? s.activeFriend : null;
+        if (s.typing && s.typing.friendId === want) return;
+        if (s.typing) {
+            client.removeChannel(s.typing.channel);
+            s.typing = null;
+        }
+        hideTyping();
+        if (!want) return;
+        const topic = `diary_dm:${[s.profile.id, want].sort().join(':')}`;
+        const channel = client.channel(topic, { config: { private: true, broadcast: { self: false } } })
+            .on('broadcast', { event: 'typing' }, ({ payload }) => {
+                if (!payload || payload.from !== want) return;
+                if (payload.stop) hideTyping();
+                else showTyping(want);
+            })
+            .subscribe();
+        s.typing = { friendId: want, channel, sentAt: 0 };
+    }
+
+    function sendTyping(stop = false) {
+        if (!s.typing) return;
+        const now = Date.now();
+        if (!stop && now - s.typing.sentAt < 2000) return;
+        s.typing.sentAt = stop ? 0 : now;
+        s.typing.channel.send({ type: 'broadcast', event: 'typing', payload: { from: s.profile.id, stop } });
+    }
+
+    let typingTimer = null;
+    function showTyping(friendId) {
+        s.typingFrom = friendId;
+        clearTimeout(typingTimer);
+        typingTimer = setTimeout(hideTyping, 4000);
+        const status = content.querySelector(`.chat-head [data-status="${CSS.escape(friendId)}"]`);
+        if (status) {
+            status.textContent = 'typing…';
+            status.classList.add('typing');
+        }
+        const thread = $('chat-thread');
+        if (thread && !thread.querySelector('.typing-row')) {
+            const nearBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 160;
+            const friend = s.friends.find(f => f.id === friendId);
+            thread.insertAdjacentHTML('beforeend', `<div class="typing-row">${friend ? avatar(friend, 'xs') : ''}<span class="typing-bubble" aria-label="typing"><i></i><i></i><i></i></span></div>`);
+            if (nearBottom) thread.scrollTop = thread.scrollHeight;
+        }
+    }
+
+    function hideTyping() {
+        clearTimeout(typingTimer);
+        const friendId = s.typingFrom;
+        s.typingFrom = null;
+        content.querySelectorAll('.typing-row').forEach(x => x.remove());
+        if (!friendId) return;
+        const status = content.querySelector(`.chat-head [data-status="${CSS.escape(friendId)}"]`);
+        if (status) {
+            status.classList.remove('typing');
+            status.textContent = s.online.has(friendId) ? 'Active now' : status.dataset.away;
+        }
     }
 
     // Refresh one conversation row without re-rendering the whole inbox (keeps the composer intact)
@@ -1301,6 +1597,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="pc-foot">
                             <button type="button" class="pc-tool" data-action="feed-add-photos"><svg class="i"><use href="#i-image"/></svg>Photo</button>
                             <button type="button" class="pc-tool camera" data-action="feed-camera"><svg class="i"><use href="#i-camera"/></svg>Camera</button>
+                            <button type="button" class="pc-tool video" data-action="feed-video"><svg class="i"><use href="#i-reel"/></svg>Video</button>
+                            <button type="button" class="pc-tool story-toggle" data-action="feed-story-toggle" aria-pressed="${s.feedStory}" title="Also add this post to your story"><span class="pc-story-ring" aria-hidden="true"></span>Story</button>
                             <span class="pc-note"><svg class="i"><use href="#i-lock"/></svg>Friends only · also saved to your diary</span>
                             <button type="submit" class="pc-post" id="feed-post-btn">${s.posting ? 'Posting…' : 'Post'}</button>
                         </div>
@@ -1420,6 +1718,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }));
             photos.forEach(p => URL.revokeObjectURL(p.preview));
+            if (result.ok && s.feedStory && window.diaryStories) window.diaryStories.shareEntry(note.id, text);
             s.feedDraft = { text: '', photos: [] };
             s.feed = null;
             if (!result.ok) return; // upsertShared already explained; the entry is still saved in the diary
@@ -1832,6 +2131,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function previewOf(m) {
+        if (m.deleted_at) return '🚫 Message unsent';
         const text = Rich.toText(m.body || '').replace(/\s+/g, ' ').trim();
         if (text) return text.slice(0, 80);
         const a = (m.attachments || [])[0];
@@ -1857,7 +2157,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 <button class="icon-btn" data-action="toggle-info" aria-pressed="${s.showInfo}" aria-label="Contact details" title="Contact details"><svg class="i"><use href="#i-info"/></svg></button>
             </header>
             <div class="chat-thread" id="chat-thread">${body}</div>
+            <button type="button" class="chat-jump" id="chat-jump" data-action="chat-jump" hidden aria-label="Jump to latest"><svg class="i"><use href="#i-down"/></svg><span></span></button>
             <form class="composer${s.rec ? ' recording' : ''}" data-form="send-message">
+                <div class="reply-bar" id="reply-bar" hidden></div>
+                <div class="quick-replies">${['👍', '❤️', '😂', 'On my way!', 'Talk later?', 'Thank you 🙏'].map(q => `<button type="button" class="quick-reply" data-action="quick-reply" data-text="${esc(q)}">${esc(q)}</button>`).join('')}</div>
                 <div class="pending-atts" id="pending-atts" hidden></div>
                 <div class="rich-toolbar compact" id="chat-toolbar" role="toolbar" aria-label="Formatting"${s.showFormat ? '' : ' hidden'}></div>
                 <div class="composer-row">
@@ -1903,22 +2206,50 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.setAttribute('aria-label', mode === 'mic' ? 'Hold to record, tap for hands-free' : mode === 'recording' ? 'Release to send' : 'Send');
     }
 
-    function messageHTML(m, prev) {
-        const mine = m.sender === s.profile.id;
+    // noSep: repainting one message in place (its day separator is already on the page)
+    function messageHTML(m, prev, noSep = false) {
+        const me = s.profile.id;
+        const mine = m.sender === me;
         const friend = s.friends.find(f => f.id === (mine ? m.recipient : m.sender));
         const date = new Date(m.created_at);
         const newDay = !prev || new Date(prev.created_at).toDateString() !== date.toDateString();
-        const sep = newDay ? `<div class="day-sep"><span>${app.dayLabel(app.dayKey(date))}</span></div>` : '';
+        const sep = newDay && !noSep ? `<div class="day-sep"><span>${app.dayLabel(app.dayKey(date))}</span></div>` : '';
+        // Messages from the same person within a few minutes stack together
+        const grouped = !newDay && prev && prev.sender === m.sender && date - new Date(prev.created_at) < 5 * 60000;
+        const id = esc(String(m.id));
+
+        if (m.deleted_at) {
+            return `${sep}
+                <div class="msg ${mine ? 'out' : 'in'} unsent${grouped ? ' grouped' : ''}" data-msg="${id}">
+                    ${mine || !friend ? '' : avatar(friend, 'xs')}
+                    <div class="msg-card"><div class="msg-body"><svg class="i"><use href="#i-close"/></svg>${mine ? 'You unsent a message' : 'This message was unsent'}</div></div>
+                </div>`;
+        }
+
+        const quoted = m.reply_to ? (s.threads[mine ? m.recipient : m.sender] || []).find(x => x.id === m.reply_to) : null;
+        const quote = m.reply_to ? `
+            <button type="button" class="msg-quote" data-action="jump-msg" data-id="${esc(String(m.reply_to))}">
+                <strong>${quoted ? (quoted.sender === me ? 'You' : esc(friend ? friend.display_name : 'Friend')) : 'Earlier message'}</strong>
+                <span>${quoted ? esc(previewOf(quoted)) : 'Tap to find it'}</span>
+            </button>` : '';
         const body = m.body ? `<div class="msg-body rich-content">${Rich.sanitize(m.body)}</div>` : '';
         const atts = (m.attachments || []).map(attachmentHTML).join('');
+        const onlyEmoji = !atts && /^\p{Extended_Pictographic}(\u200d?\p{Extended_Pictographic}|\ufe0f|\s){0,6}$/u.test(Rich.toText(m.body || '').trim());
+        const reactions = Object.entries(m.reactions || {}).filter(([, users]) => Array.isArray(users) && users.length);
         return `${sep}
-            <div class="msg ${mine ? 'out' : 'in'}" data-msg="${esc(String(m.id))}">
+            <div class="msg ${mine ? 'out' : 'in'}${grouped ? ' grouped' : ''}${onlyEmoji ? ' jumbo' : ''}${reactions.length ? ' has-reacts' : ''}" data-msg="${id}">
                 ${mine || !friend ? '' : avatar(friend, 'xs')}
-                <div class="msg-card">
-                    <div class="msg-head"><strong>${mine ? 'You' : esc(friend ? friend.display_name : 'Friend')}</strong><time>${shortTime(m.created_at)}</time></div>
+                <div class="msg-card" title="${date.toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' })}">
+                    ${grouped ? '' : `<div class="msg-head"><strong>${mine ? 'You' : esc(friend ? friend.display_name : 'Friend')}</strong><time>${shortTime(m.created_at)}</time></div>`}
+                    ${quote}
                     ${body}
                     ${atts ? `<div class="msg-atts">${atts}</div>` : ''}
-                    ${mine ? `<span class="ticks${m.read_at ? ' read' : ''}" title="${m.read_at ? 'Read' : 'Sent'}"><svg class="i"><use href="#i-checks"/></svg></span>` : ''}
+                    <span class="msg-meta">${grouped ? `<time>${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</time>` : ''}${mine ? `<span class="ticks${m.read_at ? ' read' : ''}" title="${m.read_at ? 'Read' : 'Sent'}"><svg class="i"><use href="#i-checks"/></svg></span>` : ''}</span>
+                    ${reactions.length ? `<div class="msg-reacts">${reactions.map(([e, users]) => `<button type="button" class="react-chip${users.includes(me) ? ' mine' : ''}" data-action="react" data-id="${id}" data-emoji="${esc(e)}" aria-label="${esc(e)} ${users.length}">${esc(e)}${users.length > 1 ? `<span>${users.length}</span>` : ''}</button>`).join('')}</div>` : ''}
+                </div>
+                <div class="msg-tools">
+                    <button type="button" data-action="msg-menu" data-id="${id}" aria-label="React or reply"><svg class="i"><use href="#i-smile"/></svg></button>
+                    <button type="button" data-action="msg-reply" data-id="${id}" aria-label="Reply"><svg class="i"><use href="#i-reply"/></svg></button>
                 </div>
             </div>`;
     }
@@ -1990,7 +2321,13 @@ document.addEventListener('DOMContentLoaded', () => {
         'feed-all': () => { s.feedAuthor = null; s.feedFilter = 'all'; app.render(); },
         'feed-filter': el => { s.feedAuthor = null; s.feedFilter = el.dataset.filter; app.render(); },
         'feed-sort': el => { s.feedSort = el.dataset.sort; app.render(); },
-        'feed-tag': el => { s.feedAuthor = null; s.feedFilter = `tag:${el.dataset.tag}`; app.render(); window.scrollTo({ top: 0 }); },
+        'feed-tag': el => {
+            s.feedAuthor = null;
+            s.feedFilter = `tag:${el.dataset.tag}`;
+            app.render();
+            window.scrollTo({ top: 0 });
+            document.querySelector('.main-col').scrollTo({ top: 0 });
+        },
         'go-insights': () => app.setView('insights'),
         'create-post': () => {
             if (!window.diarySocial.requireSignIn('Sign in to share with friends.')) return;
@@ -2009,6 +2346,21 @@ document.addEventListener('DOMContentLoaded', () => {
             renderFeedPhotos();
         },
         'save-post': el => toggleSaved('entry', el.dataset.id),
+        'feed-story-toggle': el => {
+            s.feedStory = !s.feedStory;
+            el.setAttribute('aria-pressed', String(s.feedStory));
+            if (s.feedStory) app.showToast('This post will also go on your story');
+        },
+        'feed-video': async el => {
+            if (!window.diaryStories) return;
+            const [file] = await Media.pickFiles('video/*', false);
+            if (!file) return;
+            app.openPopover(el, [
+                { label: 'Post as a reel', icon: 'i-reel', onClick: () => window.diaryStories.addReel(file) },
+                { label: 'Add to your story', icon: 'i-plus', onClick: () => window.diaryStories.addStory(file) },
+                { label: 'Both — reel and story', icon: 'i-sparkle', onClick: () => window.diaryStories.addReel(file, { alsoStory: true }) }
+            ]);
+        },
         'repost': el => toggleRepost(el.dataset.id),
         'go-reels': () => app.setView('reels'),
         'post-menu': el => {
@@ -2023,6 +2375,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (local) app.openNote(local.id);
                         else app.showToast('That entry isn’t on this device');
                     } },
+                    { label: 'Add to your story', icon: 'i-plus', onClick: () => window.diaryStories && window.diaryStories.shareEntry(post.local_id, post.title || post.body, post) },
                     post.allow_reposts === false
                         ? { label: 'Allow reposts', icon: 'i-repost', onClick: () => setAllowReposts(post, true) }
                         : { label: 'Turn off reposts', icon: 'i-repost', onClick: () => setAllowReposts(post, false) },
@@ -2097,6 +2450,37 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         'open-chat': el => openChat(el.dataset.id),
         'close-chat': () => { s.activeFriend = null; app.render(); },
+        'react': el => react(el.dataset.id, el.dataset.emoji),
+        'msg-menu': el => {
+            const open = el.closest('.msg').classList.contains('menu-open');
+            if (open) closeReactBar();
+            else openReactBar(el.dataset.id);
+        },
+        'msg-reply': el => startReply(el.dataset.id),
+        'msg-unsend': el => { closeReactBar(); unsend(el.dataset.id); },
+        'msg-copy': async el => {
+            closeReactBar();
+            const m = findMessage(el.dataset.id);
+            try {
+                await navigator.clipboard.writeText(Rich.toText(m.body || ''));
+                app.showToast('Copied');
+            } catch (err) {
+                app.showToast('Couldn’t copy on this device');
+            }
+        },
+        'cancel-reply': () => { delete s.replyTo[s.activeFriend]; renderReplyBar(); },
+        'jump-msg': el => jumpTo(el.dataset.id),
+        'chat-jump': el => {
+            const t = $('chat-thread');
+            if (t) t.scrollTo({ top: t.scrollHeight, behavior: 'smooth' });
+            el.hidden = true;
+        },
+        'quick-reply': el => {
+            const input = $('chat-input');
+            if (!input) return;
+            input.innerHTML = esc(el.dataset.text);
+            sendMessage();
+        },
         'toggle-info': () => { s.showInfo = !s.showInfo; app.render(); },
         'toggle-mute': () => {
             const id = s.activeFriend;
@@ -2197,7 +2581,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     content.addEventListener('input', e => {
-        if (e.target.id === 'chat-input') saveDraft();
+        if (e.target.id === 'chat-input') {
+            saveDraft();
+            if (Rich.toText(e.target.innerHTML)) sendTyping();
+            else sendTyping(true);
+        }
         if (e.target.id === 'feed-text') {
             s.feedDraft.text = e.target.value;
             e.target.style.height = 'auto';

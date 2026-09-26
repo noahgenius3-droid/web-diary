@@ -20,6 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Starting points on the Notes page. `journal` reuses today's morning/evening entry if one exists.
     const TEMPLATES = [
         { id: 'blank', label: 'Blank note', desc: 'A clean page', icon: '📝', tone: 'purple', color: 'purple', make: () => ({}) },
+        { id: 'voice', label: 'Voice to note', desc: 'Record & transcribe', icon: '🎙️', tone: 'pink', transcribe: true },
         { id: 'morning', label: 'Morning journal', desc: 'Gratitude and goals', icon: '☀️', tone: 'yellow', journal: 'morning' },
         { id: 'evening', label: 'Evening reflection', desc: 'Highlights and lessons', icon: '🌙', tone: 'blue', journal: 'evening' },
         { id: 'todo', label: 'To-Do list', desc: 'Checkboxes and more', icon: '✅', tone: 'green', color: 'green',
@@ -210,6 +211,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 { cmd: 'image', label: 'Add photos', icon: 'i-image', run: () => pickAndAdd('image/*') },
                 { cmd: 'file', label: 'Attach a file', icon: 'i-paperclip', run: () => pickAndAdd('') },
                 { cmd: 'voice', label: 'Record a voice note', icon: 'i-mic', run: recordVoiceNote },
+                { cmd: 'dictate', label: 'Speak to type', icon: 'i-wave', run: () => window.diaryTranscribe && window.diaryTranscribe.open('insert') },
                 { cmd: 'draw', label: 'Handwrite or draw', icon: 'i-draw', run: drawNote }
             ]
         });
@@ -248,6 +250,7 @@ document.addEventListener('DOMContentLoaded', () => {
         Object.assign(state, { view }, extra);
         render();
         window.scrollTo({ top: 0 });
+        document.querySelector('.main-col').scrollTo({ top: 0 });
     }
 
     searchInput.addEventListener('input', () => {
@@ -416,6 +419,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const t = TEMPLATES.find(x => x.id === id);
         if (!t) return;
         if (t.journal) return openJournal(t.journal);
+        if (t.transcribe) return window.diaryTranscribe && window.diaryTranscribe.open();
         openEditor(null, { color: t.color, ...t.make() });
     }
 
@@ -1940,6 +1944,7 @@ document.addEventListener('DOMContentLoaded', () => {
             .map(([view, label, icon]) => ({ label, icon, cls: 'mobile-only', onClick: () => setView(view) }));
         openPopover(anchor, [
             ...nav,
+            { label: 'Voice to note', icon: 'i-wave', cls: 'mobile-only', onClick: () => window.diaryTranscribe && window.diaryTranscribe.open() },
             { sep: true, cls: 'mobile-only' },
             ...(hooks.menuItems ? hooks.menuItems() : []),
             {
@@ -2028,7 +2033,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     window.addEventListener('resize', closePopover);
-    window.addEventListener('scroll', closePopover, { passive: true });
+    document.addEventListener('scroll', e => {
+        if (!e.target.closest || !e.target.closest('#popover')) closePopover();
+    }, { passive: true, capture: true });
 
     // ---------- Prompt / confirm dialog ----------
     function ask({ title, text = '', value = null, placeholder = '', color = null, ok = 'OK', danger = false, allowEmpty = false, inputType = 'text' }) {
@@ -2109,7 +2116,7 @@ document.addEventListener('DOMContentLoaded', () => {
         async createEntry({ title = '', text = '', shared = false, color = null }, files = []) {
             const attachments = [];
             for (const file of files) {
-                const att = { id: uid(), kind: Media.kindOf(file.type || ''), name: file.name || 'photo', type: file.type, size: file.size };
+                const att = { id: uid(), kind: Media.kindOf(file.type || ''), name: file.name || 'photo', type: file.type, size: file.size, ...(file.duration ? { duration: file.duration } : {}) };
                 await Media.put(att.id, file);
                 attachments.push(att);
             }
@@ -2117,6 +2124,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 id: uid(), title, text, html: Rich.textToHTML(text), shared, attachments,
                 color: color || COLORS[notes.length % COLORS.length], createdAt: Date.now()
             }, notes.length);
+            n.dilute = Dilute.analyse(n);
             notes.push(n);
             sortNotes();
             persist();
