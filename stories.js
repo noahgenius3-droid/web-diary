@@ -34,6 +34,8 @@ document.addEventListener('DOMContentLoaded', () => {
         reels: () => st.reels || [],
         paintCounts,
         openReelComments,
+        feedReels,
+        feedCard,
         addStory: fileArg => addStory(fileArg),
         addReel: (fileArg, opts) => addReel(fileArg, opts),
         shareEntry: (localId, text, post) => shareEntry(localId, text, post)
@@ -53,7 +55,10 @@ document.addEventListener('DOMContentLoaded', () => {
         st.channel = client.channel(`diary-media-${id}`)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_stories' }, () => loadStories())
             .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_reels' }, () => {
-                if (st.reels !== null && app.state.view !== 'reels') st.reels = null;
+                if (st.reels !== null && app.state.view !== 'reels') {
+                    st.reels = null;
+                    if (app.state.view === 'feed') loadReels();
+                }
             })
             .subscribe();
     }
@@ -270,15 +275,45 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Upload a picked video, shrinking it first if it's over the limit. Updates the Share button as it goes.
     async function prepareVideo(file, maxSeconds) {
-        if (file.size <= MAX_BYTES) return file;
+        const hevc = await isHevc(file);
+        if (file.size <= MAX_BYTES && !hevc) return file;
         const btn = $('mc-share');
-        app.showToast('Making your video smaller so it can upload — keep Cordial open…');
-        const small = await shrinkVideo(file, {
+        app.showToast(hevc
+            ? 'Converting your video so everyone can watch it — keep Cordial open…'
+            : 'Making your video smaller so it can upload — keep Cordial open…');
+        const out = await shrinkVideo(file, {
             maxSeconds,
-            onProgress: p => { if (btn) btn.textContent = `Compressing ${Math.round(p * 100)}%`; }
+            onProgress: p => { if (btn) btn.textContent = `${hevc ? 'Converting' : 'Compressing'} ${Math.round(p * 100)}%`; }
         });
-        if (!small || small.size > MAX_BYTES) return null;
-        return small;
+        if (out && out.size <= MAX_BYTES) return out;
+        // Couldn't convert here: the original still plays on Apple devices, so send it if it fits
+        return file.size <= MAX_BYTES ? file : null;
+    }
+
+    // iPhones record HEVC by default ("High Efficiency"), which many Android and Windows browsers can't play.
+    // The codec name sits in the file's sample description ("stsd" box) as hvc1 / hev1 / dvh1 / dvhe.
+    async function isHevc(file) {
+        if (videoType(file) !== 'video/quicktime' && videoType(file) !== 'video/mp4') return false;
+        const scan = async blob => {
+            const bytes = new Uint8Array(await blob.arrayBuffer());
+            for (let i = 0; i < bytes.length - 12; i++) {
+                if (bytes[i] === 0x73 && bytes[i + 1] === 0x74 && bytes[i + 2] === 0x73 && bytes[i + 3] === 0x64) { // "stsd"
+                    const tag = String.fromCharCode(...bytes.slice(i + 16, i + 20));
+                    if (['hvc1', 'hev1', 'dvh1', 'dvhe'].includes(tag)) return true;
+                    if (['avc1', 'avc3'].includes(tag)) return false;
+                }
+            }
+            return null;
+        };
+        try {
+            // The index ("moov") is at the start or the end of the file
+            const head = await scan(file.slice(0, 4 * 1048576));
+            if (head !== null) return head;
+            const tail = await scan(file.slice(Math.max(0, file.size - 8 * 1048576)));
+            return tail === true;
+        } catch (e) {
+            return false;
+        }
     }
 
     function videoType(file) {
@@ -731,7 +766,92 @@ document.addEventListener('DOMContentLoaded', () => {
         st.reelsLoading = false;
         st.reels = error ? [] : data;
         st.reelsError = !!error;
-        if (app.state.view === 'reels') app.render();
+        if (app.state.view === 'reels' || app.state.view === 'feed') app.render();
+    }
+
+    // ---------- Reels in the feed ----------
+    function feedReels({ author = null, mine = false, saved = false, skip = false } = {}) {
+        if (st.reels === null) {
+            loadReels();
+            return [];
+        }
+        if (skip) return [];
+        return st.reels.filter(r =>
+            (!author || r.author === author) && (!mine || r.author === s.profile.id) && (!saved || s.savedReels.has(r.id)));
+    }
+
+    function feedCard(r) {
+        const me = s.profile.id;
+        const p = r.author_profile || { display_name: 'Someone', username: '' };
+        const person = { id: r.author, ...p };
+        const liked = r.likes.some(l => l.user_id === me);
+        const saved = s.savedReels.has(r.id);
+        return `
+            <article class="post ig reel-post" data-reel="${esc(r.id)}" data-search="${esc(`${p.display_name} ${p.username} ${r.caption || ''}`.toLowerCase())}">
+                <header class="post-head">
+                    ${avatar(person, 'md')}
+                    <div class="post-who">
+                        <strong>${r.author === me ? 'You' : esc(p.display_name)} <span class="post-badge reel-badge"><svg class="i"><use href="#i-reel"/></svg>Reel</span></strong>
+                        <span class="muted">@${esc(p.username)} · ${timeAgo(r.created_at)}</span>
+                    </div>
+                </header>
+                <div class="reel-post-media">
+                    ${r.poster_path ? `<img class="reel-poster" data-path="${esc(r.poster_path)}" data-bucket="${REEL_BUCKET}" alt="">` : ''}
+                    <video class="feed-reel-video" data-path="${esc(r.video_path)}" data-bucket="${REEL_BUCKET}" playsinline muted loop preload="metadata"></video>
+                    <button type="button" class="reel-post-open" data-action="reel-open" data-id="${esc(r.id)}" aria-label="Watch in Reels"></button>
+                    <span class="reel-spinner" aria-hidden="true"></span>
+                    <p class="reel-failed">This video can’t play in this browser.</p>
+                    <button type="button" class="reel-post-mute" data-action="reel-mute" aria-label="${st.muted ? 'Turn sound on' : 'Mute'}"><svg class="i"><use href="#${st.muted ? 'i-volume-off' : 'i-volume'}"/></svg></button>
+                </div>
+                <div class="post-actions">
+                    <button class="act like-btn" data-action="reel-like" data-id="${esc(r.id)}" aria-pressed="${liked}" aria-label="${liked ? 'Unlike' : 'Like'}">
+                        <svg class="i"><use href="#${liked ? 'i-heart-fill' : 'i-heart'}"/></svg><span class="act-count" data-count="likes">${r.likes.length || ''}</span>
+                    </button>
+                    <button class="act" data-action="reel-comments" data-id="${esc(r.id)}" aria-label="Comments"><svg class="i"><use href="#i-chat"/></svg><span class="act-count" data-count="comments">${count(r) || ''}</span></button>
+                    <button class="act save-btn" data-action="reel-save" data-id="${esc(r.id)}" aria-pressed="${saved}" aria-label="${saved ? 'Remove from Saved' : 'Save reel'}">
+                        <svg class="i"><use href="#${saved ? 'i-bookmark-fill' : 'i-bookmark'}"/></svg><span class="sr-only">${saved ? 'Saved' : 'Save'}</span>
+                    </button>
+                </div>
+                ${r.caption ? `<div class="post-caption"><strong class="cap-name">${r.author === me ? 'You' : esc(p.display_name)}</strong> <span class="post-text">${esc(r.caption)}</span></div>` : ''}
+            </article>`;
+    }
+
+    // Feed reels play muted while mostly on screen, like Instagram
+    let feedObserver = null;
+    function watchFeedReels() {
+        if (feedObserver) feedObserver.disconnect();
+        const cards = [...content.querySelectorAll('.reel-post')];
+        if (!cards.length) return;
+        const ready = hydrateStorage(content);
+        feedObserver = new IntersectionObserver(entries => {
+            entries.forEach(entry => {
+                const video = entry.target.querySelector('.feed-reel-video');
+                const visible = entry.isIntersecting && entry.intersectionRatio > 0.6;
+                entry.target.dataset.visible = visible ? '1' : '';
+                if (!visible) return video.pause();
+                ready.then(() => {
+                    if (!entry.target.dataset.visible || !video.src || entry.target.classList.contains('failed')) return;
+                    video.muted = st.muted;
+                    video.play().catch(err => {
+                        if (err && err.name === 'AbortError') return;
+                        video.muted = true;
+                        video.play().catch(() => {});
+                    });
+                });
+            });
+        }, { threshold: [0, 0.6, 1] });
+        cards.forEach(card => {
+            const video = card.querySelector('.feed-reel-video');
+            if (!video.dataset.watched) {
+                video.dataset.watched = '1';
+                video.defaultMuted = true;
+                video.addEventListener('waiting', () => card.classList.add('buffering'));
+                video.addEventListener('playing', () => card.classList.remove('buffering'));
+                video.addEventListener('playing', () => card.classList.add('started'));
+                video.addEventListener('error', () => { if (video.getAttribute('src')) card.classList.add('failed'); });
+            }
+            feedObserver.observe(card);
+        });
     }
 
     const count = r => (Array.isArray(r.comments) && r.comments[0] ? r.comments[0].count : 0);
@@ -782,6 +902,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 <video class="reel-video" data-path="${esc(r.video_path)}" data-bucket="${REEL_BUCKET}" playsinline loop preload="metadata"${st.muted ? ' muted' : ''}></video>
                 <button class="reel-tap" data-action="reel-toggle" aria-label="Play or pause"></button>
                 <span class="reel-state" aria-hidden="true"><svg class="i"><use href="#i-play"/></svg></span>
+                <span class="reel-spinner" aria-hidden="true"></span>
+                <p class="reel-failed">This video can’t play in this browser — it was recorded in a format only some devices support.</p>
                 <span class="burst" aria-hidden="true"><svg class="i"><use href="#i-heart-fill"/></svg></span>
                 <div class="reel-info">
                     <div class="reel-who">${avatar(person, 'sm')}<strong>${r.author === me ? 'You' : esc(p.display_name)}</strong><span>· ${timeAgo(r.created_at)}</span></div>
@@ -813,16 +935,17 @@ document.addEventListener('DOMContentLoaded', () => {
         if (observer) observer.disconnect();
         const box = $('reels');
         if (!box) return;
-        hydrateStorage(box);
+        const ready = hydrateStorage(box);
+        box.querySelectorAll('.reel-video').forEach(watchVideo);
         if (st.scrollTop && !app.state.reelId) box.scrollTop = st.scrollTop;
         box.addEventListener('scroll', () => { st.scrollTop = box.scrollTop; }, { passive: true });
         observer = new IntersectionObserver(entries => {
             entries.forEach(entry => {
                 const video = entry.target.querySelector('.reel-video');
                 if (!video) return;
-                if (entry.isIntersecting && entry.intersectionRatio > 0.6) {
-                    if (!video.dataset.hydrated) hydrateStorage(entry.target).then(() => playReel(entry.target));
-                    else playReel(entry.target);
+                entry.target.dataset.visible = entry.isIntersecting && entry.intersectionRatio > 0.6 ? '1' : '';
+                if (entry.target.dataset.visible) {
+                    ready.then(() => { if (entry.target.dataset.visible) playReel(entry.target); });
                 } else {
                     video.pause();
                 }
@@ -836,13 +959,39 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // Autoplay is only allowed muted, so every reel starts muted; sound comes on once you tap the speaker
     function playReel(el) {
         const video = el.querySelector('.reel-video');
-        if (!video || !video.src) return;
+        if (!video || !video.src || el.classList.contains('failed')) return;
         video.muted = st.muted;
-        video.play().then(() => el.classList.remove('paused')).catch(() => {
-            video.muted = true;
-            video.play().catch(() => el.classList.add('paused'));
+        const attempt = video.play();
+        if (!attempt || !attempt.then) return;
+        attempt.then(() => el.classList.remove('paused')).catch(err => {
+            if (err && err.name === 'AbortError') return; // a newer play() or load took over
+            if (!video.muted) {
+                video.muted = true;
+                video.play().then(() => el.classList.remove('paused')).catch(() => el.classList.add('paused'));
+            } else {
+                el.classList.add('paused'); // tap to play
+            }
+        });
+    }
+
+    // Loading spinner, and a clear message if this browser can't decode the file
+    function watchVideo(video) {
+        if (video.dataset.watched) return;
+        video.dataset.watched = '1';
+        video.muted = true;
+        video.defaultMuted = true;
+        video.setAttribute('muted', '');
+        const reel = video.closest('.reel');
+        video.addEventListener('waiting', () => reel.classList.add('buffering'));
+        video.addEventListener('playing', () => reel.classList.remove('buffering', 'paused'));
+        video.addEventListener('canplay', () => reel.classList.remove('buffering'));
+        video.addEventListener('error', () => {
+            if (!video.getAttribute('src')) return;
+            reel.classList.remove('buffering');
+            reel.classList.add('failed');
         });
     }
 
@@ -850,11 +999,12 @@ document.addEventListener('DOMContentLoaded', () => {
     content.addEventListener('timeupdate', e => {
         const video = e.target;
         if (!video.classList || !video.classList.contains('reel-video')) return;
-        const bar = video.closest('.reel').querySelector('.reel-progress i');
+        const reel = video.closest('.reel');
+        const bar = reel && reel.querySelector('.reel-progress i');
         if (bar && video.duration) bar.style.width = `${(video.currentTime / video.duration) * 100}%`;
     }, true);
     content.addEventListener('playing', e => {
-        if (e.target.classList && e.target.classList.contains('reel-video')) e.target.closest('.reel').classList.add('started');
+        if (e.target.classList && e.target.classList.contains('reel-video') && e.target.closest('.reel')) e.target.closest('.reel').classList.add('started');
     }, true);
 
     // Double-tap a reel to like it
@@ -953,6 +1103,7 @@ document.addEventListener('DOMContentLoaded', () => {
             st.busy = false;
             st.reels = null;
             if (app.state.view === 'reels') app.render();
+            else if (app.state.view === 'feed') loadReels();
         }
     }
 
@@ -1020,6 +1171,7 @@ document.addEventListener('DOMContentLoaded', () => {
         'story-add': () => addStory(),
         'story-open': el => openStories(el.dataset.id || null),
         'reel-add': () => addReel(),
+        'reel-open': el => app.setView('reels', { reelId: el.dataset.id, reelFilter: 'all' }),
         'reel-story': el => reelToStory(el.dataset.id),
         'reels-back': () => app.setView('feed'),
         'reels-filter': el => { app.state.reelFilter = el.dataset.filter; st.scrollTop = 0; app.render(); },
@@ -1054,7 +1206,7 @@ document.addEventListener('DOMContentLoaded', () => {
         'reel-caption': el => el.classList.toggle('clamped'),
         'reel-mute': () => {
             st.muted = !st.muted;
-            content.querySelectorAll('.reel-video').forEach(v => { v.muted = st.muted; });
+            content.querySelectorAll('.reel-video, .feed-reel-video').forEach(v => { v.muted = st.muted; });
             content.querySelectorAll('[data-action="reel-mute"]').forEach(b => {
                 b.setAttribute('aria-label', st.muted ? 'Turn sound on' : 'Mute');
                 b.querySelector('use').setAttribute('href', st.muted ? '#i-volume-off' : '#i-volume');
@@ -1066,6 +1218,11 @@ document.addEventListener('DOMContentLoaded', () => {
     app.hooks.afterRender = viewName => {
         if (previousAfter) previousAfter(viewName);
         document.body.classList.toggle('reels-mode', viewName === 'reels');
+        if (viewName === 'feed') watchFeedReels();
+        else if (feedObserver) {
+            feedObserver.disconnect();
+            feedObserver = null;
+        }
         if (viewName === 'reels') {
             watchReels();
         } else if (observer) {

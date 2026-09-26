@@ -1219,6 +1219,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Storage URLs ----------
     // Signed URLs for private storage; elements may name their bucket with data-bucket (chat by default)
+    // Signing requests in flight, by "bucket:path" — overlapping calls wait for the same one. A fresh URL
+    // for a video that's already loading would restart it (and cancel play()), so each file is signed once.
+    const signing = new Map();
+
     async function hydrateStorage(root) {
         const els = [...root.querySelectorAll('[data-path]:not([data-hydrated])')];
         if (!els.length || !client) return;
@@ -1228,17 +1232,22 @@ document.addEventListener('DOMContentLoaded', () => {
         els.forEach(el => {
             const k = key(el);
             if (s.urls.has(k) && s.urls.get(k).expires > now + 60000) return;
+            if (signing.has(k)) return;
             const bucket = el.dataset.bucket || BUCKET;
             if (!byBucket.has(bucket)) byBucket.set(bucket, new Set());
             byBucket.get(bucket).add(el.dataset.path);
         });
-        await Promise.all([...byBucket.entries()].map(async ([bucket, paths]) => {
-            const { data } = await client.storage.from(bucket).createSignedUrls([...paths], 3600);
-            (data || []).forEach(d => {
-                if (d.signedUrl) s.urls.set(`${bucket}:${d.path}`, { url: d.signedUrl, expires: now + 3600 * 1000 });
-            });
-        }));
+        [...byBucket.entries()].forEach(([bucket, paths]) => {
+            const request = client.storage.from(bucket).createSignedUrls([...paths], 3600).then(({ data }) => {
+                (data || []).forEach(d => {
+                    if (d.signedUrl) s.urls.set(`${bucket}:${d.path}`, { url: d.signedUrl, expires: now + 3600 * 1000 });
+                });
+            }).catch(() => {}).finally(() => paths.forEach(p => signing.delete(`${bucket}:${p}`)));
+            paths.forEach(p => signing.set(`${bucket}:${p}`, request));
+        });
+        await Promise.all(els.map(el => signing.get(key(el))).filter(Boolean));
         els.forEach(el => {
+            if (el.dataset.hydrated) return; // another call got there first
             const entry = s.urls.get(key(el));
             el.dataset.hydrated = '1';
             if (!entry) {
@@ -1614,7 +1623,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                     ${filterLabel ? '<button class="chip filter-chip" data-action="feed-all"><svg class="i"><use href="#i-close"/></svg>Show everything</button>' : ''}
                     <div class="feed-list">
-                        ${list.map(postCard).join('') || `<div class="empty">
+                        ${feedItems(list).join('') || `<div class="empty">
                             <p class="empty-title">${filterLabel ? 'Nothing here yet' : 'No posts yet'}</p>
                             <p>${s.feedFilter === 'saved' ? 'Tap the bookmark on any post to save it here — only you can see what you save.' : 'Turn on <strong>Share with friends</strong> in an entry, or add friends to see theirs here.'}</p>
                         </div>`}
@@ -1730,6 +1739,24 @@ document.addEventListener('DOMContentLoaded', () => {
             s.posting = false;
             if (app.state.view === 'feed') app.render();
         }
+    }
+
+    // Posts and reels in one timeline (reels come from stories.js)
+    function feedItems(list) {
+        const reels = window.diaryStories
+            ? window.diaryStories.feedReels({
+                author: s.feedAuthor,
+                mine: s.feedFilter === 'mine',
+                saved: s.feedFilter === 'saved',
+                skip: s.feedFilter.startsWith('tag:')
+            })
+            : [];
+        const items = [
+            ...list.map(p => ({ at: p.sortAt || Date.parse(p.shared_at), likes: p.likes.length, html: () => postCard(p) })),
+            ...reels.map(r => ({ at: Date.parse(r.created_at), likes: r.likes.length, html: () => window.diaryStories.feedCard(r) }))
+        ];
+        items.sort(s.feedSort === 'popular' ? (a, b) => b.likes - a.likes || b.at - a.at : (a, b) => b.at - a.at);
+        return items.map(item => item.html());
     }
 
     function hashtags(p) {
