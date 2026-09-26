@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="#ffffff">
-    <title>My Diary</title>
+    <title>Cordial</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Mulish:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -72,6 +72,12 @@
         <symbol id="i-info" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></g></symbol>
         <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 21h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
         <symbol id="i-checks" viewBox="0 0 24 24"><path d="M2 12.5l4 4L14 8M10 15.5l1 1L19 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+        <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+        <symbol id="i-more-circle" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9.5"/></g><g fill="currentColor"><circle cx="7.8" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="16.2" cy="12" r="1.3"/></g></symbol>
+        <symbol id="i-phone" viewBox="0 0 24 24"><path d="M6.6 3.5l2.6 3.1a1.6 1.6 0 0 1-.1 2.2l-1.5 1.4a12 12 0 0 0 6.2 6.2l1.4-1.5a1.6 1.6 0 0 1 2.2-.1l3.1 2.6a1.6 1.6 0 0 1 .2 2.2l-1.2 1.5c-.8 1-2.1 1.4-3.3 1A19 19 0 0 1 2.3 8.5c-.4-1.2 0-2.5 1-3.3l1.5-1.2a1.6 1.6 0 0 1 1.8-.5z" fill="currentColor"/></symbol>
+        <symbol id="i-phone-off" viewBox="0 0 24 24"><path d="M3 13.2c5-4.3 13-4.3 18 0l-2.2 2.6a1.5 1.5 0 0 1-2 .3l-2.2-1.5a1.5 1.5 0 0 1-.6-1.5l.2-1.3a11 11 0 0 0-4.4 0l.2 1.3a1.5 1.5 0 0 1-.6 1.5l-2.2 1.5a1.5 1.5 0 0 1-2-.3z" fill="currentColor"/></symbol>
+        <symbol id="i-mic-off" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9v2.5a3 3 0 0 0 5.1 2.1M15 9.5V5.5a3 3 0 0 0-5.7-1.3M5 11a7 7 0 0 0 11.1 5.7M19 11a7 7 0 0 1-.6 2.8M12 18v3.5M3 3l18 18"/></g></symbol>
+        <symbol id="i-speaker" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></g></symbol>
         <symbol id="i-users" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14a6.5 6.5 0 0 1 3.5 6"/></g></symbol>
         <symbol id="i-camera" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.5"/></g></symbol>
         <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></symbol>
@@ -89,7 +95,7 @@
         <aside class="sidebar">
             <div class="brand">
                 <span class="brand-mark"><svg class="i"><use href="#i-book"/></svg></span>
-                <span class="brand-name">DIARY</span>
+                <span class="brand-name">CORDIAL</span>
             </div>
 
             <div class="add-new">
@@ -132,7 +138,7 @@
 
         <div class="main-col">
             <header class="topbar">
-                <h1 id="page-title">My Diary</h1>
+                <h1 id="page-title">Cordial</h1>
                 <label class="search">
                     <svg class="i"><use href="#i-search"/></svg>
                     <input type="search" id="search-input" placeholder="Search" aria-label="Search entries">
@@ -167,6 +173,14 @@
     <!-- Journal entry editor -->
     <dialog class="editor tinted" id="editor" aria-label="Journal entry">
         <form method="dialog" class="editor-form" id="editor-form">
+            <!-- Phone top bar (iPhone Notes style); hidden on larger screens -->
+            <div class="ed-bar">
+                <button type="button" class="ed-back" id="ed-back"><svg class="i"><use href="#i-chevron-left"/></svg>Notes</button>
+                <span class="ed-spacer"></span>
+                <button type="button" class="ed-icon" id="ed-details" aria-expanded="false" aria-label="Note details"><svg class="i"><use href="#i-more-circle"/></svg></button>
+                <button type="button" class="ed-done" id="ed-done-m">Done</button>
+            </div>
+            <p class="ed-date-m" id="ed-date-m"></p>
             <div class="editor-top">
                 <div class="swatches" id="editor-colors" role="radiogroup" aria-label="Color"></div>
                 <div class="segmented" id="editor-kind" role="radiogroup" aria-label="Entry type"></div>
@@ -316,6 +330,39 @@
         </form>
     </dialog>
 
+    <!-- Voice call -->
+    <section class="call-panel" id="call-panel" aria-label="Voice call" hidden>
+        <button class="call-mini" id="call-mini" aria-label="Open call">
+            <span class="call-dot" aria-hidden="true"></span><span id="call-mini-text">In call</span>
+        </button>
+        <div class="call-body">
+            <header class="call-head">
+                <button class="icon-btn" id="call-minimize" aria-label="Minimise call"><svg class="i"><use href="#i-down"/></svg></button>
+                <div><strong id="call-title">Call</strong><small id="call-status">Connecting…</small></div>
+            </header>
+            <div class="call-people" id="call-people"></div>
+            <div class="call-controls">
+                <button class="call-btn" id="call-mute" aria-pressed="false"><svg class="i"><use href="#i-mic"/></svg><span>Mute</span></button>
+                <button class="call-btn" id="call-speaker" aria-pressed="false"><svg class="i"><use href="#i-speaker"/></svg><span>Sound</span></button>
+                <button class="call-btn end" id="call-leave"><svg class="i"><use href="#i-phone-off"/></svg><span>Leave</span></button>
+            </div>
+        </div>
+        <div id="call-audio" hidden></div>
+    </section>
+
+    <!-- Incoming call -->
+    <section class="call-incoming" id="call-incoming" role="alertdialog" aria-label="Incoming call" hidden>
+        <div class="incoming-card">
+            <span class="incoming-avatar" id="incoming-avatar"></span>
+            <strong id="incoming-name"></strong>
+            <small id="incoming-sub">Voice call…</small>
+            <div class="incoming-actions">
+                <button class="round-btn decline" id="incoming-decline" aria-label="Decline"><svg class="i"><use href="#i-phone-off"/></svg></button>
+                <button class="round-btn accept" id="incoming-accept" aria-label="Accept"><svg class="i"><use href="#i-phone"/></svg></button>
+            </div>
+        </div>
+    </section>
+
     <!-- Story viewer -->
     <dialog class="story-viewer" id="story" aria-label="Stories">
         <div class="story-bars" id="story-bars"></div>
@@ -350,6 +397,7 @@
     <script src="script.js"></script>
     <script src="social.js"></script>
     <script src="community.js"></script>
+    <script src="call.js"></script>
     <script src="ai.js"></script>
 </body>
 </html>

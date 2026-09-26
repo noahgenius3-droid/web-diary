@@ -121,13 +121,61 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         app.openPopover(anchor, [
             { label: `@${s.profile.username}`, icon: 'i-user', onClick: () => app.setView('messages') },
+            { label: s.profile.avatar_path ? 'Change profile photo' : 'Add profile photo', icon: 'i-camera', onClick: changeAvatar },
+            ...(s.profile.avatar_path ? [{ label: 'Remove photo', icon: 'i-trash', onClick: removeAvatar }] : []),
             { label: 'Change name', icon: 'i-pencil', onClick: () => app.renameUser() },
             { label: 'Sign out', icon: 'i-logout', onClick: signOut }
         ]);
     };
 
+    // Top-bar avatar shows the profile photo when there is one
+    app.hooks.avatarPhoto = () => (s.profile && s.profile.avatar_path ? avatarUrl(s.profile.avatar_path) : null);
+
+    // ---------- Profile photo ----------
+    async function changeAvatar() {
+        const [file] = await Media.pickFiles('image/*', false);
+        if (!file) return;
+        let blob;
+        try {
+            blob = await Media.squareImage(file, 512);
+        } catch (e) {
+            return app.showToast('Couldn’t read that photo — try a JPEG or PNG');
+        }
+        const data = await Media.bytes(blob);
+        if (!data) return app.showToast('Couldn’t read that photo');
+        app.showToast('Updating your photo…');
+        const path = `${s.profile.id}/${randomId()}.jpg`;
+        const up = await client.storage.from('diary-avatars').upload(path, data.buf, { contentType: 'image/jpeg', upsert: false });
+        if (up.error) return app.showToast('Couldn’t upload your photo');
+        const old = s.profile.avatar_path;
+        const { data: profile, error } = await client.from('diary_profiles')
+            .update({ avatar_path: path }).eq('id', s.profile.id).select().single();
+        if (error) {
+            client.storage.from('diary-avatars').remove([path]);
+            return app.showToast('Couldn’t save your photo');
+        }
+        s.profile = profile;
+        if (old) client.storage.from('diary-avatars').remove([old]);
+        app.render();
+        app.showToast('Profile photo updated');
+    }
+
+    async function removeAvatar() {
+        const old = s.profile.avatar_path;
+        const { data: profile, error } = await client.from('diary_profiles')
+            .update({ avatar_path: null }).eq('id', s.profile.id).select().single();
+        if (error) return app.showToast('Couldn’t remove your photo');
+        s.profile = profile;
+        if (old) client.storage.from('diary-avatars').remove([old]);
+        app.render();
+        app.showToast('Photo removed');
+    }
+
     app.hooks.menuItems = () => signedIn()
-        ? [{ label: 'Sign out', icon: 'i-logout', onClick: signOut }]
+        ? [
+            { label: s.profile.avatar_path ? 'Change profile photo' : 'Add profile photo', icon: 'i-camera', onClick: changeAvatar },
+            { label: 'Sign out', icon: 'i-logout', onClick: signOut }
+        ]
         : [{ label: 'Sign in', icon: 'i-user', onClick: () => openAuth() }];
 
     // Friend avatars on the Notes page header
@@ -409,8 +457,8 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadFriends() {
         const { data, error } = await client.from('diary_friendships').select(`
             id, status, requester, addressee, created_at,
-            requester_profile:diary_profiles!diary_friendships_requester_fkey(id, username, display_name),
-            addressee_profile:diary_profiles!diary_friendships_addressee_fkey(id, username, display_name)
+            requester_profile:diary_profiles!diary_friendships_requester_fkey(id, username, display_name, avatar_path),
+            addressee_profile:diary_profiles!diary_friendships_addressee_fkey(id, username, display_name, avatar_path)
         `).order('created_at');
         if (error) return;
 
@@ -910,7 +958,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const [feedRes, suggestRes] = await Promise.all([
             client.from('diary_shared_entries').select(`
                 id, author, local_id, title, body, html, color, mood, photos, written_at, shared_at,
-                author_profile:diary_profiles!diary_shared_entries_author_fkey(username, display_name),
+                author_profile:diary_profiles!diary_shared_entries_author_fkey(username, display_name, avatar_path),
                 likes:diary_entry_likes(user_id),
                 comments:diary_comments(count)
             `).order('shared_at', { ascending: false }).limit(60),
@@ -1093,7 +1141,10 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="social">
                 <aside class="social-left">
                     <div class="profile-card">
-                        <span class="avatar xl">${esc(app.initials(s.profile.display_name))}<span class="verified" aria-hidden="true"><svg class="i"><use href="#i-check"/></svg></span></span>
+                        <button class="profile-photo" data-action="change-avatar" aria-label="Change profile photo">
+                            ${avatar(s.profile, 'xl')}
+                            <span class="photo-badge" aria-hidden="true"><svg class="i"><use href="#i-camera"/></svg></span>
+                        </button>
                         <strong>${esc(s.profile.display_name)}</strong>
                         <small>@${esc(s.profile.username)}</small>
                         <div class="profile-stats">
@@ -1132,7 +1183,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     <form class="post-composer" data-form="feed-post">
                         <div class="pc-row">
-                            <span class="avatar md">${esc(app.initials(s.profile.display_name))}</span>
+                            ${avatar(s.profile, 'md')}
                             <textarea id="feed-text" rows="2" maxlength="5000" placeholder="What’s on your mind, ${esc(s.profile.display_name.split(' ')[0])}?" aria-label="Write a post"></textarea>
                         </div>
                         <div class="pc-photos" id="feed-photos" hidden></div>
@@ -1194,7 +1245,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <h4>Suggestions for you</h4>
                         ${s.suggestions.map(p => `
                             <div class="suggest-row">
-                                <span class="avatar md">${esc(app.initials(p.display_name))}</span>
+                                ${avatar(p, 'md')}
                                 <span class="contact-name"><strong>${esc(p.display_name)}</strong><small>${p.mutual ? `${p.mutual} mutual friend${p.mutual === 1 ? '' : 's'}` : `@${esc(p.username)}`}</small></span>
                                 <button class="icon-btn ghost accent" data-action="suggest-add" data-username="${esc(p.username)}" aria-label="Add ${esc(p.display_name)}"><svg class="i"><use href="#i-user-plus"/></svg></button>
                             </div>`).join('') || '<p class="muted small">No suggestions right now.</p>'}
@@ -1322,7 +1373,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderPost(o) {
         const me = s.profile.id;
         const profile = o.profile || { username: 'unknown', display_name: 'Someone' };
-        const person = { id: o.author, display_name: profile.display_name };
+        const person = { id: o.author, display_name: profile.display_name, avatar_path: profile.avatar_path };
         const liked = o.likes.some(l => l.user_id === me);
         const photos = (o.photos || []).filter(ph => ph && typeof ph.path === 'string');
         const body = o.html ? Rich.sanitize(o.html) : esc(o.body || '');
@@ -1396,7 +1447,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const canDelete = c.author === me || thread.ownerId === me;
                     return `
                         <div class="comment">
-                            <span class="avatar xs">${esc(app.initials(author.display_name))}</span>
+                            ${avatar({ id: c.author, display_name: author.display_name, avatar_path: author.avatar_path }, 'xs')}
                             <p><strong>${c.author === me ? 'You' : esc(author.display_name)}</strong> ${esc(c.body)}
                                 <span class="comment-meta">${timeAgo(c.created_at)}${canDelete ? ` · <button class="link-btn" data-action="comment-delete" data-key="${key}" data-id="${esc(c.id)}">Delete</button>` : ''}</span></p>
                         </div>`;
@@ -1434,7 +1485,7 @@ document.addEventListener('DOMContentLoaded', () => {
         repaintComments(key);
         const target = commentTarget(key);
         const { data } = await client.from('diary_comments')
-            .select('id, body, created_at, author, author_profile:diary_profiles!diary_comments_author_fkey(username, display_name)')
+            .select('id, body, created_at, author, author_profile:diary_profiles!diary_comments_author_fkey(username, display_name, avatar_path)')
             .eq(target.column, target.id)
             .order('created_at')
             .limit(200);
@@ -1447,7 +1498,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const target = commentTarget(key);
         const { data, error } = await client.from('diary_comments')
             .insert({ [target.column]: target.id, body: body.slice(0, 2000) })
-            .select('id, body, created_at, author, author_profile:diary_profiles!diary_comments_author_fkey(username, display_name)')
+            .select('id, body, created_at, author, author_profile:diary_profiles!diary_comments_author_fkey(username, display_name, avatar_path)')
             .single();
         if (error) {
             app.showToast(key.startsWith('post:') ? 'Join the community to comment' : 'Couldn’t post your comment');
@@ -1541,7 +1592,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (Date.parse(p.shared_at) < since) return;
             if (!groups.has(p.author)) {
                 const a = p.author_profile || { display_name: 'Someone', username: '' };
-                groups.set(p.author, { author: p.author, person: { id: p.author, display_name: a.display_name, username: a.username }, posts: [] });
+                groups.set(p.author, { author: p.author, person: { id: p.author, display_name: a.display_name, username: a.username, avatar_path: a.avatar_path }, posts: [] });
             }
             groups.get(p.author).posts.push(p);
         });
@@ -1572,7 +1623,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         $('story-bars').innerHTML = group.posts.map((p, i) =>
             `<span class="${i < story.pi ? 'done' : i === story.pi ? 'active' : ''}"><i></i></span>`).join('');
-        $('story-avatar').textContent = app.initials(group.person.display_name);
+        $('story-avatar').outerHTML = avatar(group.person, 'sm').replace('<span class="avatar', '<span id="story-avatar" class="avatar');
         $('story-name').textContent = group.author === s.profile.id ? 'Your story' : group.person.display_name;
         $('story-time').textContent = timeAgo(post.shared_at);
         const photo = (post.photos || [])[0];
@@ -1689,8 +1740,16 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Profile photo when there is one, initials otherwise
     function avatar(f, size = 'sm') {
-        return `<span class="avatar ${size}" data-presence="${esc(f.id)}">${esc(app.initials(f.display_name))}<span class="presence-dot" aria-hidden="true"></span></span>`;
+        const face = f.avatar_path
+            ? `<img src="${esc(avatarUrl(f.avatar_path))}" alt="" loading="lazy">`
+            : esc(app.initials(f.display_name || '?'));
+        return `<span class="avatar ${size}${f.avatar_path ? ' has-photo' : ''}" data-presence="${esc(f.id || '')}">${face}<span class="presence-dot" aria-hidden="true"></span></span>`;
+    }
+
+    function avatarUrl(path) {
+        return `${cfg.supabaseUrl}/storage/v1/object/public/diary-avatars/${path.split('/').map(encodeURIComponent).join('/')}`;
     }
 
     function convoRow(f) {
@@ -1730,6 +1789,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <button class="icon-btn back-chat" data-action="close-chat" aria-label="Back to inbox"><svg class="i"><use href="#i-back"/></svg></button>
                 ${avatar(friend, 'sm')}
                 <div class="friend-name">${esc(friend.display_name)}<small data-status="${esc(friend.id)}" data-away="@${esc(friend.username)}">${s.online.has(friend.id) ? 'Active now' : `@${esc(friend.username)}`}</small></div>
+                ${window.diaryCalls ? `<button class="icon-btn accent" data-action="call-friend" data-id="${esc(friend.id)}" aria-label="Voice call ${esc(friend.display_name)}" title="Voice call"><svg class="i"><use href="#i-phone"/></svg></button>` : ''}
                 <button class="icon-btn" data-action="toggle-info" aria-pressed="${s.showInfo}" aria-label="Contact details" title="Contact details"><svg class="i"><use href="#i-info"/></svg></button>
             </header>
             <div class="chat-thread" id="chat-thread">${body}</div>
@@ -1857,6 +1917,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------- View actions ----------
     Object.assign(app.actions, {
         'sign-in': () => openAuth(),
+        'change-avatar': () => changeAvatar(),
+        'call-friend': el => {
+            const friend = s.friends.find(f => f.id === el.dataset.id);
+            if (friend && window.diaryCalls) window.diaryCalls.callUser(friend);
+        },
         'refresh-feed': () => { s.feed = null; app.render(); },
         'feed-all': () => { s.feedAuthor = null; s.feedFilter = 'all'; app.render(); },
         'feed-filter': el => { s.feedAuthor = null; s.feedFilter = el.dataset.filter; app.render(); },

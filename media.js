@@ -134,6 +134,20 @@ window.Media = (() => {
         return new File([blob], `${(file.name || 'photo').replace(/\.[^.]+$/, '')}.jpg`, { type: 'image/jpeg' });
     }
 
+    // Centre-cropped square JPEG, for profile pictures
+    async function squareImage(file, size = 512) {
+        const bitmap = await createImageBitmap(file);
+        const side = Math.min(bitmap.width, bitmap.height);
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = Math.min(size, side);
+        canvas.getContext('2d').drawImage(bitmap,
+            (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side,
+            0, 0, canvas.width, canvas.height);
+        const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.88));
+        if (!blob) throw new Error('Couldn’t read that photo');
+        return blob;
+    }
+
     function pickFiles(accept, multiple = true, capture = null) {
         return new Promise(resolve => {
             const input = document.createElement('input');
@@ -446,5 +460,5 @@ window.Media = (() => {
         });
     }
 
-    return { put, get, bytes, del, url, hydrate, kindOf, formatSize, formatDuration, pickFiles, compressImage, recordVoice, createRecorder, drawPad, lightbox, locate };
+    return { put, get, bytes, del, url, hydrate, kindOf, formatSize, formatDuration, pickFiles, compressImage, squareImage, recordVoice, createRecorder, drawPad, lightbox, locate };
 })();

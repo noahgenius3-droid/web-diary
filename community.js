@@ -86,7 +86,7 @@ document.addEventListener('DOMContentLoaded', () => {
         c.loadingPosts = true;
         const { data } = await client.from('diary_community_posts')
             .select(`id, community_id, author, kind, title, body, html, photos, created_at,
-                author_profile:diary_profiles!diary_community_posts_author_fkey(username, display_name),
+                author_profile:diary_profiles!diary_community_posts_author_fkey(username, display_name, avatar_path),
                 likes:diary_community_likes(user_id),
                 comments:diary_comments(count)`)
             .eq('community_id', id)
@@ -102,7 +102,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!c.current) return;
         const id = c.current.id;
         const { data } = await client.from('diary_community_members')
-            .select('role, joined_at, user_id, profile:diary_profiles!diary_community_members_user_id_fkey(id, username, display_name)')
+            .select('role, joined_at, user_id, profile:diary_profiles!diary_community_members_user_id_fkey(id, username, display_name, avatar_path)')
             .eq('community_id', id)
             .order('joined_at');
         if (!c.current || c.current.id !== id) return;
@@ -205,7 +205,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
                 <div class="cm-hero-actions">
                     ${role
-                        ? `<button class="chip" data-action="cm-invite"><svg class="i"><use href="#i-user-plus"/></svg>Invite</button>
+                        ? `<span class="cm-call-slot" id="cm-call-slot">${callButton(lastCallPeople)}</span>
+                           <button class="chip" data-action="cm-invite"><svg class="i"><use href="#i-user-plus"/></svg>Invite</button>
                            <button class="icon-btn" data-action="cm-settings" aria-label="Community options"><svg class="i"><use href="#i-more"/></svg></button>`
                         : `<button class="primary-btn" data-action="cm-join" data-id="${esc(cm.id)}">Join community</button>`}
                 </div>
@@ -220,7 +221,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const composer = member ? `
             <form class="post-composer" data-form="cm-post">
                 <div class="pc-row">
-                    <span class="avatar md">${esc(app.initials(s.profile.display_name))}</span>
+                    ${avatar(s.profile, 'md')}
                     <textarea id="cm-text" rows="2" maxlength="5000" placeholder="Share an update with ${esc(cm.name)}, ${esc(first)}…" aria-label="Write a post"></textarea>
                 </div>
                 <div class="pc-photos" id="cm-photos" hidden></div>
@@ -271,9 +272,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const removable = canManage && m.role !== 'owner' && m.user_id !== me();
             return `
                 <div class="contact-row">
-                    ${avatar({ id: p.id, display_name: p.display_name }, 'md')}
+                    ${avatar(p, 'md')}
                     <span class="contact-name"><strong>${m.user_id === me() ? 'You' : esc(p.display_name)}</strong><small>@${esc(p.username)} · joined ${timeAgo(m.joined_at)}</small></span>
                     ${m.role !== 'member' ? `<span class="cm-role">${m.role === 'owner' ? 'Owner' : 'Admin'}</span>` : ''}
+                    ${m.user_id !== me() && roleOf(cm.id) && window.diaryCalls ? `<button class="icon-btn ghost accent" data-action="cm-call-member" data-id="${esc(m.user_id)}" aria-label="Call ${esc(p.display_name)}"><svg class="i"><use href="#i-phone"/></svg></button>` : ''}
                     ${removable ? `<button class="icon-btn ghost" data-action="cm-remove-member" data-id="${esc(m.user_id)}" aria-label="Remove ${esc(p.display_name)}"><svg class="i"><use href="#i-close"/></svg></button>` : ''}
                 </div>`;
         }).join('')}</div>`;
@@ -293,10 +295,50 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>`;
     }
 
+    // ---------- Calls ----------
+    let lastCallPeople = [];
+    let watching = null; // { topic, stop }
+
+    function callButton(people) {
+        if (!window.diaryCalls || !c.current) return '';
+        const topic = window.diaryCalls.topicFor(c.current);
+        if (window.diaryCalls.activeTopic() === topic) {
+            return '<button class="call-join live" data-action="cm-call"><svg class="i"><use href="#i-phone"/></svg>You’re in the call</button>';
+        }
+        if (people.length) {
+            return `<button class="call-join live" data-action="cm-call">
+                <span class="avatar-stack">${people.slice(0, 3).map(p => avatar({ id: p.id, display_name: p.name, avatar_path: p.avatar_path }, 'xs')).join('')}</span>
+                Join call · ${people.length}</button>`;
+        }
+        return '<button class="chip call-chip" data-action="cm-call"><svg class="i"><use href="#i-phone"/></svg>Voice call</button>';
+    }
+
+    // Watch the community's call room while its page is open, so "Join call · 3" stays live
+    function syncCallWatch() {
+        const want = app.state.view === 'community' && c.current && roleOf(c.current.id) && window.diaryCalls
+            ? window.diaryCalls.topicFor(c.current) : null;
+        if (watching && watching.topic !== want) {
+            watching.stop();
+            watching = null;
+            lastCallPeople = [];
+        }
+        if (want && !watching) {
+            watching = {
+                topic: want,
+                stop: window.diaryCalls.watch(want, people => {
+                    lastCallPeople = people;
+                    const slot = $('cm-call-slot');
+                    if (slot) slot.innerHTML = callButton(people);
+                })
+            };
+        }
+    }
+
     // Keep the composer's text and photos across re-renders, and load private photos
     const previousAfter = app.hooks.afterRender;
     app.hooks.afterRender = view => {
         if (previousAfter) previousAfter(view);
+        syncCallWatch();
         if (view !== 'community') return;
         hydrateStorage(content);
         const text = $('cm-text');
@@ -357,7 +399,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const { data, error } = await client.from('diary_community_posts')
                 .insert({ community_id: cm.id, photos, ...fields })
                 .select(`id, community_id, author, kind, title, body, html, photos, created_at,
-                    author_profile:diary_profiles!diary_community_posts_author_fkey(username, display_name),
+                    author_profile:diary_profiles!diary_community_posts_author_fkey(username, display_name, avatar_path),
                     likes:diary_community_likes(user_id),
                     comments:diary_comments(count)`)
                 .single();
@@ -653,7 +695,15 @@ document.addEventListener('DOMContentLoaded', () => {
             c.draft.photos = c.draft.photos.filter(p => p.id !== el.dataset.id);
             renderDraftPhotos();
         },
-        'cm-share-note': el => pickNoteToShare(el)
+        'cm-share-note': el => pickNoteToShare(el),
+        'cm-call': () => {
+            if (!window.diaryCalls) return app.showToast('Calls aren’t supported in this browser');
+            window.diaryCalls.joinCommunity(c.current);
+        },
+        'cm-call-member': el => {
+            const m = c.members.find(x => x.user_id === el.dataset.id);
+            if (m && window.diaryCalls) window.diaryCalls.callUser(m.profile || { id: m.user_id, display_name: 'Member' });
+        }
     });
 
     content.addEventListener('submit', e => {

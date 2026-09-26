@@ -4672,3 +4672,418 @@ body[data-view="feed"] .content { padding: 24px; }
     .head-actions .create-post,
     .head-actions .create-post span { font-size: 0.82rem; gap: 8px; }
 }
+
+/* =========================================================
+   Profile photos, voice calls, iPhone-Notes editor on phones
+   ========================================================= */
+
+/* ---------- Profile photos ---------- */
+.avatar.has-photo { background: var(--panel); overflow: visible; }
+
+.avatar.has-photo img {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    object-fit: cover;
+    display: block;
+}
+
+.avatar.xs.has-photo, .avatar.sm.has-photo { overflow: hidden; }
+
+.profile-photo {
+    position: relative;
+    display: inline-grid;
+    margin-bottom: 8px;
+    border-radius: 50%;
+}
+
+.profile-photo .avatar.xl { box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--board-blue); }
+
+.photo-badge {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 2px solid var(--surface);
+    background: var(--board-blue);
+    color: #fff;
+    transition: transform 0.15s;
+}
+
+.photo-badge .i { width: 13px; height: 13px; }
+.profile-photo:hover .photo-badge { transform: scale(1.1); }
+.story-ring .avatar.has-photo { border: 3px solid var(--panel); }
+
+/* ---------- Calls: buttons on pages ---------- */
+.cm-call-slot { display: inline-flex; }
+
+.call-chip { color: #1f9d55; }
+.call-chip .i { color: #1f9d55; }
+
+.call-join {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 14px;
+    border-radius: 999px;
+    background: #1f9d55;
+    color: #fff;
+    font-size: 0.8rem;
+    font-weight: 800;
+}
+
+.call-join .i { width: 14px; height: 14px; }
+.call-join .avatar-stack .avatar { border-color: #1f9d55; }
+.call-join.live { animation: call-pulse 2s ease-in-out infinite; }
+
+@keyframes call-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(31, 157, 85, 0.45); }
+    50% { box-shadow: 0 0 0 8px rgba(31, 157, 85, 0); }
+}
+
+.icon-btn.accent[data-action^="call"] .i,
+.icon-btn.accent[data-action="cm-call-member"] .i { color: #1f9d55; }
+.social-left, .social-right { scrollbar-width: thin; }
+
+/* ---------- Calls: in-call panel ---------- */
+.call-panel {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 40;
+    width: min(380px, calc(100% - 24px));
+    border-radius: 24px;
+    background: #111318;
+    color: #fff;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+    animation: pop 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.call-mini { display: none; }
+.call-body { padding: 16px 18px 20px; }
+
+.call-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 18px;
+}
+
+.call-head div { display: flex; flex-direction: column; min-width: 0; }
+.call-head strong { font-size: 1.05rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.call-head small { font-size: 0.8rem; opacity: 0.7; font-variant-numeric: tabular-nums; }
+.call-head .icon-btn { color: #fff; }
+.call-head .icon-btn:hover { background: rgba(255, 255, 255, 0.1); }
+
+.call-people {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 16px 10px;
+    max-height: 46vh;
+    overflow-y: auto;
+    padding: 4px 0 18px;
+}
+
+.call-person {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    text-align: center;
+}
+
+.call-ring {
+    border-radius: 50%;
+    padding: 3px;
+    transition: box-shadow 0.15s;
+}
+
+.call-person.speaking .call-ring { box-shadow: 0 0 0 3px #34d399, 0 0 18px rgba(52, 211, 153, 0.6); }
+.call-ring .avatar { border: none; }
+.call-ring .avatar.xl { width: 72px; height: 72px; }
+
+.call-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 100%;
+    font-size: 0.82rem;
+    font-weight: 700;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.call-name .i { width: 14px; height: 14px; color: #f87171; }
+
+.call-controls {
+    display: flex;
+    justify-content: center;
+    gap: 22px;
+}
+
+.call-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.call-btn .i {
+    width: 56px;
+    height: 56px;
+    padding: 16px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.14);
+    color: #fff;
+    transition: background 0.15s, transform 0.15s;
+}
+
+.call-btn:active .i { transform: scale(0.92); }
+.call-btn[aria-pressed="true"] .i { background: #fff; color: #111318; }
+.call-btn.end .i { background: #ef4444; }
+
+/* Minimised: a pill that keeps the call going while you browse */
+.call-panel.min {
+    width: auto;
+    border-radius: 999px;
+    background: #1f9d55;
+}
+
+.call-panel.min .call-body { display: none; }
+
+.call-panel.min .call-mini {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 18px;
+    color: #fff;
+    font-size: 0.85rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+}
+
+.call-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #fff;
+    animation: pulse 1.4s ease-in-out infinite;
+}
+
+/* ---------- Calls: incoming ---------- */
+.call-incoming {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    background: rgba(8, 9, 14, 0.7);
+    backdrop-filter: blur(6px);
+}
+
+.incoming-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    width: min(340px, 100%);
+    padding: 32px 24px 26px;
+    border-radius: 28px;
+    background: #111318;
+    color: #fff;
+    text-align: center;
+    animation: pop 0.25s ease;
+}
+
+.incoming-avatar .avatar.xl { width: 96px; height: 96px; font-size: 1.8rem; animation: call-pulse 1.6s ease-in-out infinite; }
+.incoming-card strong { margin-top: 10px; font-size: 1.3rem; }
+.incoming-card small { opacity: 0.7; }
+
+.incoming-actions {
+    display: flex;
+    gap: 56px;
+    margin-top: 26px;
+}
+
+.round-btn {
+    display: grid;
+    place-items: center;
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    color: #fff;
+}
+
+.round-btn .i { width: 28px; height: 28px; }
+.round-btn.accept { background: #22c55e; }
+.round-btn.decline { background: #ef4444; }
+
+/* ---------- iPhone Notes style editor (phones) ---------- */
+.ed-bar, .ed-date-m { display: none; }
+
+:root { --ios-accent: #d69e00; --note-page: #ffffff; }
+:root[data-theme="dark"] { --ios-accent: #ffd60a; --note-page: #1c1c1e; }
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --ios-accent: #ffd60a; --note-page: #1c1c1e; }
+}
+
+@media (max-width: 760px) {
+    .editor {
+        background: var(--note-page) !important;
+        height: var(--vvh, 100dvh);
+        max-height: var(--vvh, 100dvh);
+        top: var(--vvtop, 0);
+    }
+
+    .editor-form {
+        height: var(--vvh, 100dvh);
+        max-height: var(--vvh, 100dvh);
+        padding: 0;
+        gap: 0;
+    }
+
+    .ed-bar {
+        order: 0;
+        position: sticky;
+        top: 0;
+        z-index: 4;
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        padding: calc(6px + env(safe-area-inset-top)) 8px 6px 4px;
+        background: var(--note-page);
+    }
+
+    .ed-spacer { flex: 1; }
+
+    .ed-back {
+        display: inline-flex;
+        align-items: center;
+        gap: 0;
+        padding: 8px 6px;
+        color: var(--ios-accent);
+        font-size: 1.06rem;
+        font-weight: 500;
+    }
+
+    .ed-back .i { width: 24px; height: 24px; }
+
+    .ed-icon {
+        display: grid;
+        place-items: center;
+        width: 40px;
+        height: 40px;
+        color: var(--ios-accent);
+    }
+
+    .ed-icon .i { width: 24px; height: 24px; }
+    .ed-icon[aria-expanded="true"] { opacity: 0.6; }
+
+    .ed-done {
+        padding: 8px 8px;
+        color: var(--ios-accent);
+        font-size: 1.06rem;
+        font-weight: 700;
+    }
+
+    .ed-date-m {
+        order: 6;
+        display: block;
+        margin: 4px 0 8px;
+        text-align: center;
+        font-size: 0.78rem;
+        color: var(--text-faint);
+    }
+
+    /* Everything that isn't writing lives behind "⋯" */
+    .editor:not(.show-details) .editor-top,
+    .editor:not(.show-details) .editor-meta,
+    .editor:not(.show-details) .feel-row,
+    .editor:not(.show-details) .emotion-picker,
+    .editor:not(.show-details) .editor-foot { display: none !important; }
+
+    .editor .editor-top { order: 1; padding: 8px 18px 4px; }
+    .editor #editor-close { display: none; }
+    .editor .editor-meta { order: 2; padding: 6px 18px 10px; border-bottom: none; }
+    .editor .feel-row { order: 3; padding: 0 18px 8px; }
+    .editor .emotion-picker { order: 4; margin: 0 18px 8px; }
+
+    .editor .editor-foot {
+        order: 5;
+        position: static;
+        margin: 0;
+        padding: 4px 18px 14px;
+        background: transparent;
+        border-top: none;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .editor .editor-foot #editor-done { display: none; }
+
+    .editor-title {
+        order: 7;
+        padding: 0 18px;
+        font-size: 1.8rem;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        background: transparent;
+    }
+
+    .editor-body {
+        order: 8;
+        flex: 1 0 auto;
+        min-height: 35vh;
+        padding: 8px 18px 28px;
+        font-size: 1.06rem;
+        line-height: 1.55;
+    }
+
+    .attachments { order: 9; padding: 0 18px 12px; }
+    .reflection { order: 10; padding: 0 18px 16px; }
+    .ai-panel { order: 11; margin: 0 18px 16px; }
+
+    .reflect-block,
+    .att-audio,
+    .att-file { background: rgba(127, 127, 127, 0.08) !important; border-color: transparent; }
+
+    /* Formatting bar sits above the keyboard like the Notes toolbar */
+    .editor .rich-toolbar {
+        order: 20;
+        position: sticky;
+        bottom: 0;
+        z-index: 3;
+        margin-top: auto;
+        padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+        border-radius: 0;
+        border-top: 1px solid var(--border);
+        background: var(--note-page);
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        gap: 0;
+    }
+
+    .editor .tb-btn { color: var(--ios-accent); min-width: 40px; height: 40px; }
+    .editor .tb-btn[aria-pressed="true"] { background: color-mix(in srgb, var(--ios-accent) 18%, transparent); color: var(--ios-accent); box-shadow: none; }
+    .editor .tb-sep { background: var(--border); }
+
+    /* Calls on phones */
+    .call-panel {
+        left: 12px;
+        right: 12px;
+        bottom: calc(80px + env(safe-area-inset-bottom));
+        width: auto;
+    }
+
+    .call-panel.min { left: auto; right: 12px; }
+    body.in-call .fab { display: none; }
+}

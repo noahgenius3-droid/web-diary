@@ -39,7 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const TRASH_DAYS = 30;
     const DAY_MS = 86400000;
     const MAX_FILE = 25 * 1048576;
-    const hooks = { displayName: null, profileClick: null, menuItems: null, afterRender: null, shareToggle: null, rename: null, friendAvatars: null };
+    const hooks = { displayName: null, profileClick: null, menuItems: null, afterRender: null, shareToggle: null, rename: null, friendAvatars: null, avatarPhoto: null };
 
     const $ = id => document.getElementById(id);
     const content = $('content');
@@ -246,9 +246,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const name = displayName();
         $('user-name').textContent = name || 'Add your name';
-        $('avatar').innerHTML = name
-            ? escapeHTML(initials(name))
-            : '<svg class="i" style="width:16px;height:16px"><use href="#i-user"/></svg>';
+        const photo = hooks.avatarPhoto && hooks.avatarPhoto();
+        $('avatar').classList.toggle('has-photo', !!photo);
+        $('avatar').innerHTML = photo
+            ? `<img src="${escapeHTML(photo)}" alt="">`
+            : name
+                ? escapeHTML(initials(name))
+                : '<svg class="i" style="width:16px;height:16px"><use href="#i-user"/></svg>';
 
         document.body.dataset.view = state.view;
         content.innerHTML = (views[state.view] || renderHome)();
@@ -262,12 +266,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function setTitle(text) {
         pageTitle.textContent = text;
-        document.title = text === 'My Diary' ? 'My Diary' : `${text} · My Diary`;
+        document.title = text === 'Cordial' ? 'Cordial' : `${text} · Cordial`;
     }
 
     // ---------- Notes (home) ----------
     function renderHome() {
-        setTitle('My Diary');
+        setTitle('Cordial');
         if (state.query) return renderSearch();
 
         const list = activeNotes().filter(n => inRange(n.createdAt, state.noteRange));
@@ -813,6 +817,11 @@ document.addEventListener('DOMContentLoaded', () => {
         edArchive.hidden = edDelete.hidden = !note;
         if (note) edArchive.querySelector('span').textContent = note.archived ? 'Unarchive' : 'Archive';
         edEmotionPicker.hidden = true;
+        editor.classList.remove('show-details');
+        $('ed-details').setAttribute('aria-expanded', 'false');
+        $('ed-date-m').textContent = new Date(editing.createdAt).toLocaleString(undefined, {
+            day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit'
+        });
         edSaved.textContent = note ? 'All changes saved' : '';
 
         paintEditor();
@@ -836,7 +845,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function paintEditor() {
-        editor.className = `editor tinted c-${editing.color}`;
+        editor.className = `editor tinted c-${editing.color}${editor.classList.contains('show-details') ? ' show-details' : ''}`;
         paintSwatches($('editor-colors'), editing.color);
         $('editor-kind').querySelectorAll('button').forEach(b =>
             b.setAttribute('aria-checked', String(b.dataset.kind === editing.kind)));
@@ -1193,6 +1202,24 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     $('editor-close').addEventListener('click', () => editor.close());
+    $('ed-back').addEventListener('click', () => editor.close());
+    $('ed-done-m').addEventListener('click', () => editor.close());
+    $('ed-details').addEventListener('click', e => {
+        const open = editor.classList.toggle('show-details');
+        e.currentTarget.setAttribute('aria-expanded', String(open));
+    });
+
+    // On phones, size the editor to the visible area so the toolbar rides above the keyboard
+    if (window.visualViewport) {
+        const fit = () => {
+            if (!editor.open) return;
+            editor.style.setProperty('--vvh', `${window.visualViewport.height}px`);
+            editor.style.setProperty('--vvtop', `${window.visualViewport.offsetTop}px`);
+        };
+        window.visualViewport.addEventListener('resize', fit);
+        window.visualViewport.addEventListener('scroll', fit);
+        new MutationObserver(fit).observe(editor, { attributes: true, attributeFilter: ['open'] });
+    }
     $('editor-form').addEventListener('submit', e => {
         // Only the Done button submits; Enter inside fields must not close the editor
         if (e.submitter && e.submitter.id !== 'editor-done') e.preventDefault();
