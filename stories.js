@@ -922,6 +922,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <button class="reel-act" data-action="reel-mute" aria-label="${st.muted ? 'Turn sound on' : 'Mute'}">
                         <svg class="i"><use href="#${st.muted ? 'i-volume-off' : 'i-volume'}"/></svg>
                     </button>
+                    ${r.author === me && /\.mov$/i.test(r.video_path) ? `<button class="reel-act" data-action="reel-convert" data-id="${esc(r.id)}" aria-label="Convert so every device can play it"><svg class="i"><use href="#i-refresh"/></svg><span>Fix</span></button>` : ''}
                     ${r.author === me ? `<button class="reel-act" data-action="reel-story" data-id="${esc(r.id)}" aria-label="Add to your story"><svg class="i"><use href="#i-plus"/></svg><span>Story</span></button>` : ''}
                     ${r.author === me ? `<button class="reel-act" data-action="reel-delete" data-id="${esc(r.id)}" aria-label="Delete reel"><svg class="i"><use href="#i-trash"/></svg></button>` : ''}
                 </div>
@@ -1107,6 +1108,57 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // Older iPhone reels (.mov, often HEVC) don't play on many Android and Windows browsers.
+    // The author's own device can decode them, so it re-records the reel as MP4 and swaps the file.
+    async function convertReel(id, btn) {
+        const r = (st.reels || []).find(x => x.id === id);
+        if (!r || st.busy) return;
+        const label = btn && btn.querySelector('span');
+        st.busy = true;
+        try {
+            if (label) label.textContent = 'Loading';
+            let url = (s.urls.get(`${REEL_BUCKET}:${r.video_path}`) || {}).url;
+            if (!url) {
+                const { data } = await client.storage.from(REEL_BUCKET).createSignedUrl(r.video_path, 900);
+                url = data && data.signedUrl;
+            }
+            if (!url) throw new Error('download');
+            const blob = await (await fetch(url)).blob();
+            const original = new File([blob], 'reel.mov', { type: 'video/quicktime' });
+            if (label) label.textContent = 'Fix';
+            // Ask after downloading, so the tap that confirms also lets the sound be recorded
+            const ok = await app.ask({
+                title: 'Make this reel play on every device?',
+                text: 'Cordial converts it to MP4 right here. It takes about as long as the video — keep Cordial open until it’s done.',
+                ok: 'Convert'
+            });
+            if (!ok) return;
+            const out = await shrinkVideo(original, {
+                maxSeconds: MAX_REEL,
+                onProgress: p => { if (label) label.textContent = `${Math.round(p * 100)}%`; }
+            });
+            if (!out || out.size > MAX_BYTES) throw new Error('convert');
+            if (label) label.textContent = 'Saving';
+            const path = await uploadVideo(REEL_BUCKET, out, videoType(out));
+            if (!path) throw new Error('upload');
+            const { error } = await client.from('diary_reels').update({ video_path: path }).eq('id', id);
+            if (error) {
+                client.storage.from(REEL_BUCKET).remove([path]);
+                throw error;
+            }
+            client.storage.from(REEL_BUCKET).remove([r.video_path]);
+            r.video_path = path;
+            app.showToast('Done — this reel now plays on every device ✅');
+        } catch (e) {
+            app.showToast(e.message === 'convert'
+                ? 'This browser couldn’t convert the video — try from Safari or Chrome on your iPhone'
+                : 'Couldn’t convert the reel — check your connection and try again');
+        } finally {
+            st.busy = false;
+            if (app.state.view === 'reels' || app.state.view === 'feed') app.render();
+        }
+    }
+
     async function reelToStory(id) {
         const r = (st.reels || []).find(x => x.id === id);
         if (!r) return;
@@ -1173,6 +1225,7 @@ document.addEventListener('DOMContentLoaded', () => {
         'reel-add': () => addReel(),
         'reel-open': el => app.setView('reels', { reelId: el.dataset.id, reelFilter: 'all' }),
         'reel-story': el => reelToStory(el.dataset.id),
+        'reel-convert': el => convertReel(el.dataset.id, el),
         'reels-back': () => app.setView('feed'),
         'reels-filter': el => { app.state.reelFilter = el.dataset.filter; st.scrollTop = 0; app.render(); },
         'reel-toggle': el => {
