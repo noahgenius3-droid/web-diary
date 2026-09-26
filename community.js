@@ -458,7 +458,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // Post a diary note (text, formatting and photos) to any community you belong to
     async function postNoteTo(cm, n) {
         const images = [];
-        for (const a of n.attachments.filter(x => x.kind === 'image' || x.kind === 'drawing').slice(0, MAX_PHOTOS)) {
+        for (const a of n.attachments
+            .filter(x => x.kind === 'image' || x.kind === 'drawing')
+            .sort((x, y) => (y.id === n.cover) - (x.id === n.cover))
+            .slice(0, MAX_PHOTOS)) {
             const blob = await Media.get(a.id);
             if (blob) images.push(new File([blob], a.name || 'photo', { type: a.type || blob.type }));
         }

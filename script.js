@@ -183,6 +183,10 @@ document.addEventListener('DOMContentLoaded', () => {
             onFiles: addFiles,
             askLink,
             extra: [
+                { cmd: 'styles', label: 'Text styles', html: '<span class="aa">Aa</span>', run: btn => {
+                    const open = $('editor-toolbar').classList.toggle('fmt-open');
+                    btn.setAttribute('aria-pressed', String(open));
+                } },
                 { cmd: 'image', label: 'Add photos', icon: 'i-image', run: () => pickAndAdd('image/*') },
                 { cmd: 'file', label: 'Attach a file', icon: 'i-paperclip', run: () => pickAndAdd('') },
                 { cmd: 'voice', label: 'Record a voice note', icon: 'i-mic', run: recordVoiceNote },
@@ -632,7 +636,7 @@ document.addEventListener('DOMContentLoaded', () => {
             !hidden && n.attachments.some(a => a.kind === 'audio') ? 'Voice' : '',
             !hidden && n.goals.length ? `${n.goals.filter(g => g.done).length}/${n.goals.length} goals` : ''
         ].filter(Boolean).slice(0, 2);
-        const photo = !hidden && n.attachments.find(a => a.kind === 'image' || a.kind === 'drawing');
+        const photo = !hidden && (n.attachments.find(a => a.id === n.cover) || n.attachments.find(a => a.kind === 'image' || a.kind === 'drawing'));
 
         const openAttrs = trash ? '' : `data-action="open-note" data-id="${id}" tabindex="0" role="button" aria-label="Open ${escapeHTML(title)}"`;
         const actions = trash
@@ -821,14 +825,17 @@ document.addEventListener('DOMContentLoaded', () => {
             editing = {
                 id: note.id, color: note.color, mood: note.mood, emotions: [...note.emotions], kind: note.kind,
                 sections: { ...emptySections(), ...note.sections }, goals: note.goals.map(g => ({ ...g })),
-                attachments: note.attachments.map(a => ({ ...a })), location: note.location,
+                attachments: note.attachments.map(a => ({ ...a })), cover: note.cover || null, location: note.location,
                 private: note.private, shared: note.shared, pinned: note.pinned, createdAt: note.createdAt
             };
         }
         Object.assign(editing, { shownSections: new Set(), showGoals: !!defaults.showGoals, changed: false, created: false });
 
         edTitle.value = note ? note.title : (defaults.title || '');
-        edBody.innerHTML = note ? Rich.sanitize(note.html) : Rich.sanitize(defaults.html || '');
+        edBody.innerHTML = Rich.sanitize(note ? note.html : (defaults.html || ''), { allowMedia: true });
+        Media.hydrate(edBody);
+        $('editor-toolbar').classList.remove('fmt-open');
+        $('editor-toolbar').querySelector('[data-cmd="styles"]')?.setAttribute('aria-pressed', 'false');
         edFolder.innerHTML = '<option value="">No folder</option>' +
             folders.map(f => `<option value="${escapeHTML(f.id)}">${escapeHTML(f.name)}</option>`).join('');
         edFolder.value = (note ? note.folderId : defaults.folderId) || '';
@@ -979,11 +986,29 @@ document.addEventListener('DOMContentLoaded', () => {
                 continue;
             }
             if (!editing) return Media.del(att.id);
+            if (att.kind === 'image' || att.kind === 'drawing') {
+                att.inline = true;
+                insertPicture(att.id);
+            }
             editing.attachments.push(att);
         }
         renderAttachments();
         changed();
     }
+
+    // Put a stored picture into the note text where the cursor is
+    function insertPicture(id) {
+        Rich.restoreSelection(edBody);
+        document.execCommand('insertHTML', false, `<img class="inline-img" data-media="${id}" alt=""><br>`);
+        Media.hydrate(edBody);
+    }
+
+    edBody.addEventListener('dblclick', async e => {
+        const img = e.target.closest('img[data-media]');
+        if (!img) return;
+        const u = await Media.url(img.dataset.media);
+        if (u) Media.lightbox(u);
+    });
 
     async function recordVoiceNote() {
         const result = await Media.recordVoice();
@@ -1005,7 +1030,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderAttachments() {
-        const list = editing.attachments;
+        const list = editing.attachments.filter(a => !a.inline && !a.hidden);
         edAttachments.hidden = !list.length;
         edAttachments.innerHTML = list.map(a => {
             const remove = `<button type="button" class="att-remove" data-remove="${escapeHTML(a.id)}" aria-label="Remove ${escapeHTML(a.name)}"><svg class="i"><use href="#i-close"/></svg></button>`;
@@ -1160,7 +1185,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function collectFields(session) {
-        const html = Rich.sanitize(edBody.innerHTML);
+        const html = Rich.sanitize(edBody.innerHTML, { allowMedia: true });
+        const inText = new Set([...html.matchAll(/data-media="([a-z0-9]+)"/gi)].map(m => m[1]));
         return {
             title: edTitle.value.trim(),
             html,
@@ -1172,7 +1198,8 @@ document.addEventListener('DOMContentLoaded', () => {
             kind: session.kind,
             sections: Object.fromEntries(Object.entries(session.sections).map(([k, v]) => [k, v.trim()])),
             goals: session.goals.filter(g => g.text.trim()).map(g => ({ ...g, text: g.text.trim() })),
-            attachments: session.attachments.map(a => ({ ...a })),
+            attachments: session.attachments.filter(a => !a.inline || inText.has(a.id)).map(a => ({ ...a })),
+            cover: session.cover && session.attachments.some(a => a.id === session.cover && (!a.inline || inText.has(a.id))) ? session.cover : null,
             location: session.location,
             private: session.private,
             shared: session.shared && !session.private,
@@ -1337,6 +1364,22 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
+        // Cover photo: shown first when the note is shared to the feed or a group
+        const pictures = (editing && editing.id === n.id ? editing.attachments : n.attachments)
+            .filter(a => a.kind === 'image' || a.kind === 'drawing');
+        const cover = editing && editing.id === n.id ? editing.cover : n.cover;
+        rows.push(`
+            <p class="share-label">Cover photo</p>
+            <div class="cover-picker">
+                <button class="cover-opt none${!cover ? ' on' : ''}" data-share="cover-none" aria-pressed="${!cover}">No cover</button>
+                ${pictures.map(a => `
+                    <button class="cover-opt${cover === a.id ? ' on' : ''}" data-share="cover" data-id="${escapeHTML(a.id)}" aria-pressed="${cover === a.id}" aria-label="Use as cover">
+                        <img data-media="${escapeHTML(a.id)}" alt="">
+                    </button>`).join('')}
+                <button class="cover-opt add" data-share="cover-upload" aria-label="Upload a cover photo"><svg class="i"><use href="#i-image"/></svg><span>Upload</span></button>
+            </div>
+            <p class="muted small share-hint">Shown first when you share to your feed or a group.</p>`);
+
         rows.push('<p class="share-label">More</p>');
         if (navigator.share && !n.private) {
             rows.push(`
@@ -1352,6 +1395,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </button>`);
 
         $('share-body').innerHTML = rows.join('');
+        Media.hydrate($('share-body'));
     }
 
     // Change a note whether or not it's open in the editor (the editor's copy wins otherwise)
@@ -1375,7 +1419,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!n) return;
         const what = el.dataset.share;
 
-        if (what === 'unprivate') {
+        if (what === 'cover-none' || what === 'cover') {
+            patchNote(n, { cover: what === 'cover' ? el.dataset.id : null });
+        } else if (what === 'cover-upload') {
+            const [picked] = await Media.pickFiles('image/*', false);
+            if (!picked) return;
+            const file = await Media.compressImage(picked);
+            const att = { id: uid(), kind: 'image', name: file.name || 'cover.jpg', type: file.type, size: file.size, hidden: true };
+            await Media.put(att.id, file);
+            const base = editing && editing.id === n.id ? editing.attachments : n.attachments;
+            patchNote(n, { attachments: [...base, att], cover: att.id });
+            showToast('Cover photo set');
+        } else if (what === 'unprivate') {
             patchNote(n, { private: false });
             showToast('This note can be shared now');
         } else if (what === 'signin') {
@@ -1448,6 +1503,12 @@ document.addEventListener('DOMContentLoaded', () => {
         clearTimeout(saveTimer);
         if (!session) return;
         const savedNow = save(session);
+        const kept = session.id && notes.find(x => x.id === session.id);
+        if (kept) {
+            session.attachments
+                .filter(a => !kept.attachments.some(k => k.id === a.id))
+                .forEach(a => Media.del(a.id));
+        }
         if (!session.id) {
             session.attachments.forEach(a => Media.del(a.id));
             return;
@@ -1861,6 +1922,7 @@ document.addEventListener('DOMContentLoaded', () => {
             goals: Array.isArray(n.goals) ? n.goals.filter(g => g && typeof g.text === 'string').map(g => ({ id: String(g.id || uid()), text: g.text, done: !!g.done })) : [],
             attachments: Array.isArray(n.attachments) ? n.attachments.filter(a => a && a.id && a.kind) : [],
             location: n.location && typeof n.location.place === 'string' ? n.location : null,
+            cover: typeof n.cover === 'string' ? n.cover : null,
             color: COLORS.includes(n.color) ? n.color : COLORS[i % COLORS.length],
             folderId: n.folderId ?? null,
             archived: !!n.archived,

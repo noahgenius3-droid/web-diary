@@ -11,12 +11,24 @@ window.Rich = (() => {
             ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
     }
 
-    // Everything user-written passes through here before it reaches innerHTML
-    function sanitize(html) {
+    // Everything user-written passes through here before it reaches innerHTML.
+    // allowMedia keeps in-note pictures, which only ever reference this device's photo store
+    // (<img data-media="id">) — never a src, so nothing external can load.
+    function sanitize(html, { allowMedia = false } = {}) {
         if (!html) return '';
         if (!window.DOMPurify) return escapeHTML(toText(html)).replace(/\n/g, '<br>');
         if (!hooked) {
             window.DOMPurify.addHook('afterSanitizeAttributes', node => {
+                if (node.tagName === 'IMG') {
+                    const id = node.getAttribute('data-media') || '';
+                    if (!/^[a-z0-9]{4,40}$/i.test(id)) {
+                        node.remove();
+                        return;
+                    }
+                    node.setAttribute('class', 'inline-img');
+                    node.setAttribute('alt', '');
+                    return;
+                }
                 if (node.tagName !== 'A') return;
                 const href = node.getAttribute('href') || '';
                 if (!/^(https?:|mailto:)/i.test(href)) node.removeAttribute('href');
@@ -26,8 +38,8 @@ window.Rich = (() => {
             hooked = true;
         }
         return window.DOMPurify.sanitize(html, {
-            ALLOWED_TAGS,
-            ALLOWED_ATTR: ['href', 'target', 'rel'],
+            ALLOWED_TAGS: allowMedia ? [...ALLOWED_TAGS, 'img'] : ALLOWED_TAGS,
+            ALLOWED_ATTR: allowMedia ? ['href', 'target', 'rel', 'data-media', 'class', 'alt'] : ['href', 'target', 'rel'],
             ALLOW_DATA_ATTR: false
         });
     }
@@ -122,7 +134,7 @@ window.Rich = (() => {
     function button(def) {
         if (def.sep) return '<span class="tb-sep" aria-hidden="true"></span>';
         const inner = def.icon ? `<svg class="i"><use href="#${def.icon}"/></svg>` : def.html;
-        return `<button type="button" class="tb-btn" data-cmd="${def.cmd}" title="${def.label}" aria-label="${def.label}"${def.state ? ' aria-pressed="false"' : ''}>${inner}</button>`;
+        return `<button type="button" class="tb-btn" data-cmd="${def.cmd}" title="${def.label}" aria-label="${def.label}"${def.state ? ' data-state aria-pressed="false"' : ''}>${inner}</button>`;
     }
 
     /**
@@ -205,7 +217,7 @@ window.Rich = (() => {
 
         toolbar.refresh = () => {
             const active = document.activeElement === editable || editable.contains(document.activeElement);
-            toolbar.querySelectorAll('[aria-pressed]').forEach(b => {
+            toolbar.querySelectorAll('[data-state]').forEach(b => {
                 let on = false;
                 try { on = active && document.queryCommandState(b.dataset.cmd); } catch (err) {}
                 b.setAttribute('aria-pressed', String(on));

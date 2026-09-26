@@ -1020,8 +1020,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function syncPhotos(note) {
         const me = s.profile.id;
+        // The chosen cover goes first so it leads the post
         const images = note.attachments
             .filter(a => a.kind === 'image' || a.kind === 'drawing')
+            .sort((x, y) => (y.id === note.cover) - (x.id === note.cover))
             .slice(0, 10);
         const previous = s.remotePhotos.get(note.id) || [];
         const photos = [];
@@ -1399,13 +1401,13 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="post-caption${photos.length ? '' : ' text-only'}">
                 ${photos.length ? `<strong class="cap-name">${name}</strong> ` : ''}
                 ${o.title ? `<strong class="cap-title">${esc(o.title)}</strong>` : ''}
-                <div class="post-text rich-content${long ? ' clamped' : ''}">${body}</div>
+                <div class="post-text rich-content${long ? ' clamped toggleable' : ''}"${long ? ' data-action="toggle-text" title="Tap to expand or collapse"' : ''}>${body}</div>
                 ${long ? '<button class="read-more" data-action="expand-post">more</button>' : ''}
             </div>
             ${o.tags && o.tags.length ? `<div class="post-tags">${o.tags.map(t => `<button class="tag-link" data-action="feed-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('')}</div>` : ''}`;
 
         return `
-            <article class="post ig" data-search="${esc(`${profile.display_name} ${profile.username} ${o.title || ''} ${o.body || ''}`.toLowerCase())}">
+            <article class="post ig" data-post="${key}" data-search="${esc(`${profile.display_name} ${profile.username} ${o.title || ''} ${o.body || ''}`.toLowerCase())}">
                 <header class="post-head">
                     ${avatar(person, 'md')}
                     <div class="post-who">
@@ -1579,9 +1581,39 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Shared with community.js
+    function toggleText(text) {
+        if (!text) return;
+        const collapsed = text.classList.toggle('clamped');
+        const button = text.parentElement.querySelector('.read-more');
+        if (button) button.textContent = collapsed ? 'more' : 'less';
+        // Collapsing a long post can leave you far below it — bring its top back into view
+        const post = text.closest('.post');
+        if (collapsed && post && post.getBoundingClientRect().top < 70) {
+            post.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        }
+    }
+
+    // Scroll to a post once it's on screen (views may still be loading) and flash it
+    function focusPost(key) {
+        let tries = 0;
+        const tick = () => {
+            const el = content.querySelector(`[data-post="${CSS.escape(key)}"]`);
+            if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                el.classList.add('flash');
+                setTimeout(() => el.classList.remove('flash'), 1800);
+            } else if (tries++ < 40) {
+                setTimeout(tick, 200);
+            }
+        };
+        tick();
+    }
+
     window.diarySocial.internals = {
-        client, state: s, esc, avatar, timeAgo, gate, extFor, randomId, uploadImage, hydrateStorage,
-        renderPost, commentCount, openComments, repaintComments, MOOD_EMOJI: () => MOOD_EMOJI
+        client, state: s, esc, avatar, avatarUrl, timeAgo, gate, extFor, randomId, uploadImage, hydrateStorage,
+        renderPost, commentCount, openComments, repaintComments, MOOD_EMOJI: () => MOOD_EMOJI,
+        respond, openChat, focusPost,
+        setInboxTab(tab) { s.inboxTab = tab; app.render(); }
     };
 
     // One story group per person who shared in the last 24 hours (you first)
@@ -2008,10 +2040,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const entry = s.urls.get(`${el.dataset.bucket}:${el.dataset.img}`);
             if (entry) Media.lightbox(entry.url);
         },
-        'expand-post': el => {
-            const text = el.previousElementSibling;
-            const open = text.classList.toggle('clamped');
-            el.textContent = open ? 'Read more' : 'Show less';
+        'expand-post': el => toggleText(el.parentElement.querySelector('.post-text')),
+        // Tap the text itself to expand or collapse a long post (links inside still work)
+        'toggle-text': (el, e) => {
+            if (e.target.closest('a')) return;
+            if (window.getSelection && String(window.getSelection()).length) return; // selecting text, not tapping
+            toggleText(el);
         },
         'message-friend': el => {
             app.setView('messages');

@@ -149,6 +149,9 @@
                     <span id="user-name"></span>
                     <span class="avatar" id="avatar"></span>
                 </button>
+                <button class="icon-btn bell-btn" id="bell-btn" aria-label="Notifications" aria-haspopup="dialog">
+                    <svg class="i"><use href="#i-bell"/></svg><span class="bell-count" id="bell-count"></span>
+                </button>
                 <button class="icon-btn companion-btn" id="companion-btn" aria-label="Open writing companion" title="Writing companion">
                     <svg class="i"><use href="#i-sparkle"/></svg>
                 </button>
@@ -337,6 +340,20 @@
         </form>
     </dialog>
 
+    <!-- Notifications -->
+    <section class="notif-panel" id="notif-panel" aria-label="Notifications" hidden>
+        <header class="notif-head">
+            <h3>Notifications</h3>
+            <button class="link-btn" id="notif-readall">Mark all read</button>
+            <button class="icon-btn" id="notif-close" aria-label="Close notifications"><svg class="i"><use href="#i-close"/></svg></button>
+        </header>
+        <div id="notif-alerts"></div>
+        <div class="notif-list" id="notif-list"></div>
+    </section>
+
+    <!-- "Someone started a group call" -->
+    <div class="call-banner" id="call-banner" role="status" hidden></div>
+
     <!-- Share a note -->
     <dialog class="share-sheet" id="share-sheet" aria-labelledby="share-title">
         <span class="sheet-grab" aria-hidden="true"></span>
@@ -359,10 +376,15 @@
             <header class="call-head">
                 <button class="icon-btn" id="call-minimize" aria-label="Minimise call"><svg class="i"><use href="#i-down"/></svg></button>
                 <div><strong id="call-title">Call</strong><small id="call-status">Connecting…</small></div>
+                <button class="chip call-add" id="call-add" hidden><svg class="i"><use href="#i-user-plus"/></svg>Add</button>
             </header>
+            <p class="call-speaking" id="call-speaking" aria-live="polite"></p>
             <div class="call-people" id="call-people"></div>
+            <div class="call-reactions" id="call-reactions" hidden></div>
             <div class="call-controls">
                 <button class="call-btn" id="call-mute" aria-pressed="false"><svg class="i"><use href="#i-mic"/></svg><span>Mute</span></button>
+                <button class="call-btn" id="call-hand" aria-pressed="false"><span class="call-emoji" aria-hidden="true">✋</span><span>Hand</span></button>
+                <button class="call-btn" id="call-react"><span class="call-emoji" aria-hidden="true">😊</span><span>React</span></button>
                 <button class="call-btn" id="call-speaker" aria-pressed="false"><svg class="i"><use href="#i-speaker"/></svg><span>Sound</span></button>
                 <button class="call-btn end" id="call-leave"><svg class="i"><use href="#i-phone-off"/></svg><span>Leave</span></button>
             </div>
@@ -418,6 +440,7 @@
     <script src="social.js"></script>
     <script src="community.js"></script>
     <script src="call.js"></script>
+    <script src="notify.js"></script>
     <script src="ai.js"></script>
 </body>
 </html>
