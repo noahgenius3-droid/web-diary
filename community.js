@@ -30,7 +30,13 @@ document.addEventListener('DOMContentLoaded', () => {
     window.diaryCommunities = {
         posts: () => c.posts,
         canInteract: () => !!(c.current && c.memberships.has(c.current.id)),
-        toggleLike, postMenu, onRemoteChange, reset
+        toggleLike, postMenu, onRemoteChange, reset,
+        // For the note share sheet
+        async myGroups() {
+            if (c.list === null) await loadCommunities();
+            return (c.list || []).filter(x => c.memberships.has(x.id));
+        },
+        postNoteTo: (cm, note) => postNoteTo(cm, note)
     };
 
     function reset() {
@@ -376,8 +382,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </figure>`).join('');
     }
 
-    async function uploadAll(sources) {
-        const cid = c.current.id;
+    async function uploadAll(sources, cid) {
         const paths = [];
         for (const src of sources) {
             const path = await uploadImage(BUCKET, `${cid}/${me()}/${randomId()}`, src);
@@ -386,12 +391,15 @@ document.addEventListener('DOMContentLoaded', () => {
         return paths;
     }
 
-    async function publish(fields, sources) {
-        const cm = c.current;
-        c.posting = true;
-        app.render();
+    // Post into a community (the open one by default). Returns the new post, or null.
+    async function publish(fields, sources, cm = c.current) {
+        const onPage = c.current && c.current.id === cm.id;
+        if (onPage) {
+            c.posting = true;
+            app.render();
+        }
         try {
-            const photos = await uploadAll(sources);
+            const photos = await uploadAll(sources, cm.id);
             if (sources.length && photos.length < sources.length) {
                 app.showToast(`${sources.length - photos.length} photo(s) couldn’t upload`);
             }
@@ -405,13 +413,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 .single();
             if (error) throw error;
             if (c.current && c.current.id === cm.id) c.posts.unshift(data);
-            return true;
+            return data;
         } catch (err) {
             app.showToast(err.message === 'Nothing to post' ? 'Write something or add a photo first' : 'Couldn’t post — please try again');
-            return false;
+            return null;
         } finally {
-            c.posting = false;
-            if (app.state.view === 'community') app.render();
+            if (onPage) {
+                c.posting = false;
+                if (app.state.view === 'community') app.render();
+            }
         }
     }
 
@@ -442,6 +452,11 @@ document.addEventListener('DOMContentLoaded', () => {
     async function shareNote(n) {
         const ok = await app.ask({ title: `Share this note with ${c.current.name}?`, text: `“${n.title || n.text.slice(0, 60) || 'Untitled'}” will be visible to ${c.current.visibility === 'public' ? 'anyone who opens this community' : 'its members'}.`, ok: 'Share' });
         if (!ok) return;
+        if (await postNoteTo(c.current, n)) app.showToast('Note shared 📓');
+    }
+
+    // Post a diary note (text, formatting and photos) to any community you belong to
+    async function postNoteTo(cm, n) {
         const images = [];
         for (const a of n.attachments.filter(x => x.kind === 'image' || x.kind === 'drawing').slice(0, MAX_PHOTOS)) {
             const blob = await Media.get(a.id);
@@ -453,8 +468,13 @@ document.addEventListener('DOMContentLoaded', () => {
             title: (n.title || '').slice(0, 200),
             body: n.text.slice(0, 20000),
             html: html.length <= 60000 ? html : ''
-        }, images);
-        if (posted) app.showToast('Note shared 📓');
+        }, images, cm);
+        if (posted) {
+            // Remember where it went so the share sheet can show "✓ Shared"
+            const groups = [...new Set([...(n.sharedGroups || []), cm.id])];
+            app.updateNote(n.id, { sharedGroups: groups });
+        }
+        return !!posted;
     }
 
     // ---------- Likes & post menu ----------

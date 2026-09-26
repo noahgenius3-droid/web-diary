@@ -72,6 +72,8 @@
         <symbol id="i-info" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></g></symbol>
         <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 21h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
         <symbol id="i-checks" viewBox="0 0 24 24"><path d="M2 12.5l4 4L14 8M10 15.5l1 1L19 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+        <symbol id="i-share" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M8 7l4-4 4 4"/><path d="M8 10H6.5A1.5 1.5 0 0 0 5 11.5v8A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5v-8A1.5 1.5 0 0 0 17.5 10H16"/></g></symbol>
+        <symbol id="i-pin-note" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3.5l5.5 5.5-2.8 1-3.4 3.4.5 4.1-1.5 1.5-4.4-4.4L4 19.5M9.4 9.1l3.4-3.4 1-2.8"/><path d="M6.5 11l6.5 6.5"/></g></symbol>
         <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
         <symbol id="i-more-circle" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9.5"/></g><g fill="currentColor"><circle cx="7.8" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="16.2" cy="12" r="1.3"/></g></symbol>
         <symbol id="i-phone" viewBox="0 0 24 24"><path d="M6.6 3.5l2.6 3.1a1.6 1.6 0 0 1-.1 2.2l-1.5 1.4a12 12 0 0 0 6.2 6.2l1.4-1.5a1.6 1.6 0 0 1 2.2-.1l3.1 2.6a1.6 1.6 0 0 1 .2 2.2l-1.2 1.5c-.8 1-2.1 1.4-3.3 1A19 19 0 0 1 2.3 8.5c-.4-1.2 0-2.5 1-3.3l1.5-1.2a1.6 1.6 0 0 1 1.8-.5z" fill="currentColor"/></symbol>
@@ -177,6 +179,9 @@
             <div class="ed-bar">
                 <button type="button" class="ed-back" id="ed-back"><svg class="i"><use href="#i-chevron-left"/></svg>Notes</button>
                 <span class="ed-spacer"></span>
+                <button type="button" class="ed-icon" id="ed-color" aria-expanded="false" aria-label="Note colour"><span class="ed-swatch"></span></button>
+                <button type="button" class="ed-icon ed-pin" aria-pressed="false" aria-label="Pin note"><svg class="i"><use href="#i-pin-note"/></svg></button>
+                <button type="button" class="ed-icon ed-share" aria-label="Share note"><svg class="i"><use href="#i-share"/></svg></button>
                 <button type="button" class="ed-icon" id="ed-details" aria-expanded="false" aria-label="Note details"><svg class="i"><use href="#i-more-circle"/></svg></button>
                 <button type="button" class="ed-done" id="ed-done-m">Done</button>
             </div>
@@ -184,6 +189,8 @@
             <div class="editor-top">
                 <div class="swatches" id="editor-colors" role="radiogroup" aria-label="Color"></div>
                 <div class="segmented" id="editor-kind" role="radiogroup" aria-label="Entry type"></div>
+                <button type="button" class="chip ed-pin top-pin" aria-pressed="false"><svg class="i"><use href="#i-pin-note"/></svg><span>Pin</span></button>
+                <button type="button" class="chip ed-share top-share"><svg class="i"><use href="#i-share"/></svg><span>Share</span></button>
                 <button type="button" class="icon-btn ghost" id="editor-close" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button>
             </div>
             <input class="editor-title" id="editor-title" placeholder="Title" maxlength="120" autocomplete="off">
@@ -328,6 +335,19 @@
                 <button type="submit" class="primary-btn" id="cm-save">Create</button>
             </div>
         </form>
+    </dialog>
+
+    <!-- Share a note -->
+    <dialog class="share-sheet" id="share-sheet" aria-labelledby="share-title">
+        <span class="sheet-grab" aria-hidden="true"></span>
+        <header class="share-head">
+            <div>
+                <h3 id="share-title">Share note</h3>
+                <p class="muted small" id="share-note-name"></p>
+            </div>
+            <button type="button" class="icon-btn ghost" id="share-close" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button>
+        </header>
+        <div class="share-body" id="share-body"></div>
     </dialog>
 
     <!-- Voice call -->

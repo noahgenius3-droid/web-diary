@@ -119,7 +119,13 @@ document.addEventListener('DOMContentLoaded', () => {
             dots.append(b);
         });
 
-        buildSwatches($('editor-colors'), c => { editing.color = c; paintEditor(); changed(); });
+        buildSwatches($('editor-colors'), c => {
+            editing.color = c;
+            editor.classList.remove('show-colors');
+            $('ed-color').setAttribute('aria-expanded', 'false');
+            paintEditor();
+            changed();
+        });
         buildSwatches($('ask-colors'), c => { askColor = c; paintSwatches($('ask-colors'), c); });
 
         const kinds = $('editor-kind');
@@ -274,7 +280,8 @@ document.addEventListener('DOMContentLoaded', () => {
         setTitle('Cordial');
         if (state.query) return renderSearch();
 
-        const list = activeNotes().filter(n => inRange(n.createdAt, state.noteRange));
+        const pinned = activeNotes().filter(n => n.pinned);
+        const list = activeNotes().filter(n => !n.pinned && inRange(n.createdAt, state.noteRange));
         const folderList = [...folders].sort((a, b) => folderActivity(b) - folderActivity(a));
         const first = (displayName() || '').split(' ')[0];
         const friends = hooks.friendAvatars ? hooks.friendAvatars() : '';
@@ -304,6 +311,13 @@ document.addEventListener('DOMContentLoaded', () => {
                         </button>`).join('')}
                 </div>
             </section>
+
+            ${pinned.length ? `
+                <section class="section">
+                    <div class="section-head"><h2>📌 Pinned</h2></div>
+                    <div style="height:16px"></div>
+                    ${notesGrid(pinned, { newTile: false })}
+                </section>` : ''}
 
             <section class="section">
                 <div class="section-head notes-bar">
@@ -626,10 +640,14 @@ document.addEventListener('DOMContentLoaded', () => {
                    <button class="chip" data-action="restore" data-id="${id}">Restore</button>
                    <button class="chip danger" data-action="destroy" data-id="${id}">Delete</button>
                </span>`
-            : `<span class="mcard-edit" aria-hidden="true"><svg class="i"><use href="#i-pencil"/></svg></span>`;
+            : `<span class="mcard-actions">
+                   <button class="mcard-edit mcard-share" data-action="share-note" data-id="${id}" aria-label="Share note" title="Share"><svg class="i"><use href="#i-share"/></svg></button>
+                   <span class="mcard-edit" aria-hidden="true"><svg class="i"><use href="#i-pencil"/></svg></span>
+               </span>`;
 
         return `
-            <article class="mcard c-${n.color}${photo ? ' has-photo' : ''}${hidden ? ' is-private' : ''}" ${openAttrs}>
+            <article class="mcard c-${n.color}${photo ? ' has-photo' : ''}${hidden ? ' is-private' : ''}${n.pinned ? ' is-pinned' : ''}" ${openAttrs}>
+                ${n.pinned && !trash ? '<span class="mcard-pin" title="Pinned"><svg class="i"><use href="#i-pin-note"/></svg></span>' : ''}
                 ${tags.length ? `<div class="mcard-tags">${tags.map(t => `<span>${t}</span>`).join('')}</div>` : ''}
                 <h3>${hidden ? '🔒 Private entry' : highlight(title, q)}</h3>
                 ${photo ? `<img class="mcard-photo" data-media="${escapeHTML(photo.id)}" alt="">` : ''}
@@ -660,6 +678,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 break;
             case 'journal':
                 openJournal(el.dataset.kind);
+                break;
+            case 'share-note':
+                openShareSheet(id);
                 break;
             case 'template':
                 startTemplate(el.dataset.id);
@@ -794,14 +815,14 @@ document.addEventListener('DOMContentLoaded', () => {
             editing = {
                 id: null, color: defaults.color || COLORS[notes.length % COLORS.length], mood: null, emotions: [],
                 kind: defaults.kind || 'free', sections: emptySections(), goals: [], attachments: [], location: null,
-                private: false, shared: !!defaults.shared, createdAt
+                private: false, shared: !!defaults.shared, pinned: false, createdAt
             };
         } else {
             editing = {
                 id: note.id, color: note.color, mood: note.mood, emotions: [...note.emotions], kind: note.kind,
                 sections: { ...emptySections(), ...note.sections }, goals: note.goals.map(g => ({ ...g })),
                 attachments: note.attachments.map(a => ({ ...a })), location: note.location,
-                private: note.private, shared: note.shared, createdAt: note.createdAt
+                private: note.private, shared: note.shared, pinned: note.pinned, createdAt: note.createdAt
             };
         }
         Object.assign(editing, { shownSections: new Set(), showGoals: !!defaults.showGoals, changed: false, created: false });
@@ -817,8 +838,9 @@ document.addEventListener('DOMContentLoaded', () => {
         edArchive.hidden = edDelete.hidden = !note;
         if (note) edArchive.querySelector('span').textContent = note.archived ? 'Unarchive' : 'Archive';
         edEmotionPicker.hidden = true;
-        editor.classList.remove('show-details');
+        editor.classList.remove('show-details', 'show-colors');
         $('ed-details').setAttribute('aria-expanded', 'false');
+        $('ed-color').setAttribute('aria-expanded', 'false');
         $('ed-date-m').textContent = new Date(editing.createdAt).toLocaleString(undefined, {
             day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit'
         });
@@ -845,12 +867,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function paintEditor() {
-        editor.className = `editor tinted c-${editing.color}${editor.classList.contains('show-details') ? ' show-details' : ''}`;
+        const keep = ['show-details', 'show-colors'].filter(cls => editor.classList.contains(cls));
+        editor.className = ['editor', 'tinted', `c-${editing.color}`, ...keep].join(' ');
         paintSwatches($('editor-colors'), editing.color);
         $('editor-kind').querySelectorAll('button').forEach(b =>
             b.setAttribute('aria-checked', String(b.dataset.kind === editing.kind)));
         editor.querySelectorAll('.mood').forEach(b =>
             b.setAttribute('aria-checked', String(b.dataset.mood === editing.mood)));
+        editor.querySelectorAll('.ed-pin').forEach(b => {
+            b.setAttribute('aria-pressed', String(!!editing.pinned));
+            b.setAttribute('aria-label', editing.pinned ? 'Unpin note' : 'Pin note');
+            const label = b.querySelector('span');
+            if (label) label.textContent = editing.pinned ? 'Pinned' : 'Pin';
+        });
+        editor.querySelector('.ed-swatch').className = `ed-swatch c-${editing.color}`;
         edPrivate.checked = editing.private;
         edShare.checked = editing.shared && !editing.private;
         edShare.disabled = editing.private;
@@ -1145,7 +1175,8 @@ document.addEventListener('DOMContentLoaded', () => {
             attachments: session.attachments.map(a => ({ ...a })),
             location: session.location,
             private: session.private,
-            shared: session.shared && !session.private
+            shared: session.shared && !session.private,
+            pinned: !!session.pinned
         };
     }
 
@@ -1167,7 +1198,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (same) return false;
             Object.assign(n, fields, { updatedAt: Date.now() });
         } else {
-            n = { id: uid(), ...fields, archived: false, trashedAt: null, createdAt: session.createdAt, updatedAt: Date.now() };
+            n = { id: uid(), ...fields, sharedGroups: [], archived: false, trashedAt: null, createdAt: session.createdAt, updatedAt: Date.now() };
             notes.push(n);
             sortNotes();
             session.id = n.id;
@@ -1208,6 +1239,184 @@ document.addEventListener('DOMContentLoaded', () => {
         const open = editor.classList.toggle('show-details');
         e.currentTarget.setAttribute('aria-expanded', String(open));
     });
+    $('ed-color').addEventListener('click', e => {
+        const open = editor.classList.toggle('show-colors');
+        e.currentTarget.setAttribute('aria-expanded', String(open));
+    });
+    editor.querySelectorAll('.ed-pin').forEach(b => b.addEventListener('click', () => {
+        editing.pinned = !editing.pinned;
+        paintEditor();
+        changed();
+        showToast(editing.pinned ? 'Pinned to the top of your notes 📌' : 'Unpinned');
+    }));
+    editor.querySelectorAll('.ed-share').forEach(b => b.addEventListener('click', shareFromEditor));
+
+    // ---------- Sharing a note (friends feed, groups, other apps) ----------
+    const shareSheet = $('share-sheet');
+    let shareId = null;
+    let shareGroups = null;
+    const signedIn = () => !!(window.diarySocial && window.diarySocial.isSignedIn());
+
+    function shareFromEditor() {
+        if (!editing) return;
+        clearTimeout(saveTimer);
+        save(editing); // the note has to exist (and be current) before it can be shared
+        if (!editing.id) return showToast('Write something first');
+        render();
+        openShareSheet(editing.id);
+    }
+
+    async function openShareSheet(id) {
+        const n = notes.find(x => x.id === id);
+        if (!n) return;
+        shareId = id;
+        shareGroups = null;
+        $('share-note-name').textContent = n.private && !privateUnlocked ? 'Private entry' : (n.title || n.text.split('\n')[0] || 'Untitled');
+        paintShareSheet();
+        if (!shareSheet.open) shareSheet.showModal();
+        let groups = [];
+        if (signedIn() && window.diaryCommunities) {
+            try { groups = await window.diaryCommunities.myGroups(); } catch (e) { groups = []; }
+        }
+        if (shareId === id) {
+            shareGroups = groups;
+            paintShareSheet();
+        }
+    }
+
+    function paintShareSheet() {
+        const n = notes.find(x => x.id === shareId);
+        if (!n) return;
+        const signed = signedIn();
+        const blocked = n.private || !signed;
+        const rows = [];
+
+        if (n.private) {
+            rows.push(`
+                <div class="share-warn">
+                    <svg class="i"><use href="#i-lock"/></svg>
+                    <span><strong>This note is private</strong><small>Private notes never leave this device.</small></span>
+                    <button class="chip accent" data-share="unprivate">Make shareable</button>
+                </div>`);
+        } else if (!signed) {
+            rows.push(`
+                <div class="share-warn">
+                    <svg class="i"><use href="#i-user"/></svg>
+                    <span><strong>Sign in to share</strong><small>Share notes with friends and your groups.</small></span>
+                    <button class="chip accent" data-share="signin">Sign in</button>
+                </div>`);
+        }
+
+        rows.push(`
+            <button class="share-row" data-share="feed"${blocked ? ' disabled' : ''}>
+                <span class="share-ic feed"><svg class="i"><use href="#i-feed"/></svg></span>
+                <span class="share-text"><strong>Friends feed</strong><small>${n.shared ? 'Shared — your friends can see it' : 'Post it for your friends to see'}</small></span>
+                <span class="share-switch${n.shared ? ' on' : ''}" aria-hidden="true"></span>
+            </button>
+            <p class="share-label">Your groups</p>`);
+
+        if (!signed) {
+            rows.push('<p class="muted small share-hint">Groups you join appear here.</p>');
+        } else if (shareGroups === null) {
+            rows.push('<p class="muted small share-hint">Loading your groups…</p>');
+        } else if (!shareGroups.length) {
+            rows.push(`
+                <button class="share-row" data-share="find-groups">
+                    <span class="share-ic"><svg class="i"><use href="#i-users"/></svg></span>
+                    <span class="share-text"><strong>Find or create a group</strong><small>Book clubs, study groups, family…</small></span>
+                </button>`);
+        } else {
+            shareGroups.forEach(g => {
+                const done = (n.sharedGroups || []).includes(g.id);
+                rows.push(`
+                    <div class="share-row static">
+                        <span class="share-ic tinted c-${escapeHTML(g.color)}">${escapeHTML(g.emoji)}</span>
+                        <span class="share-text"><strong>${escapeHTML(g.name)}</strong><small>${done ? '✓ Shared here' : g.visibility === 'private' ? 'Invite-only group' : 'Public group'}</small></span>
+                        <button class="chip${done ? '' : ' accent'}" data-share="group" data-id="${escapeHTML(g.id)}"${n.private ? ' disabled' : ''}>${done ? 'Again' : 'Post'}</button>
+                    </div>`);
+            });
+        }
+
+        rows.push('<p class="share-label">More</p>');
+        if (navigator.share && !n.private) {
+            rows.push(`
+                <button class="share-row" data-share="native">
+                    <span class="share-ic"><svg class="i"><use href="#i-share"/></svg></span>
+                    <span class="share-text"><strong>Send to another app</strong><small>WhatsApp, Messages, email…</small></span>
+                </button>`);
+        }
+        rows.push(`
+            <button class="share-row" data-share="copy"${n.private && !privateUnlocked ? ' disabled' : ''}>
+                <span class="share-ic"><svg class="i"><use href="#i-notes"/></svg></span>
+                <span class="share-text"><strong>Copy text</strong><small>Paste it anywhere</small></span>
+            </button>`);
+
+        $('share-body').innerHTML = rows.join('');
+    }
+
+    // Change a note whether or not it's open in the editor (the editor's copy wins otherwise)
+    function patchNote(n, patch) {
+        if (editing && editing.id === n.id) {
+            Object.assign(editing, patch);
+            paintEditor();
+            save(editing);
+        } else {
+            Object.assign(n, patch, { updatedAt: Date.now() });
+            persist();
+            emit('note', n);
+        }
+        render();
+    }
+
+    $('share-body').addEventListener('click', async e => {
+        const el = e.target.closest('[data-share]');
+        if (!el || el.disabled) return;
+        const n = notes.find(x => x.id === shareId);
+        if (!n) return;
+        const what = el.dataset.share;
+
+        if (what === 'unprivate') {
+            patchNote(n, { private: false });
+            showToast('This note can be shared now');
+        } else if (what === 'signin') {
+            shareSheet.close();
+            window.diarySocial && window.diarySocial.requireSignIn('Sign in to share your notes.');
+            return;
+        } else if (what === 'feed') {
+            const next = !n.shared;
+            if (next && hooks.shareToggle && !hooks.shareToggle()) return;
+            patchNote(n, { shared: next });
+            showToast(next ? 'Shared with your friends 🎉' : 'Removed from the feed');
+        } else if (what === 'group') {
+            const g = (shareGroups || []).find(x => x.id === el.dataset.id);
+            if (!g || !window.diaryCommunities) return;
+            el.disabled = true;
+            el.textContent = 'Posting…';
+            if (await window.diaryCommunities.postNoteTo(g, n)) showToast(`Posted to ${g.name} 📓`);
+        } else if (what === 'find-groups') {
+            shareSheet.close();
+            if (editor.open) editor.close();
+            setView('communities');
+            return;
+        } else if (what === 'native') {
+            try {
+                await navigator.share({ title: n.title || 'Note', text: [n.title, n.text].filter(Boolean).join('\n\n') });
+            } catch (err) { /* cancelled */ }
+            return;
+        } else if (what === 'copy') {
+            try {
+                await navigator.clipboard.writeText([n.title, n.text].filter(Boolean).join('\n\n'));
+                showToast('Copied');
+            } catch (err) {
+                showToast('Couldn’t copy on this device');
+            }
+            return;
+        }
+        paintShareSheet();
+    });
+
+    $('share-close').addEventListener('click', () => shareSheet.close());
+    shareSheet.addEventListener('click', e => { if (e.target === shareSheet) shareSheet.close(); });
 
     // On phones, size the editor to the visible area so the toolbar rides above the keyboard
     if (window.visualViewport) {
@@ -1657,6 +1866,8 @@ document.addEventListener('DOMContentLoaded', () => {
             archived: !!n.archived,
             private: !!n.private,
             shared: !!n.shared && !n.private,
+            pinned: !!n.pinned,
+            sharedGroups: Array.isArray(n.sharedGroups) ? n.sharedGroups.filter(x => typeof x === 'string') : [],
             trashedAt: n.trashedAt ?? null,
             createdAt,
             updatedAt: n.updatedAt ?? createdAt
