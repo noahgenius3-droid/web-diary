@@ -83,6 +83,12 @@
         <symbol id="i-users" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14a6.5 6.5 0 0 1 3.5 6"/></g></symbol>
         <symbol id="i-camera" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.5"/></g></symbol>
         <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></symbol>
+        <symbol id="i-repost" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2.5l3.5 3.5-3.5 3.5"/><path d="M4 11V9.5A3.5 3.5 0 0 1 7.5 6h13"/><path d="M7 21.5L3.5 18 7 14.5"/><path d="M20 13v1.5a3.5 3.5 0 0 1-3.5 3.5h-13"/></g></symbol>
+        <symbol id="i-reel" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M3 8.5h18M8.5 3l3 5.5M14.5 3l3 5.5"/><path d="M10.5 12.5v5l4.5-2.5z" fill="currentColor" stroke="none"/></g></symbol>
+        <symbol id="i-volume" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/></g></symbol>
+        <symbol id="i-volume-off" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></g></symbol>
+        <symbol id="i-marker" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4.5l4.5 4.5-8 8H7v-4.5z"/><path d="M13 6.5l4.5 4.5"/><path d="M7 17l-3 3h6" /></g></symbol>
+        <symbol id="i-drop" viewBox="0 0 24 24"><path d="M12 3.2C9 7 6 10.4 6 14a6 6 0 0 0 12 0c0-3.6-3-7-6-10.8z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
         <symbol id="i-pause" viewBox="0 0 24 24"><g fill="currentColor"><rect x="6.5" y="5" width="4" height="14" rx="1.2"/><rect x="13.5" y="5" width="4" height="14" rx="1.2"/></g></symbol>
         <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M6 3.5h12v17l-6-4-6 4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
         <symbol id="i-bookmark-fill" viewBox="0 0 24 24"><path d="M6 3.5h12v17l-6-4-6 4z" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
@@ -113,7 +119,9 @@
                 <button class="nav-item" data-view="calendar"><svg class="i"><use href="#i-calendar"/></svg>Calendar</button>
                 <button class="nav-item" data-view="insights"><svg class="i"><use href="#i-chart"/></svg>Insights</button>
                 <button class="nav-item" data-view="photos"><svg class="i"><use href="#i-image"/></svg>Photos</button>
+                <button class="nav-item" data-view="highlights"><svg class="i"><use href="#i-marker"/></svg>Highlights</button>
                 <button class="nav-item" data-view="feed"><svg class="i"><use href="#i-feed"/></svg>Feed</button>
+                <button class="nav-item" data-view="reels"><svg class="i"><use href="#i-reel"/></svg>Reels</button>
                 <button class="nav-item" data-view="communities"><svg class="i"><use href="#i-users"/></svg>Communities</button>
                 <button class="nav-item" data-view="messages"><svg class="i"><use href="#i-chat"/></svg>Messages<span class="nav-count badge" id="messages-count"></span></button>
                 <button class="nav-item companion-link" id="companion-nav"><svg class="i"><use href="#i-sparkle"/></svg>Companion</button>
@@ -219,10 +227,18 @@
                 <div class="emotions" id="editor-emotions" aria-label="Emotions"></div>
             </div>
             <div class="emotion-picker" id="emotion-picker" hidden aria-label="Pick emotions"></div>
+            <div class="dilute" id="editor-dilute" hidden>
+                <svg class="i" aria-hidden="true"><use href="#i-drop"/></svg>
+                <label for="dilute-range">Dilute</label>
+                <input type="range" id="dilute-range" min="10" max="100" step="5" value="100" aria-describedby="dilute-out">
+                <output id="dilute-out" for="dilute-range">Full</output>
+            </div>
             <div class="rich-toolbar" id="editor-toolbar" role="toolbar" aria-label="Formatting and attachments"></div>
             <div class="rich editor-body" id="editor-text" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Entry" data-placeholder="What’s on your mind today?"></div>
+            <div class="dilute-view" id="dilute-view" hidden tabindex="0" role="button" aria-label="Diluted note — tap to read all of it"></div>
             <div class="attachments" id="editor-attachments" hidden></div>
             <section class="reflection" id="editor-reflection" aria-label="Reflection and goals"></section>
+            <aside class="pairing" id="editor-pair" hidden aria-label="A note to read alongside this one"></aside>
             <div class="ai-panel" id="ai-panel" hidden>
                 <div class="ai-panel-head"><svg class="i"><use href="#i-sparkle"/></svg><span id="ai-panel-label"></span></div>
                 <div class="ai-output" id="ai-output" aria-live="polite"></div>
@@ -418,6 +434,29 @@
         <button type="button" class="story-nav next" id="story-next" aria-label="Next"></button>
     </dialog>
 
+    <!-- New story / reel -->
+    <dialog class="media-compose" id="media-compose" aria-labelledby="mc-title">
+        <form method="dialog" class="mc-form" id="mc-form">
+            <header class="mc-head">
+                <button type="button" class="icon-btn" id="mc-cancel" aria-label="Cancel"><svg class="i"><use href="#i-close"/></svg></button>
+                <h3 id="mc-title">New story</h3>
+                <button type="submit" class="pc-post" id="mc-share">Share</button>
+            </header>
+            <div class="mc-preview" id="mc-preview"></div>
+            <textarea id="mc-caption" rows="2" maxlength="300" placeholder="Add a caption…" aria-label="Caption"></textarea>
+            <p class="muted small mc-note" id="mc-note"><svg class="i"><use href="#i-lock"/></svg>Friends only</p>
+        </form>
+    </dialog>
+
+    <!-- Reel comments -->
+    <dialog class="share-sheet reel-sheet" id="reel-sheet" aria-labelledby="reel-sheet-title">
+        <header class="share-head">
+            <div><h3 id="reel-sheet-title">Comments</h3></div>
+            <button type="button" class="icon-btn" id="reel-sheet-close" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button>
+        </header>
+        <div class="reel-sheet-body" id="reel-sheet-body"></div>
+    </dialog>
+
     <!-- Photo viewer -->
     <dialog class="lightbox" id="lightbox" aria-label="Photo">
         <img id="lightbox-img" alt="">
@@ -436,8 +475,10 @@
     <script src="config.js"></script>
     <script src="rich.js"></script>
     <script src="media.js"></script>
+    <script src="dilute.js"></script>
     <script src="script.js"></script>
     <script src="social.js"></script>
+    <script src="stories.js"></script>
     <script src="community.js"></script>
     <script src="call.js"></script>
     <script src="notify.js"></script>

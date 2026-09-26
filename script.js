@@ -78,6 +78,8 @@ document.addEventListener('DOMContentLoaded', () => {
     sortNotes();
 
     const state = {
+        pour: loadPour(),   // strength of note previews on the Notes page: 100 | 50 | 10
+        hlColor: 'all',     // Highlights page filter
         view: 'home',
         folderId: null,
         noteRange: 'all',
@@ -89,7 +91,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Extension points for social.js and ai.js
     const views = {
         home: renderHome, folder: renderFolder, calendar: renderCalendar, insights: renderInsights,
-        photos: renderPhotos, archive: renderArchive, trash: renderTrash
+        photos: renderPhotos, highlights: renderHighlights, archive: renderArchive, trash: renderTrash
     };
     const actions = {};
     const listeners = {};
@@ -106,6 +108,24 @@ document.addEventListener('DOMContentLoaded', () => {
     purgeTrash();
     buildStatic();
     render();
+    backfillDilute();
+
+    // Notes written before Dilute existed get their strengths computed once, when the browser is idle
+    function backfillDilute() {
+        const run = () => {
+            let changed = false;
+            notes.forEach(n => {
+                if (n.trashedAt) return;
+                const a = Dilute.analyse(n);
+                if (n.dilute !== a) {
+                    n.dilute = a;
+                    changed = true;
+                }
+            });
+            if (changed) persist();
+        };
+        (window.requestIdleCallback || (fn => setTimeout(fn, 1500)))(run);
+    }
 
     // ---------- Static UI ----------
     function buildStatic() {
@@ -326,6 +346,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <section class="section">
                 <div class="section-head notes-bar">
                     <h2>My drafts</h2>
+                    ${pourControl()}
                     ${tabs('noteRange')}
                 </div>
                 <div class="folder-chips">
@@ -338,6 +359,33 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
                 ${notesGrid(list, { empty: activeNotes().length ? `No notes ${rangeText(state.noteRange)}.` : 'Your diary is empty — pick a template or write your first note.' })}
             </section>`;
+    }
+
+    // Full / Half / Essence: how much of each note the cards show
+    function pourControl() {
+        const opt = (level, label) =>
+            `<button data-action="pour" data-level="${level}" aria-pressed="${state.pour === level}">${label}</button>`;
+        return `
+            <div class="pour" role="group" aria-label="How much of each note to show" title="Dilute: skim long notes">
+                <svg class="i" aria-hidden="true"><use href="#i-drop"/></svg>
+                ${opt(100, 'Full')}${opt(50, 'Half')}${opt(10, 'Essence')}
+            </div>`;
+    }
+
+    function loadPour() {
+        try {
+            const v = Number(localStorage.getItem('diaryPour'));
+            return [100, 50, 10].includes(v) ? v : 100;
+        } catch (e) {
+            return 100;
+        }
+    }
+
+    // Card preview text at the chosen strength
+    function pouredText(n) {
+        const out = Dilute.pour(n, state.pour);
+        if (out.essence) return out.text;
+        return out.lines.map(l => l.text).join(' … ') + (out.tail ? ' …' : '');
     }
 
     // A small rotating nudge under the page title
@@ -525,6 +573,86 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Photo memories ----------
+    // ---------- Highlights ----------
+    const HL_COLOURS = { yellow: 'Yellow', green: 'Green', pink: 'Pink', blue: 'Blue' };
+
+    // Every highlighted passage across your notes, plus the "Daily highlights" you wrote in evening entries
+    function allHighlights() {
+        const out = [];
+        activeNotes().forEach(n => {
+            if (n.private && !privateUnlocked) return;
+            if (n.html && n.html.includes('<mark')) {
+                const doc = new DOMParser().parseFromString(`<body>${n.html}</body>`, 'text/html');
+                // Neighbouring marks (split by bold, links…) read as one passage
+                let current = null;
+                const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+                while (walker.nextNode()) {
+                    const t = walker.currentNode;
+                    const mark = t.parentElement.closest('mark');
+                    const colour = mark ? (mark.className.replace('hl-', '') || 'yellow') : null;
+                    const block = t.parentElement.closest('p, div, li, blockquote, pre') || doc.body;
+                    if (mark && current && current.colour === colour && current.block === block) {
+                        current.text += t.textContent;
+                    } else if (mark) {
+                        current = { colour, block, text: t.textContent };
+                        out.push({ note: n, colour, get text() { return this._c.text.trim(); }, _c: current });
+                    } else if (t.textContent.trim()) {
+                        current = null;
+                    }
+                }
+            }
+            const daily = (n.sections.highlights || '').trim();
+            if (daily) out.push({ note: n, colour: 'day', text: daily });
+        });
+        return out.filter(h => h.text).sort((a, b) => b.note.createdAt - a.note.createdAt);
+    }
+
+    function renderHighlights() {
+        setTitle('Highlights');
+        const all = allHighlights();
+        const counts = all.reduce((m, h) => (m[h.colour] = (m[h.colour] || 0) + 1, m), {});
+        const list = state.hlColor === 'all' ? all : all.filter(h => h.colour === state.hlColor);
+        const chip = (key, label) => counts[key] || key === 'all'
+            ? `<button class="hl-chip${key !== 'all' && key !== 'day' ? ` hl-${key}` : ''}" data-action="hl-filter" data-color="${key}" aria-pressed="${state.hlColor === key}">
+                   ${key !== 'all' && key !== 'day' ? '<span class="hl-dot"></span>' : key === 'day' ? '✨ ' : ''}${label}<span class="muted small">${key === 'all' ? all.length : counts[key]}</span>
+               </button>`
+            : '';
+
+        const groups = new Map();
+        list.forEach(h => {
+            const key = new Date(h.note.createdAt).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(h);
+        });
+
+        return `
+            <header class="notes-head">
+                <div>
+                    <h2 class="notes-title">Highlights</h2>
+                    <p class="muted">The lines you marked, gathered in one place. Select text in a note and tap the marker to add one.</p>
+                </div>
+            </header>
+            ${all.length ? `
+                <div class="hl-chips" role="group" aria-label="Filter highlights">
+                    ${chip('all', 'All')}${Object.entries(HL_COLOURS).map(([k, v]) => chip(k, v)).join('')}${chip('day', 'Daily highlights')}
+                </div>
+                ${[...groups.entries()].map(([month, items]) => `
+                    <section class="section">
+                        <div class="section-head"><h2>${escapeHTML(month)}</h2></div>
+                        <div class="hl-grid">
+                            ${items.map(h => `
+                                <button class="hl-card hl-${h.colour}" data-action="open-highlight" data-id="${escapeHTML(h.note.id)}" data-find="${escapeHTML(h.colour === 'day' ? '' : h.text.slice(0, 60))}">
+                                    <blockquote>${escapeHTML(h.text.length > 420 ? h.text.slice(0, 419) + '…' : h.text)}</blockquote>
+                                    <span class="hl-source">${h.colour === 'day' ? '✨ Daily highlight · ' : ''}${escapeHTML(h.note.title || h.note.text.split('\n')[0].trim() || 'Untitled')} · ${niceDate(h.note.createdAt)}</span>
+                                </button>`).join('')}
+                        </div>
+                    </section>`).join('')}`
+            : `<div class="empty">
+                   <p class="empty-title">No highlights yet</p>
+                   <p>Select a sentence in any note and tap the <strong>marker</strong> in the toolbar. Tap inside a highlight to change its colour.</p>
+               </div>`}`;
+    }
+
     function renderPhotos() {
         setTitle('Photo memories');
         const photos = allPhotos();
@@ -625,6 +753,7 @@ document.addEventListener('DOMContentLoaded', () => {
             title = n.title || lines[0].trim() || (n.kind !== 'free' ? `${KINDS[n.kind].label} journal` : 'Untitled');
             body = (n.title ? n.text : lines.slice(1).join('\n')).trim();
             if (!body) body = Object.values(n.sections).find(v => v.trim()) || '';
+            if (state.pour < 100 && !trash && Dilute.canDilute(n)) body = pouredText(n);
         }
 
         const folder = folders.find(f => f.id === n.folderId);
@@ -650,7 +779,7 @@ document.addEventListener('DOMContentLoaded', () => {
                </span>`;
 
         return `
-            <article class="mcard c-${n.color}${photo ? ' has-photo' : ''}${hidden ? ' is-private' : ''}${n.pinned ? ' is-pinned' : ''}" ${openAttrs}>
+            <article class="mcard c-${n.color}${photo ? ' has-photo' : ''}${state.pour < 100 && !hidden ? ` poured-${state.pour}` : ''}${hidden ? ' is-private' : ''}${n.pinned ? ' is-pinned' : ''}" ${openAttrs}>
                 ${n.pinned && !trash ? '<span class="mcard-pin" title="Pinned"><svg class="i"><use href="#i-pin-note"/></svg></span>' : ''}
                 ${tags.length ? `<div class="mcard-tags">${tags.map(t => `<span>${t}</span>`).join('')}</div>` : ''}
                 <h3>${hidden ? '🔒 Private entry' : highlight(title, q)}</h3>
@@ -670,6 +799,18 @@ document.addEventListener('DOMContentLoaded', () => {
         const { action, id } = el.dataset;
 
         switch (action) {
+            case 'pour':
+                state.pour = Number(el.dataset.level);
+                try { localStorage.setItem('diaryPour', String(state.pour)); } catch (err) {}
+                render();
+                break;
+            case 'hl-filter':
+                state.hlColor = el.dataset.color;
+                render();
+                break;
+            case 'open-highlight':
+                openNote(notes.find(n => n.id === id), { find: el.dataset.find || '' });
+                break;
             case 'range':
                 state[el.dataset.key] = el.dataset.range;
                 render();
@@ -750,10 +891,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Private entries ----------
-    async function openNote(note) {
+    async function openNote(note, opts = {}) {
         if (!note) return;
         if (note.private && !(await unlockPrivate())) return;
-        openEditor(note);
+        openEditor(note, {}, opts);
     }
 
     async function unlockPrivate() {
@@ -806,7 +947,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return {};
     }
 
-    function openEditor(note, defaults = {}) {
+    function openEditor(note, defaults = {}, opts = {}) {
         if (editor.open) editor.close();
         if (!note) {
             let createdAt = Date.now();
@@ -857,17 +998,142 @@ document.addEventListener('DOMContentLoaded', () => {
         renderAttachments();
         renderReflection();
         updateWords();
+        editing.strength = (note && strengths()[note.id]) || 100;
+        editing.pairId = null;
+        paintDilute();
+        paintPair();
         // A template the user never touches shouldn't turn into a note
         editing.pristine = note ? null : JSON.stringify(collectFields(editing));
         editor.showModal();
         edReflection.querySelectorAll('textarea').forEach(autoGrow);
-        if (note) {
+        if (opts.find && findInEditor(opts.find)) return;
+        if (note && editing.strength < 100) {
+            $('dilute-view').focus();
+        } else if (note) {
             edBody.focus();
             Rich.placeCaretAtEnd(edBody);
         } else {
             edTitle.focus();
         }
     }
+
+    // Scroll to (and flash) a highlighted passage when opening a note from the Highlights page
+    function findInEditor(text) {
+        const mark = [...edBody.querySelectorAll('mark')].find(m => m.textContent.trim() && text.startsWith(m.textContent.trim().slice(0, 40)));
+        if (!mark) return false;
+        mark.scrollIntoView({ block: 'center' });
+        mark.classList.add('flash-mark');
+        setTimeout(() => mark.classList.remove('flash-mark'), 1800);
+        return true;
+    }
+
+    // ---------- Dilute ----------
+    function strengths() {
+        try { return JSON.parse(localStorage.getItem('diaryStrength')) || {}; } catch (e) { return {}; }
+    }
+
+    function draftNote() {
+        return { id: editing.id || 'draft', ...collectFields(editing) };
+    }
+
+    function paintDilute() {
+        if (!editing) return;
+        const draft = draftNote();
+        const can = Dilute.canDilute(draft);
+        const bar = $('editor-dilute');
+        bar.hidden = !can;
+        if (!can) editing.strength = 100;
+        const level = editing.strength;
+        $('dilute-range').value = String(level);
+        $('dilute-range').style.setProperty('--fill', `${((level - 10) / 90) * 100}%`);
+        $('dilute-out').textContent = level >= 100 ? 'Full' : level <= 15 ? 'Essence' : `${level}%`;
+        const diluted = level < 100;
+        editor.classList.toggle('diluted', diluted);
+        const view = $('dilute-view');
+        view.hidden = !diluted;
+        if (!diluted) {
+            view.innerHTML = '';
+            return;
+        }
+        const out = Dilute.pour(draft, level);
+        const gap = '<span class="dilute-gap" aria-label="some sentences left out">⋯</span>';
+        view.innerHTML = out.essence
+            ? `<p class="dilute-essence">${escapeHTML(out.text)}</p>
+               <p class="dilute-meta">The essence of this note · tap to read all of it</p>`
+            : `${out.lines.map(l => `${l.gapBefore ? gap : ''}<p>${escapeHTML(l.text)}</p>`).join('')}
+               ${out.tail ? gap : ''}
+               <p class="dilute-meta">${out.shown} of ${out.total} words · tap to read all of it</p>`;
+    }
+
+    function setStrength(level) {
+        editing.strength = level;
+        if (editing.id) {
+            const all = strengths();
+            if (level >= 100) delete all[editing.id];
+            else all[editing.id] = level;
+            try { localStorage.setItem('diaryStrength', JSON.stringify(all)); } catch (e) {}
+        }
+        paintDilute();
+    }
+
+    $('dilute-range').addEventListener('input', e => setStrength(Number(e.target.value)));
+    $('dilute-view').addEventListener('click', () => {
+        setStrength(100);
+        edBody.focus();
+    });
+    $('dilute-view').addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            e.currentTarget.click();
+        }
+    });
+
+    // ---------- Pairing: one note worth reading alongside this one ----------
+    function pairSkips() {
+        try { return JSON.parse(localStorage.getItem('diaryPairSkip')) || {}; } catch (e) { return {}; }
+    }
+
+    function paintPair() {
+        if (!editing) return;
+        const box = $('editor-pair');
+        const draft = draftNote();
+        const pool = notes.filter(n => !n.trashedAt && (!n.private || privateUnlocked));
+        const best = Dilute.pair(draft, pool, pairSkips()[editing.id] || []);
+        if (!best) {
+            box.hidden = true;
+            editing.pairId = null;
+            return;
+        }
+        if (best.note.id === editing.pairId && !box.hidden) return; // unchanged — don't flicker while typing
+        editing.pairId = best.note.id;
+        const n = best.note;
+        const title = n.title || n.text.split('\n')[0].trim() || 'Untitled';
+        box.hidden = false;
+        box.innerHTML = `
+            <span class="pair-label"><svg class="i"><use href="#i-link"/></svg>Read alongside</span>
+            <button type="button" class="pair-open" data-pair="open" data-id="${escapeHTML(n.id)}">
+                <strong>${escapeHTML(title.slice(0, 80))}</strong>
+                <small>${niceDate(n.createdAt)} · both mention ${best.shared.map(w => `“${escapeHTML(w)}”`).join(', ')}</small>
+            </button>
+            <button type="button" class="icon-btn ghost pair-skip" data-pair="skip" data-id="${escapeHTML(n.id)}" aria-label="Not this one" title="Not this one"><svg class="i"><use href="#i-close"/></svg></button>`;
+    }
+
+    $('editor-pair').addEventListener('click', e => {
+        const el = e.target.closest('[data-pair]');
+        if (!el || !editing) return;
+        const other = notes.find(n => n.id === el.dataset.id);
+        if (el.dataset.pair === 'open' && other) {
+            editor.close();
+            openNote(other);
+        } else if (el.dataset.pair === 'skip') {
+            const all = pairSkips();
+            const key = editing.id || 'draft';
+            all[key] = [...(all[key] || []), el.dataset.id].slice(-20);
+            try { localStorage.setItem('diaryPairSkip', JSON.stringify(all)); } catch (err) {}
+            editing.pairId = null;
+            paintPair();
+        }
+    });
 
     function emptySections() {
         return { gratitude: '', highlights: '', learned: '', improve: '' };
@@ -1178,6 +1444,8 @@ document.addEventListener('DOMContentLoaded', () => {
         saveTimer = setTimeout(() => {
             if (!editing) return;
             if (save(editing)) render();
+            paintDilute();
+            paintPair();
             edSaved.textContent = editing.id
                 ? `Saved ${new Date().toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`
                 : '';
@@ -1224,8 +1492,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const same = Object.keys(fields).every(k => JSON.stringify(n[k]) === JSON.stringify(fields[k]));
             if (same) return false;
             Object.assign(n, fields, { updatedAt: Date.now() });
+            n.dilute = Dilute.analyse(n);
         } else {
             n = { id: uid(), ...fields, sharedGroups: [], archived: false, trashedAt: null, createdAt: session.createdAt, updatedAt: Date.now() };
+            n.dilute = Dilute.analyse(n);
             notes.push(n);
             sortNotes();
             session.id = n.id;
@@ -1665,7 +1935,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function openMainMenu(anchor) {
         const nav = [['home', 'Notes', 'i-notes'], ['calendar', 'Calendar', 'i-calendar'], ['insights', 'Insights', 'i-chart'],
-            ['photos', 'Photos', 'i-image'], ['feed', 'Feed', 'i-feed'], ['communities', 'Communities', 'i-users'], ['messages', 'Messages', 'i-chat'],
+            ['photos', 'Photos', 'i-image'], ['highlights', 'Highlights', 'i-marker'], ['feed', 'Feed', 'i-feed'], ['reels', 'Reels', 'i-reel'], ['communities', 'Communities', 'i-users'], ['messages', 'Messages', 'i-chat'],
             ['archive', 'Archive', 'i-archive'], ['trash', 'Trash', 'i-trash']]
             .map(([view, label, icon]) => ({ label, icon, cls: 'mobile-only', onClick: () => setView(view) }));
         openPopover(anchor, [
@@ -1923,6 +2193,7 @@ document.addEventListener('DOMContentLoaded', () => {
             attachments: Array.isArray(n.attachments) ? n.attachments.filter(a => a && a.id && a.kind) : [],
             location: n.location && typeof n.location.place === 'string' ? n.location : null,
             cover: typeof n.cover === 'string' ? n.cover : null,
+            dilute: n.dilute && typeof n.dilute.sig === 'string' && Array.isArray(n.dilute.units) ? n.dilute : null,
             color: COLORS.includes(n.color) ? n.color : COLORS[i % COLORS.length],
             folderId: n.folderId ?? null,
             archived: !!n.archived,
@@ -2008,6 +2279,10 @@ document.addEventListener('DOMContentLoaded', () => {
             weekday: 'long', month: 'long', day: 'numeric',
             year: date.getFullYear() === today.getFullYear() ? undefined : 'numeric'
         });
+    }
+
+    function niceDate(ms) {
+        return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
     }
 
     function shortDate(date) {

@@ -72,7 +72,8 @@ document.addEventListener('DOMContentLoaded', () => {
         entry_like: ['like', 'i-heart-fill'], post_like: ['like', 'i-heart-fill'],
         entry_comment: ['comment', 'i-chat'], post_comment: ['comment', 'i-chat'],
         community_post: ['group', 'i-users'], community_join: ['group', 'i-users'],
-        call_started: ['call', 'i-phone'], missed_call: ['missed', 'i-phone-off']
+        call_started: ['call', 'i-phone'], missed_call: ['missed', 'i-phone-off'],
+        entry_repost: ['group', 'i-repost'], reel_like: ['like', 'i-heart-fill'], reel_comment: ['comment', 'i-chat']
     };
 
     // plain=true gives text for toasts and device alerts
@@ -93,6 +94,9 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'community_join': return `${who} joined ${group}`;
             case 'call_started': return `${who} started a voice call in ${group}`;
             case 'missed_call': return `Missed voice call from ${who}`;
+            case 'entry_repost': return `${who} reposted your post${quote}`;
+            case 'reel_like': return `${who} liked your reel${quote}`;
+            case 'reel_comment': return `${who} commented on your reel:${quote}`;
             default: return `${who} did something`;
         }
     }
@@ -110,7 +114,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 app.setView('messages');
                 if (s.friends.some(f => f.id === x.actor)) I.openChat(x.actor);
                 break;
+            case 'reel_like':
+            case 'reel_comment':
+                app.setView('reels', { reelId: d.reel_id });
+                if (x.type === 'reel_comment' && window.diaryStories) window.diaryStories.openReelComments(d.reel_id);
+                break;
             case 'entry_like':
+            case 'entry_repost':
             case 'entry_comment':
                 app.setView('feed');
                 if (x.type === 'entry_comment') I.openComments(`entry:${d.entry_id}`);

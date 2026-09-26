@@ -2,7 +2,8 @@
 // Shared by the journal editor and the chat composer.
 window.Rich = (() => {
     const ALLOWED_TAGS = ['b', 'strong', 'i', 'em', 'u', 's', 'strike', 'del', 'code', 'pre', 'blockquote',
-        'a', 'br', 'p', 'div', 'ul', 'ol', 'li'];
+        'a', 'br', 'p', 'div', 'ul', 'ol', 'li', 'mark'];
+    const HIGHLIGHTS = ['yellow', 'green', 'pink', 'blue'];
     const BLOCKS = new Set(['P', 'DIV', 'LI', 'PRE', 'BLOCKQUOTE', 'UL', 'OL']);
     let hooked = false;
 
@@ -19,6 +20,12 @@ window.Rich = (() => {
         if (!window.DOMPurify) return escapeHTML(toText(html)).replace(/\n/g, '<br>');
         if (!hooked) {
             window.DOMPurify.addHook('afterSanitizeAttributes', node => {
+                if (node.tagName === 'MARK') {
+                    const colour = (node.getAttribute('class') || '').replace(/^hl-/, '');
+                    node.setAttribute('class', `hl-${HIGHLIGHTS.includes(colour) ? colour : 'yellow'}`);
+                    return;
+                }
+                if (node.tagName !== 'IMG' && node.hasAttribute('class')) node.removeAttribute('class');
                 if (node.tagName === 'IMG') {
                     const id = node.getAttribute('data-media') || '';
                     if (!/^[a-z0-9]{4,40}$/i.test(id)) {
@@ -39,7 +46,7 @@ window.Rich = (() => {
         }
         return window.DOMPurify.sanitize(html, {
             ALLOWED_TAGS: allowMedia ? [...ALLOWED_TAGS, 'img'] : ALLOWED_TAGS,
-            ALLOWED_ATTR: allowMedia ? ['href', 'target', 'rel', 'data-media', 'class', 'alt'] : ['href', 'target', 'rel'],
+            ALLOWED_ATTR: allowMedia ? ['href', 'target', 'rel', 'data-media', 'class', 'alt'] : ['href', 'target', 'rel', 'class'],
             ALLOW_DATA_ATTR: false
         });
     }
@@ -116,6 +123,7 @@ window.Rich = (() => {
         { cmd: 'italic', label: 'Italic (Ctrl+I)', html: '<i>I</i>', state: true },
         { cmd: 'underline', label: 'Underline (Ctrl+U)', html: '<u>U</u>', state: true },
         { cmd: 'strikeThrough', label: 'Strikethrough', html: '<s>S</s>', state: true },
+        { cmd: 'highlight', label: 'Highlight (tap again inside a highlight to change its colour)', icon: 'i-marker' },
         { sep: true },
         { cmd: 'code', label: 'Inline code', icon: 'i-code' },
         { cmd: 'codeblock', label: 'Code block', icon: 'i-codeblock' },
@@ -227,6 +235,68 @@ window.Rich = (() => {
         return toolbar;
     }
 
+    // ---------- Highlighter ----------
+    // Select text and tap: it's marked in the last colour used. Tap inside a highlight to cycle
+    // yellow → green → pink → blue → none.
+    let lastColour = 'yellow';
+
+    function highlight(editable) {
+        const sel = document.getSelection();
+        if (!sel.rangeCount) return;
+        const range = sel.getRangeAt(0);
+        if (!editable.contains(range.commonAncestorContainer)) return;
+        const inside = currentBlock(editable, ['MARK']);
+        if (range.collapsed || (inside && inside.contains(range.endContainer) && inside.contains(range.startContainer))) {
+            if (!inside) return;
+            const now = (inside.className || '').replace('hl-', '');
+            const next = HIGHLIGHTS[HIGHLIGHTS.indexOf(now) + 1];
+            if (next) {
+                inside.className = `hl-${next}`;
+                lastColour = next;
+            } else {
+                unwrap(inside);
+            }
+            return;
+        }
+        // Wrap every piece of selected text (selections can cross bold, links and paragraphs)
+        const texts = [];
+        const walker = document.createTreeWalker(range.commonAncestorContainer.nodeType === 1 ? range.commonAncestorContainer : range.commonAncestorContainer.parentNode, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+            const t = walker.currentNode;
+            if (range.intersectsNode(t) && t.textContent.trim()) texts.push(t);
+        }
+        const marks = [];
+        texts.forEach(t => {
+            let node = t;
+            if (node === range.endContainer && range.endOffset < node.length) node.splitText(range.endOffset);
+            if (node === range.startContainer && range.startOffset > 0) node = node.splitText(range.startOffset);
+            const existing = node.parentElement.closest('mark');
+            if (existing && editable.contains(existing)) {
+                existing.className = `hl-${lastColour}`;
+                return;
+            }
+            const mark = document.createElement('mark');
+            mark.className = `hl-${lastColour}`;
+            node.replaceWith(mark);
+            mark.append(node);
+            marks.push(mark);
+        });
+        if (marks.length) {
+            const after = document.createRange();
+            after.setStartAfter(marks[marks.length - 1]);
+            after.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(after);
+        }
+    }
+
+    function unwrap(el) {
+        const parent = el.parentNode;
+        while (el.firstChild) parent.insertBefore(el.firstChild, el);
+        el.remove();
+        parent.normalize();
+    }
+
     function currentBlock(editable, tags) {
         const sel = document.getSelection();
         if (!sel.rangeCount) return null;
@@ -251,6 +321,9 @@ window.Rich = (() => {
                 break;
             case 'list':
                 document.execCommand('insertUnorderedList');
+                break;
+            case 'highlight':
+                highlight(editable);
                 break;
             case 'code': {
                 const text = document.getSelection().toString() || 'code';

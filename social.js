@@ -54,7 +54,9 @@ document.addEventListener('DOMContentLoaded', () => {
         remotePhotos: new Map(), // local id -> [{ id, path, name }] uploaded for the feed
         feedSort: 'latest',
         feedFilter: 'all',   // all | mine | saved | tag:<name>
-        saved: new Set(load('diarySavedPosts', [])),
+        saved: new Set(),       // entry ids you've saved (synced to your account)
+        savedReels: new Set(),
+        savedExtra: [],         // saved entries that are older than the loaded feed
         seenStories: new Set(load('diarySeenStories', [])),
         suggestions: [],
         feedDraft: { text: '', photos: [] }, // the feed composer survives re-renders
@@ -352,7 +354,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!s.profile) return app.render();
 
         s.drafts = load(`diaryChatDrafts:${s.profile.id}`, {});
-        await Promise.all([loadFriends(), loadRecent(), loadRemoteIds()]);
+        await Promise.all([loadFriends(), loadRecent(), loadRemoteIds(), loadSaved()]);
         subscribe();
         syncAllShared();
         app.render();
@@ -365,7 +367,8 @@ document.addEventListener('DOMContentLoaded', () => {
         Object.assign(s, {
             profile: null, friends: [], incoming: [], outgoing: [], unread: {}, last: {}, feed: null, feedAuthor: null,
             threads: {}, activeFriend: null, drafts: {}, pending: {}, online: new Set(), urls: new Map(),
-            remoteIds: new Set(), channel: null, presence: null, comments: new Map()
+            remoteIds: new Set(), channel: null, presence: null, comments: new Map(),
+            saved: new Set(), savedReels: new Set(), savedExtra: []
         });
         if (window.diaryCommunities) window.diaryCommunities.reset();
         updateBadge();
@@ -952,22 +955,127 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Feed ----------
+    const FEED_SELECT = `
+        id, author, local_id, title, body, html, color, mood, photos, written_at, shared_at, allow_reposts,
+        author_profile:diary_profiles!diary_shared_entries_author_fkey(username, display_name, avatar_path),
+        likes:diary_entry_likes(user_id),
+        comments:diary_comments(count),
+        reposts:diary_reposts(user_id, created_at, profile:diary_profiles!diary_reposts_user_id_fkey(username, display_name))`;
+
     async function loadFeed() {
         if (s.feedLoading) return;
         s.feedLoading = true;
-        const [feedRes, suggestRes] = await Promise.all([
-            client.from('diary_shared_entries').select(`
-                id, author, local_id, title, body, html, color, mood, photos, written_at, shared_at,
-                author_profile:diary_profiles!diary_shared_entries_author_fkey(username, display_name, avatar_path),
-                likes:diary_entry_likes(user_id),
-                comments:diary_comments(count)
-            `).order('shared_at', { ascending: false }).limit(60),
-            client.rpc('diary_friend_suggestions')
+        const [feedRes, suggestRes, repostRes] = await Promise.all([
+            client.from('diary_shared_entries').select(FEED_SELECT).order('shared_at', { ascending: false }).limit(60),
+            client.rpc('diary_friend_suggestions'),
+            client.from('diary_reposts').select('entry_id').order('created_at', { ascending: false }).limit(60)
         ]);
+        let feed = feedRes.error ? [] : feedRes.data;
+        // Older posts that friends reposted recently
+        const have = new Set(feed.map(p => p.id));
+        const missing = [...new Set((repostRes.data || []).map(r => r.entry_id))].filter(id => !have.has(id));
+        if (missing.length) {
+            const { data } = await client.from('diary_shared_entries').select(FEED_SELECT).in('id', missing.slice(0, 40));
+            feed = feed.concat(data || []);
+        }
+        feed.forEach(decorateRepost);
+        feed.sort((a, b) => b.sortAt - a.sortAt);
         s.feedLoading = false;
-        s.feed = feedRes.error ? [] : feedRes.data;
+        s.feed = feed;
         s.suggestions = suggestRes.error ? [] : suggestRes.data;
+        await loadSavedExtra();
         if (app.state.view === 'feed') app.render();
+    }
+
+    // The newest repost by someone other than the author puts the post back at the top of the feed
+    function decorateRepost(p) {
+        p.reposts = p.reposts || [];
+        const latest = p.reposts
+            .filter(r => r.user_id !== p.author)
+            .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
+        p.latestRepost = latest || null;
+        p.sortAt = Math.max(Date.parse(p.shared_at), latest ? Date.parse(latest.created_at) : 0);
+    }
+
+    // ---------- Saved posts and reels (a private list on your account) ----------
+    async function loadSaved() {
+        const { data, error } = await client.from('diary_saved_items').select('kind, item_id');
+        if (error) return;
+        s.saved = new Set(data.filter(r => r.kind === 'entry').map(r => r.item_id));
+        s.savedReels = new Set(data.filter(r => r.kind === 'reel').map(r => r.item_id));
+        // Bring over bookmarks saved on this device before saving was synced
+        const local = load('diarySavedPosts', []).filter(id => /^[0-9a-f-]{36}$/i.test(id) && !s.saved.has(id));
+        if (local.length) {
+            const { error: moveError } = await client.from('diary_saved_items')
+                .upsert(local.map(id => ({ kind: 'entry', item_id: id })), { onConflict: 'user_id,kind,item_id', ignoreDuplicates: true });
+            if (!moveError) local.forEach(id => s.saved.add(id));
+        }
+        try { localStorage.removeItem('diarySavedPosts'); } catch (e) {}
+    }
+
+    async function loadSavedExtra() {
+        const have = new Set((s.feed || []).map(p => p.id));
+        const missing = [...s.saved].filter(id => !have.has(id));
+        if (!missing.length) {
+            s.savedExtra = [];
+            return;
+        }
+        const { data } = await client.from('diary_shared_entries').select(FEED_SELECT).in('id', missing.slice(0, 60));
+        s.savedExtra = (data || []).map(p => (decorateRepost(p), p)).sort((a, b) => b.sortAt - a.sortAt);
+    }
+
+    async function toggleSaved(kind, id) {
+        const set = kind === 'reel' ? s.savedReels : s.saved;
+        const was = set.has(id);
+        if (was) set.delete(id);
+        else set.add(id);
+        app.showToast(was ? 'Removed from Saved' : 'Saved — find it under Saved');
+        // Reels repaint their own button so the video keeps playing
+        if (kind !== 'reel') app.render();
+        const { error } = was
+            ? await client.from('diary_saved_items').delete().eq('kind', kind).eq('item_id', id)
+            : await client.from('diary_saved_items').insert({ kind, item_id: id });
+        if (error) {
+            if (was) set.add(id);
+            else set.delete(id);
+            app.showToast('Couldn’t update Saved');
+            if (kind !== 'reel') app.render();
+        }
+    }
+
+    // ---------- Reposts ----------
+    async function toggleRepost(entryId) {
+        const post = postsFor('entry').find(p => p.id === entryId);
+        if (!post) return;
+        const me = s.profile.id;
+        const mine = post.reposts.some(r => r.user_id === me);
+        post.reposts = mine
+            ? post.reposts.filter(r => r.user_id !== me)
+            : [...post.reposts, { user_id: me, created_at: new Date().toISOString(), profile: { username: s.profile.username, display_name: s.profile.display_name } }];
+        decorateRepost(post);
+        app.render();
+        const { error } = mine
+            ? await client.from('diary_reposts').delete().eq('entry_id', entryId).eq('user_id', me)
+            : await client.from('diary_reposts').insert({ entry_id: entryId });
+        if (error) {
+            app.showToast('Couldn’t update the repost');
+            s.feed = null;
+            app.render();
+            return;
+        }
+        app.showToast(mine ? 'Repost removed' : 'Reposted — your friends will see it in their feed');
+    }
+
+    async function setAllowReposts(post, allow) {
+        const { error } = await client.from('diary_shared_entries').update({ allow_reposts: allow }).eq('id', post.id);
+        if (error) return app.showToast('Couldn’t change that setting');
+        post.allow_reposts = allow;
+        if (!allow) {
+            post.reposts = [];
+            decorateRepost(post);
+        }
+        app.showToast(allow ? 'Friends can repost this' : 'Reposts are off — existing reposts were removed');
+        app.render();
     }
 
     async function toggleLike(entryId) {
@@ -1121,22 +1229,21 @@ document.addEventListener('DOMContentLoaded', () => {
             list = mine;
             filterLabel = 'Your posts';
         } else if (s.feedFilter === 'saved') {
-            list = list.filter(p => s.saved.has(p.id));
-            filterLabel = 'Saved posts';
+            list = [...list, ...s.savedExtra].filter(p => s.saved.has(p.id));
+            filterLabel = 'Saved';
         } else if (s.feedFilter.startsWith('tag:')) {
             const tag = s.feedFilter.slice(4);
             list = list.filter(p => hashtags(p).includes(tag));
             filterLabel = `#${tag}`;
         }
         if (s.feedSort === 'popular') {
-            list = [...list].sort((a, b) => b.likes.length - a.likes.length || Date.parse(b.shared_at) - Date.parse(a.shared_at));
+            list = [...list].sort((a, b) => b.likes.length - a.likes.length || b.sortAt - a.sortAt);
         }
 
         const navItem = (filter, icon, label) => `
             <button class="social-nav-item${!s.feedAuthor && s.feedFilter === filter ? ' active' : ''}" data-action="feed-filter" data-filter="${filter}">
                 <svg class="i"><use href="#${icon}"/></svg>${label}</button>`;
 
-        const stories = storyGroups();
         const online = s.friends.filter(f => s.online.has(f.id));
 
         return `
@@ -1158,7 +1265,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     <nav class="social-nav" aria-label="Feed">
                         ${navItem('all', 'i-home', 'Feed')}
                         ${navItem('mine', 'i-user', 'My posts')}
-                        ${navItem('saved', 'i-bookmark', 'My favorites')}
+                        ${navItem('saved', 'i-bookmark', 'Saved')}
+                        <button class="social-nav-item" data-action="go-reels"><svg class="i"><use href="#i-reel"/></svg>Reels</button>
                         <button class="social-nav-item" data-action="find-friends"><svg class="i"><use href="#i-send"/></svg>Direct</button>
                         <button class="social-nav-item" data-action="go-insights"><svg class="i"><use href="#i-chart"/></svg>Stats</button>
                     </nav>
@@ -1175,6 +1283,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </aside>
 
                 <section class="social-main">
+                    ${window.diaryStories ? window.diaryStories.strip() : ''}
                     <div class="social-top">
                         <label class="search feed-search">
                             <svg class="i"><use href="#i-search"/></svg>
@@ -1198,22 +1307,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     </form>
 
                     <div class="block-head">
-                        <h2>Stories</h2>
-                        ${stories.length ? '<button class="link-btn" data-action="story-open">Watch all</button>' : ''}
-                    </div>
-                    <div class="stories">
-                        <button class="story" data-action="create-post">
-                            <span class="story-ring add"><svg class="i"><use href="#i-plus"/></svg></span><span>Add story</span>
-                        </button>
-                        ${stories.map(g => `
-                            <button class="story" data-action="story-open" data-id="${esc(g.author)}">
-                                <span class="story-ring${g.posts.every(p => s.seenStories.has(p.id)) ? ' seen' : ''}">${avatar(g.person, 'lg')}</span>
-                                <span>${g.author === me ? 'You' : esc(g.person.display_name.split(' ')[0])}</span>
-                            </button>`).join('')}
-                    </div>
-
-                    <div class="block-head">
                         <h2>${filterLabel ? esc(filterLabel) : 'Feeds'}</h2>
+                        <button class="chip reels-chip" data-action="go-reels"><svg class="i"><use href="#i-reel"/></svg>Reels</button>
                         <div class="feed-sort" role="group" aria-label="Sort posts">
                             <button data-action="feed-sort" data-sort="popular" aria-pressed="${s.feedSort === 'popular'}">Popular</button>
                             <button data-action="feed-sort" data-sort="latest" aria-pressed="${s.feedSort === 'latest'}">Latest</button>
@@ -1223,7 +1318,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="feed-list">
                         ${list.map(postCard).join('') || `<div class="empty">
                             <p class="empty-title">${filterLabel ? 'Nothing here yet' : 'No posts yet'}</p>
-                            <p>${s.feedFilter === 'saved' ? 'Tap the bookmark on a post to save it here.' : 'Turn on <strong>Share with friends</strong> in an entry, or add friends to see theirs here.'}</p>
+                            <p>${s.feedFilter === 'saved' ? 'Tap the bookmark on any post to save it here — only you can see what you save.' : 'Turn on <strong>Share with friends</strong> in an entry, or add friends to see theirs here.'}</p>
                         </div>`}
                     </div>
                 </section>
@@ -1360,6 +1455,11 @@ document.addEventListener('DOMContentLoaded', () => {
             likes: p.likes,
             commentCount: commentCount(p),
             saved: s.saved.has(p.id),
+            reposts: p.reposts || [],
+            repostedBy: p.latestRepost
+                ? (p.latestRepost.user_id === me ? 'You' : (p.latestRepost.profile && p.latestRepost.profile.display_name) || 'A friend')
+                : '',
+            canRepost: p.author !== me && p.allow_reposts !== false && s.friends.some(f => f.id === p.author),
             canComment: true,
             tags: hashtags(p),
             mine: p.author === me
@@ -1408,6 +1508,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         return `
             <article class="post ig" data-post="${key}" data-search="${esc(`${profile.display_name} ${profile.username} ${o.title || ''} ${o.body || ''}`.toLowerCase())}">
+                ${o.repostedBy ? `<p class="repost-line"><svg class="i"><use href="#i-repost"/></svg>${esc(o.repostedBy)} reposted</p>` : ''}
                 <header class="post-head">
                     ${avatar(person, 'md')}
                     <div class="post-who">
@@ -1422,13 +1523,20 @@ document.addEventListener('DOMContentLoaded', () => {
                         <svg class="i"><use href="#${liked ? 'i-heart-fill' : 'i-heart'}"/></svg>
                     </button>
                     <button class="act" data-action="comments-focus" data-key="${key}" aria-label="Comment"><svg class="i"><use href="#i-chat"/></svg></button>
+                    ${o.canRepost ? (() => {
+                        const on = o.reposts.some(r => r.user_id === me);
+                        return `<button class="act repost-btn" data-action="repost" data-id="${esc(o.id)}" aria-pressed="${on}" aria-label="${on ? 'Undo repost' : 'Repost to your friends'}"><svg class="i"><use href="#i-repost"/></svg></button>`;
+                    })() : ''}
                     ${o.mine || !s.friends.some(f => f.id === o.author) ? '' : `<button class="act" data-action="message-friend" data-id="${esc(o.author)}" aria-label="Message ${esc(profile.display_name)}"><svg class="i"><use href="#i-send"/></svg></button>`}
                     ${o.kind === 'entry' ? `
-                        <button class="act save-btn" data-action="save-post" data-id="${esc(o.id)}" aria-pressed="${o.saved}" aria-label="${o.saved ? 'Remove from favorites' : 'Save to favorites'}">
+                        <button class="act save-btn" data-action="save-post" data-id="${esc(o.id)}" aria-pressed="${o.saved}" aria-label="${o.saved ? 'Remove from Saved' : 'Save post'}">
                             <svg class="i"><use href="#${o.saved ? 'i-bookmark-fill' : 'i-bookmark'}"/></svg>
                         </button>` : ''}
                 </div>
-                ${o.likes.length ? `<p class="post-likes">${o.likes.length} ${o.likes.length === 1 ? 'like' : 'likes'}</p>` : ''}
+                ${o.likes.length || (o.reposts && o.reposts.length) ? `<p class="post-likes">${[
+                    o.likes.length ? `${o.likes.length} ${o.likes.length === 1 ? 'like' : 'likes'}` : '',
+                    o.reposts && o.reposts.length ? `${o.reposts.length} ${o.reposts.length === 1 ? 'repost' : 'reposts'}` : ''
+                ].filter(Boolean).join(' · ')}</p>` : ''}
                 ${photos.length ? caption : ''}
                 ${commentsBlock(o.kind, o.id, o.commentCount, o.canComment)}
             </article>`;
@@ -1470,14 +1578,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function commentTarget(key) {
         const [kind, id] = key.split(':');
-        return kind === 'entry' ? { column: 'entry_id', id } : { column: 'post_id', id };
+        return { column: { entry: 'entry_id', post: 'post_id', reel: 'reel_id' }[kind], id };
+    }
+
+    function postsFor(kind) {
+        if (kind === 'entry') return [...(s.feed || []), ...s.savedExtra];
+        if (kind === 'reel') return window.diaryStories ? window.diaryStories.reels() : [];
+        return window.diaryCommunities ? window.diaryCommunities.posts() : [];
     }
 
     // Whose post it is, so the owner can also delete comments on it
     function postOwner(key) {
         const [kind, id] = key.split(':');
-        const list = kind === 'entry' ? (s.feed || []) : (window.diaryCommunities ? window.diaryCommunities.posts() : []);
-        const post = list.find(p => p.id === id);
+        const post = postsFor(kind).find(p => p.id === id);
         return post ? post.author : null;
     }
 
@@ -1528,24 +1641,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function bumpCommentCount(key, delta) {
         const [kind, id] = key.split(':');
-        const list = kind === 'entry' ? (s.feed || []) : (window.diaryCommunities ? window.diaryCommunities.posts() : []);
-        const post = list.find(p => p.id === id);
-        if (post) post.comments = [{ count: Math.max(0, commentCount(post) + delta) }];
+        postsFor(kind).filter(p => p.id === id).forEach(post => {
+            post.comments = [{ count: Math.max(0, commentCount(post) + delta) }];
+        });
+        if (kind === 'reel' && window.diaryStories) window.diaryStories.paintCounts(id);
     }
 
     function repaintComments(key) {
-        const el = content.querySelector(`[data-comments="${CSS.escape(key)}"]`);
+        const el = document.querySelector(`[data-comments="${CSS.escape(key)}"]`);
         if (!el) return;
         const [kind, id] = key.split(':');
-        const list = kind === 'entry' ? (s.feed || []) : (window.diaryCommunities ? window.diaryCommunities.posts() : []);
-        const post = list.find(p => p.id === id);
-        const canComment = kind === 'entry' || (window.diaryCommunities && window.diaryCommunities.canInteract());
+        const post = postsFor(kind).find(p => p.id === id);
+        const canComment = kind !== 'post' || (window.diaryCommunities && window.diaryCommunities.canInteract());
         el.outerHTML = commentsBlock(kind, id, post ? commentCount(post) : 0, canComment);
     }
 
     // Realtime: new comments from others land in open threads
     function onCommentInsert(c) {
-        const key = c.entry_id ? `entry:${c.entry_id}` : `post:${c.post_id}`;
+        const key = c.entry_id ? `entry:${c.entry_id}` : c.reel_id ? `reel:${c.reel_id}` : `post:${c.post_id}`;
         const thread = s.comments.get(key);
         if (thread && thread.open && !thread.loading && !thread.items.some(x => x.id === c.id)) {
             if (c.author === s.profile.id) return;
@@ -1612,90 +1725,9 @@ document.addEventListener('DOMContentLoaded', () => {
     window.diarySocial.internals = {
         client, state: s, esc, avatar, avatarUrl, timeAgo, gate, extFor, randomId, uploadImage, hydrateStorage,
         renderPost, commentCount, openComments, repaintComments, MOOD_EMOJI: () => MOOD_EMOJI,
-        respond, openChat, focusPost,
+        respond, openChat, focusPost, commentsBlock, addComment, deleteComment, toggleSaved, postsFor,
         setInboxTab(tab) { s.inboxTab = tab; app.render(); }
     };
-
-    // One story group per person who shared in the last 24 hours (you first)
-    function storyGroups() {
-        const since = Date.now() - 86400000;
-        const groups = new Map();
-        [...s.feed].reverse().forEach(p => {
-            if (Date.parse(p.shared_at) < since) return;
-            if (!groups.has(p.author)) {
-                const a = p.author_profile || { display_name: 'Someone', username: '' };
-                groups.set(p.author, { author: p.author, person: { id: p.author, display_name: a.display_name, username: a.username, avatar_path: a.avatar_path }, posts: [] });
-            }
-            groups.get(p.author).posts.push(p);
-        });
-        const me = s.profile.id;
-        return [...groups.values()].sort((a, b) => (b.author === me) - (a.author === me));
-    }
-
-    // ---------- Story viewer ----------
-    const storyDialog = $('story');
-    let story = null;
-
-    function openStories(startAuthor) {
-        const groups = storyGroups();
-        if (!groups.length) return;
-        let gi = startAuthor ? groups.findIndex(g => g.author === startAuthor) : groups.findIndex(g => g.posts.some(p => !s.seenStories.has(p.id)));
-        if (gi < 0) gi = 0;
-        story = { groups, gi, pi: 0, timer: null };
-        storyDialog.showModal();
-        showStory();
-    }
-
-    function showStory() {
-        clearTimeout(story.timer);
-        const group = story.groups[story.gi];
-        const post = group.posts[story.pi];
-        s.seenStories.add(post.id);
-        try { localStorage.setItem('diarySeenStories', JSON.stringify([...s.seenStories].slice(-300))); } catch (e) {}
-
-        $('story-bars').innerHTML = group.posts.map((p, i) =>
-            `<span class="${i < story.pi ? 'done' : i === story.pi ? 'active' : ''}"><i></i></span>`).join('');
-        $('story-avatar').outerHTML = avatar(group.person, 'sm').replace('<span class="avatar', '<span id="story-avatar" class="avatar');
-        $('story-name').textContent = group.author === s.profile.id ? 'Your story' : group.person.display_name;
-        $('story-time').textContent = timeAgo(post.shared_at);
-        const photo = (post.photos || [])[0];
-        $('story-card').className = `story-card tinted c-${post.color}`;
-        $('story-card').innerHTML = `
-            ${photo ? `<img class="story-photo" data-path="${esc(photo.path)}" data-bucket="${FEED_BUCKET}" alt="">` : ''}
-            ${post.title ? `<h3>${esc(post.title)}</h3>` : ''}
-            <div class="rich-content">${post.html ? Rich.sanitize(post.html) : esc(post.body)}</div>
-            ${post.mood ? `<p class="story-mood">${MOOD_EMOJI[post.mood] || ''}</p>` : ''}`;
-        hydrateStorage($('story-card'));
-        story.timer = setTimeout(() => stepStory(1), 7000);
-    }
-
-    function stepStory(dir) {
-        if (!story) return;
-        const group = story.groups[story.gi];
-        story.pi += dir;
-        if (story.pi >= group.posts.length) {
-            story.gi++;
-            story.pi = 0;
-        } else if (story.pi < 0) {
-            story.gi = Math.max(0, story.gi - 1);
-            story.pi = 0;
-        }
-        if (story.gi >= story.groups.length) return storyDialog.close();
-        showStory();
-    }
-
-    $('story-next').addEventListener('click', () => stepStory(1));
-    $('story-prev').addEventListener('click', () => stepStory(-1));
-    $('story-close').addEventListener('click', () => storyDialog.close());
-    storyDialog.addEventListener('close', () => {
-        if (story) clearTimeout(story.timer);
-        story = null;
-        if (app.state.view === 'feed') app.render();
-    });
-    storyDialog.addEventListener('keydown', e => {
-        if (e.key === 'ArrowRight') stepStory(1);
-        if (e.key === 'ArrowLeft') stepStory(-1);
-    });
 
     // ---------- Inbox (chat) ----------
     app.views.messages = () => {
@@ -1976,17 +2008,12 @@ document.addEventListener('DOMContentLoaded', () => {
             s.feedDraft.photos = s.feedDraft.photos.filter(p => p.id !== el.dataset.id);
             renderFeedPhotos();
         },
-        'save-post': el => {
-            const id = el.dataset.id;
-            if (s.saved.has(id)) s.saved.delete(id);
-            else s.saved.add(id);
-            try { localStorage.setItem('diarySavedPosts', JSON.stringify([...s.saved])); } catch (e) {}
-            app.showToast(s.saved.has(id) ? 'Saved to My favorites' : 'Removed from favorites');
-            app.render();
-        },
+        'save-post': el => toggleSaved('entry', el.dataset.id),
+        'repost': el => toggleRepost(el.dataset.id),
+        'go-reels': () => app.setView('reels'),
         'post-menu': el => {
             if (el.dataset.kind === 'post' && window.diaryCommunities) return window.diaryCommunities.postMenu(el);
-            const post = (s.feed || []).find(p => p.id === el.dataset.id);
+            const post = postsFor('entry').find(p => p.id === el.dataset.id);
             if (!post) return;
             const mine = post.author === s.profile.id;
             const items = mine
@@ -1996,6 +2023,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (local) app.openNote(local.id);
                         else app.showToast('That entry isn’t on this device');
                     } },
+                    post.allow_reposts === false
+                        ? { label: 'Allow reposts', icon: 'i-repost', onClick: () => setAllowReposts(post, true) }
+                        : { label: 'Turn off reposts', icon: 'i-repost', onClick: () => setAllowReposts(post, false) },
                     { label: 'Stop sharing', icon: 'i-lock', danger: true, onClick: () => {
                         const local = app.getNotes().find(n => n.id === post.local_id);
                         if (local) {
@@ -2011,12 +2041,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     } }
                 ]
                 : [
-                    { label: 'Message', icon: 'i-chat', onClick: () => { app.setView('messages'); openChat(post.author); } },
+                    { label: s.saved.has(post.id) ? 'Remove from Saved' : 'Save post', icon: 'i-bookmark', onClick: () => toggleSaved('entry', post.id) },
+                    ...(post.reposts.some(r => r.user_id === s.profile.id)
+                        ? [{ label: 'Undo repost', icon: 'i-repost', onClick: () => toggleRepost(post.id) }]
+                        : []),
+                    ...(s.friends.some(f => f.id === post.author) ? [{ label: 'Message', icon: 'i-chat', onClick: () => { app.setView('messages'); openChat(post.author); } }] : []),
                     { label: `More from ${post.author_profile ? post.author_profile.display_name : 'them'}`, icon: 'i-user', onClick: () => { s.feedAuthor = post.author; app.render(); } }
                 ];
             app.openPopover(el, items);
         },
-        'story-open': el => openStories(el.dataset.id || null),
         'suggest-add': el => {
             s.suggestions = s.suggestions.filter(p => p.username !== el.dataset.username);
             addFriend(el.dataset.username);

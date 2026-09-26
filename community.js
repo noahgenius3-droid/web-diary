@@ -50,31 +50,58 @@ document.addEventListener('DOMContentLoaded', () => {
     const inView = () => ['communities', 'community'].includes(app.state.view);
 
     // ---------- Data ----------
-    async function loadCommunities() {
-        if (c.loading) return;
-        c.loading = true;
-        const [all, mine] = await Promise.all([
-            client.from('diary_communities')
-                .select('id, name, description, emoji, color, visibility, owner, created_at, members:diary_community_members(count)')
-                .order('created_at', { ascending: false })
-                .limit(100),
-            client.from('diary_community_members').select('community_id, role').eq('user_id', me())
-        ]);
-        c.loading = false;
-        c.list = all.data || [];
-        c.memberships = new Map((mine.data || []).map(m => [m.community_id, m.role]));
-        if (inView()) app.render();
+    // Phones on weak signal (or waking from the background) can leave a request hanging;
+    // give up after a while so the page can offer a retry instead of "Loading…" forever.
+    function withTimeout(promise, ms = 15000) {
+        return Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))]);
+    }
+
+    // Everyone waiting on the list shares one request, so memberships are always known before a group opens
+    function loadCommunities() {
+        if (c.loading) return c.loading;
+        c.loadError = false;
+        c.loading = (async () => {
+            try {
+                const [all, mine] = await withTimeout(Promise.all([
+                    client.from('diary_communities')
+                        .select('id, name, description, emoji, color, visibility, owner, created_at, members:diary_community_members(count)')
+                        .order('created_at', { ascending: false })
+                        .limit(100),
+                    client.from('diary_community_members').select('community_id, role').eq('user_id', me())
+                ]));
+                if (all.error || mine.error) throw all.error || mine.error;
+                c.list = all.data || [];
+                c.memberships = new Map((mine.data || []).map(m => [m.community_id, m.role]));
+            } catch (e) {
+                c.loadError = true;
+            } finally {
+                c.loading = null;
+            }
+            if (inView()) app.render();
+        })();
+        return c.loading;
     }
 
     async function openCommunity(id) {
         if (c.opening === id) return;
         c.opening = id;
-        if (c.list === null) await loadCommunities();
-        const { data: cm } = await client.from('diary_communities')
-            .select('*, members:diary_community_members(count)')
-            .eq('id', id)
-            .maybeSingle();
-        c.opening = null;
+        c.openError = null;
+        let cm = null;
+        try {
+            if (c.list === null) await loadCommunities();
+            const res = await withTimeout(client.from('diary_communities')
+                .select('*, members:diary_community_members(count)')
+                .eq('id', id)
+                .maybeSingle());
+            if (res.error) throw res.error;
+            cm = res.data;
+        } catch (e) {
+            c.openError = id;
+            if (app.state.view === 'community') app.render();
+            return;
+        } finally {
+            c.opening = null;
+        }
         if (!cm) {
             app.showToast('That community isn’t available');
             app.setView('communities');
@@ -134,6 +161,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const blocked = gate('Create or join communities to share notes and updates with people who care about the same things.');
         if (blocked) return blocked;
         if (c.list === null) {
+            if (c.loadError) return retryBlock('Couldn’t load your communities', 'cm-retry-list');
             loadCommunities();
             return '<p class="muted">Loading communities…</p>';
         }
@@ -169,6 +197,15 @@ document.addEventListener('DOMContentLoaded', () => {
             </section>`;
     };
 
+    function retryBlock(title, action) {
+        return `
+            <div class="empty">
+                <p class="empty-title">${title}</p>
+                <p>Check your connection, then try again.</p>
+                <button class="primary-btn" style="margin-top:18px" data-action="${action}">Try again</button>
+            </div>`;
+    }
+
     function card(cm) {
         const role = roleOf(cm.id);
         return `
@@ -192,6 +229,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (blocked) return blocked;
         const id = app.state.communityId;
         if (!c.current || c.current.id !== id) {
+            if (c.openError === id) return retryBlock('Couldn’t open this community', 'cm-retry-open');
             openCommunity(id);
             return '<p class="muted">Loading community…</p>';
         }
@@ -664,6 +702,8 @@ document.addEventListener('DOMContentLoaded', () => {
     Object.assign(app.actions, {
         'cm-open': el => app.setView('community', { communityId: el.dataset.id }),
         'cm-back': () => app.setView('communities'),
+        'cm-retry-list': () => { c.loadError = false; loadCommunities(); app.render(); },
+        'cm-retry-open': () => { c.openError = null; app.render(); },
         'cm-create': () => openDialog(),
         'cm-tab': el => {
             c.tab = el.dataset.tab;
