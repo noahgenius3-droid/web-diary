@@ -9835,38 +9835,34 @@ html.pv-lock .main-col { overflow: hidden; touch-action: none; }
     .pv-top { gap: 8px; }
 }
 
-/* ---------- Splash: a 15-second show (tap to skip) ---------- */
-/* Taglines take turns, 3 s each */
+/* ---------- Splash: a 6-second show ---------- */
+/* Taglines take turns; the last one stays */
 .sp-tag { position: relative; display: grid; min-height: 1.5em; width: min(320px, 86vw); }
-.sp-tag span { grid-area: 1 / 1; opacity: 0; animation: sp-line 15s linear 0.9s infinite; }
-.sp-tag span:nth-child(2) { animation-delay: 3.9s; }
-.sp-tag span:nth-child(3) { animation-delay: 6.9s; }
-.sp-tag span:nth-child(4) { animation-delay: 9.9s; }
-.sp-tag span:nth-child(5) { animation-delay: 12.9s; }
+.sp-tag span { grid-area: 1 / 1; opacity: 0; animation: sp-line 6s linear 0.9s both; }
+.sp-tag span:nth-child(2) { animation-delay: 2.6s; }
+.sp-tag span:nth-child(3) { animation: sp-line-last 6s linear 4.3s both; }
+.sp-tag span:nth-child(n+4) { display: none; }
 @keyframes sp-line {
     0% { opacity: 0; transform: translateY(8px); filter: blur(4px); }
-    3%, 17% { opacity: 1; transform: none; filter: none; }
-    20%, 100% { opacity: 0; transform: translateY(-8px); filter: blur(4px); }
+    5%, 24% { opacity: 1; transform: none; filter: none; }
+    29%, 100% { opacity: 0; transform: translateY(-8px); filter: blur(4px); }
 }
 /* The mark breathes and its ring pulses once the intro has played */
 .sp-mark { animation: sp-pop 760ms cubic-bezier(0.34, 1.56, 0.64, 1) 80ms forwards, sp-breathe 3s ease-in-out 1.6s infinite; }
 @keyframes sp-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.045); } }
 .sp-ring { animation: sp-ring 1000ms cubic-bezier(0.22, 1, 0.36, 1) 820ms forwards, sp-ring 2.4s cubic-bezier(0.22, 1, 0.36, 1) 3s infinite; }
-/* The bar fills over the 15 seconds, so you can see how long is left */
+/* The bar fills over the 6 seconds, so you can see how long is left */
 .sp-progress { width: 160px; margin-left: -80px; }
-.sp-progress i { width: 100%; transform-origin: left center; transform: scaleX(0); animation: sp-fill 14.4s linear 0.6s forwards; }
+.sp-progress i { width: 100%; transform-origin: left center; transform: scaleX(0); animation: sp-fill 5.4s linear 0.6s forwards; }
 @keyframes sp-fill { to { transform: scaleX(1); } }
-.sp-skip { position: absolute; left: 0; right: 0; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); margin: 0; text-align: center; font-size: 0.8rem; color: var(--text-faint); opacity: 0; animation: sp-orb-in 600ms ease-out 2.5s forwards; }
-.splash { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
     .sp-tag span:not(:first-child) { display: none; }
     .sp-tag span:first-child { opacity: 1; }
     .sp-progress { display: block; }
     .sp-progress i { transform: scaleX(1); }
-    .sp-skip { opacity: 1; }
 }
 :root[data-motion="reduce"] .sp-tag span:not(:first-child) { display: none; }
-:root[data-motion="reduce"] .sp-tag span:first-child, :root[data-motion="reduce"] .sp-skip { opacity: 1; }
+:root[data-motion="reduce"] .sp-tag span:first-child { opacity: 1; }
 
 /* =========================================================
    Round 27 · Notes home, hashtags, audio on posts & stories, show password, motion
@@ -10245,3 +10241,10 @@ html.pv-lock .main-col { overflow: hidden; touch-action: none; }
 .pc-audio-play { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 50%; background: var(--accent); color: var(--on-accent); cursor: pointer; transition: transform 100ms var(--ease-out); }
 .pc-audio-play:active { transform: scale(0.94); }
 .pc-audio-play .i { width: 18px; height: 18px; }
+@keyframes sp-line-last { 0% { opacity: 0; transform: translateY(8px); filter: blur(4px); } 5%, 100% { opacity: 1; transform: none; filter: none; } }
+
+/* ---------- Offline ---------- */
+.offline-bar { position: sticky; top: 0; z-index: 9; display: flex; align-items: center; gap: 10px; margin: 0 0 12px; padding: 10px 14px; border-radius: 14px; background: color-mix(in srgb, #f59e0b 16%, var(--surface)); border: 1px solid color-mix(in srgb, #f59e0b 40%, var(--border)); color: var(--text); font-size: 0.86rem; line-height: 1.4; animation: arrive 320ms var(--ease-out) both; }
+.offline-bar[hidden] { display: none; }
+.offline-bar .i { flex: none; width: 20px; height: 20px; color: #d97706; }
+.offline-empty .i { width: 40px; height: 40px; margin-bottom: 8px; color: var(--text-faint); }

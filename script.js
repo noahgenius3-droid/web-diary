@@ -446,6 +446,31 @@ document.addEventListener('DOMContentLoaded', () => {
         else paintBack();
     });
 
+    // ---------- Offline ----------
+    // Notes live on this device, so the diary keeps working without internet; a slim bar says what's paused
+    function paintOnline() {
+        const off = !navigator.onLine;
+        document.body.classList.toggle('offline', off);
+        $('offline-bar').hidden = !off;
+    }
+    window.addEventListener('offline', () => {
+        paintOnline();
+        if (!['home', 'folder', 'calendar', 'insights', 'photos', 'highlights', 'archive', 'trash', 'settings'].includes(state.view)) render();
+    });
+    window.addEventListener('online', () => {
+        paintOnline();
+        showToast('Back online');
+        // Pages that were waiting for the internet pick up where they left off
+        if (refreshers[state.view]) refreshView();
+        else render();
+    });
+    paintOnline();
+
+    // Keep a copy of the app on the device so it opens without internet (https or localhost only)
+    if ('serviceWorker' in navigator && (location.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(location.hostname))) {
+        window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+    }
+
     // ---------- Refresh ----------
     // Pages that load from the server register a refresher (Chats, Feed, Explore…); anywhere else a refresh
     // reloads the whole app, which reopens the same page thanks to the address above.

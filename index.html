@@ -7,11 +7,19 @@
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)">
     <title>Cordial</title>
+    <!-- Installable app, and works offline (see sw.js) -->
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+    <link rel="apple-touch-icon" href="/icons/icon-180.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Cordial">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=28">
-    <link rel="stylesheet" href="photoedit.css?v=28">
+    <link rel="stylesheet" href="style.css?v=30">
+    <link rel="stylesheet" href="photoedit.css?v=30">
     <script>
         // Apply saved theme before paint to avoid a flash
         try {
@@ -47,7 +55,6 @@
             </div>
             <p class="sp-word"><span>C</span><span>O</span><span>R</span><span>D</span><span>I</span><span>A</span><span>L</span></p>
             <p class="sp-tag" aria-hidden="true"><span>Your diary, your people.</span><span>Write it down, feel it out.</span><span>Share moments with friends.</span><span>Go live, together.</span><span>Stories, reels & more.</span></p>
-            <p class="sp-skip">Tap anywhere to skip</p>
         </div>
         <span class="sp-progress"><i></i></span>
     </div>
@@ -58,6 +65,7 @@
         <symbol id="i-settings" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></g></symbol>
         <symbol id="i-type" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5h11v2M9.5 5v14M7.5 19h4M14 13v-1.5h6V13M17 11.5V19M15.5 19h3"/></g></symbol>
         <symbol id="i-palette" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22a10 10 0 1 1 10-10c0 2.8-2.2 4-4 4h-2a2 2 0 0 0-1.5 3.3A1.6 1.6 0 0 1 12 22z"/><circle cx="7.5" cy="10.5" r="1" fill="currentColor"/><circle cx="12" cy="7" r="1" fill="currentColor"/><circle cx="16.5" cy="10.5" r="1" fill="currentColor"/></g></symbol>
+        <symbol id="i-wifi-off" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8.8a15 15 0 0 1 4.2-2.7M10.7 5.1A15 15 0 0 1 22 8.8M5 12.5a10 10 0 0 1 5.2-2.5M16.8 11.4a10 10 0 0 1 2.2 1.1M8.5 16a5 5 0 0 1 7 0M12 20h.01M2 2l20 20"/></g></symbol>
         <symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 22c4.4 0 7.5-3 7.5-7.3 0-3.6-2.3-6.2-4.2-8.3-.5-.6-1.5-.2-1.4.6.2 1.7-.3 3.3-1.6 4-.2-2.9-1.9-5.6-4.3-7.4-.6-.4-1.4.1-1.3.8.2 2.6-.9 4.2-2.1 5.9C3.4 11.7 4.5 13 4.5 14.7 4.5 19 7.6 22 12 22z" fill="currentColor"/></symbol>
         <symbol id="i-grid" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></g></symbol>
         <symbol id="i-eye-off" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-2.2 3.2M6.6 6.6C3.9 8.4 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2M3 3l18 18"/></g></symbol>
@@ -225,6 +233,7 @@
                 </button>
             </header>
 
+            <div class="offline-bar" id="offline-bar" role="status" hidden><svg class="i"><use href="#i-wifi-off"/></svg><span><strong>You’re offline.</strong> Your notes still work — feed and chats will catch up when you’re back.</span></div>
             <div class="ptr" id="ptr" aria-hidden="true"><svg class="i"><use href="#i-refresh"/></svg></div>
             <main class="content" id="content"></main>
         </div>
@@ -671,23 +680,23 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
-    <script src="config.js?v=28"></script>
-    <script src="rich.js?v=28"></script>
-    <script src="media.js?v=28"></script>
-    <script src="dilute.js?v=28"></script>
-    <script src="script.js?v=28"></script>
-    <script src="social.js?v=28"></script>
-    <script src="stories.js?v=28"></script>
-    <script src="library.js?v=28"></script>
-    <script src="community.js?v=28"></script>
-    <script src="live.js?v=28"></script>
-    <script src="explore.js?v=28"></script>
-    <script src="call.js?v=28"></script>
-    <script src="notify.js?v=28"></script>
-    <script src="settings.js?v=28"></script>
-    <script src="transcribe.js?v=28"></script>
-    <script src="ai.js?v=28"></script>
-    <script src="photoedit.js?v=28"></script>
+    <script src="config.js?v=30"></script>
+    <script src="rich.js?v=30"></script>
+    <script src="media.js?v=30"></script>
+    <script src="dilute.js?v=30"></script>
+    <script src="script.js?v=30"></script>
+    <script src="social.js?v=30"></script>
+    <script src="stories.js?v=30"></script>
+    <script src="library.js?v=30"></script>
+    <script src="community.js?v=30"></script>
+    <script src="live.js?v=30"></script>
+    <script src="explore.js?v=30"></script>
+    <script src="call.js?v=30"></script>
+    <script src="notify.js?v=30"></script>
+    <script src="settings.js?v=30"></script>
+    <script src="transcribe.js?v=30"></script>
+    <script src="ai.js?v=30"></script>
+    <script src="photoedit.js?v=30"></script>
     <script>
         // Lift the splash once the first screen is drawn — after its intro has had time to play, never longer than 4s
         (function () {
@@ -703,14 +712,13 @@
             }
             function ready() {
                 // Count from when the splash first painted, so a slow network never cuts the intro short
-                // The splash plays for 15 seconds (tap to skip)
-                var wait = Math.max(0, (window.__splashAt || 0) + 15000 - performance.now());
+                // The splash plays for 6 seconds
+                var wait = Math.max(0, (window.__splashAt || 0) + 6000 - performance.now());
                 requestAnimationFrame(function () { setTimeout(lift, wait); });
             }
             if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready);
             else ready();
-            setTimeout(lift, 16000);
-            el.addEventListener('click', lift); // impatient tap skips it
+            setTimeout(lift, 7000);
         })();
     </script>
 </body>

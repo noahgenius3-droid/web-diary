@@ -1825,6 +1825,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Views ----------
     function gate(pitch) {
+        // No connection: say so plainly (rather than asking a signed-in person to sign in again)
+        if (!navigator.onLine) {
+            return `<div class="empty offline-empty">
+                <svg class="i"><use href="#i-wifi-off"/></svg>
+                <p class="empty-title">You’re offline</p>
+                <p>This page needs an internet connection. Your notes, templates, calendar and highlights all still work — anything you write is saved on this phone.</p>
+                <button class="primary-btn" style="margin-top:18px" data-action="go-notes">Go to my notes</button>
+            </div>`;
+        }
         if (!available) {
             return `<div class="empty"><p class="empty-title">Can’t connect right now</p>
                 <p>Friends, messages and the feed need an internet connection. Reload the page to try again.</p></div>`;
@@ -3493,6 +3502,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (form) startVoiceComment(form);
         },
         'follow': el => toggleFollow(el.dataset.id, el.dataset.name),
+        'go-notes': () => app.setView('home'),
         'tag-insert': el => insertTag(el),
         'chat-refresh': () => refreshChat(),
         'vc-send': () => finishVoiceComment(true),

@@ -1,0 +1,92 @@
+// Cordial works offline: this keeps a copy of the app (pages, scripts, styles, icons, fonts and the two
+// libraries it loads from a CDN) on the device. Your notes already live on the device, so the diary works fully
+// without internet; friends, feed, chats and live need a connection and say so.
+//
+// Strategy: when online, always fetch fresh (so a new deploy shows up right away) and refresh the saved copy;
+// when the network fails, answer from the saved copy. Supabase data (posts, messages…) is never cached here.
+const CACHE = 'cordial-shell-v1';
+const SHELL = [
+    '/', '/index.html', '/manifest.webmanifest',
+    '/style.css', '/photoedit.css',
+    '/config.js', '/rich.js', '/media.js', '/dilute.js', '/script.js', '/social.js', '/stories.js', '/library.js',
+    '/community.js', '/live.js', '/explore.js', '/call.js', '/notify.js', '/settings.js', '/transcribe.js', '/ai.js',
+    '/photoedit.js',
+    '/icons/icon-180.png', '/icons/icon-192.png', '/icons/icon-512.png',
+    'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
+    'https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js',
+    'https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap'
+];
+// Fetched once and kept (fonts, CDN libraries): fine to serve from the saved copy first
+const STATIC_HOSTS = ['cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com'];
+
+self.addEventListener('install', event => {
+    event.waitUntil((async () => {
+        const cache = await caches.open(CACHE);
+        // One failure (a flaky CDN) mustn't stop the rest from being saved
+        await Promise.all(SHELL.map(url => cache.add(new Request(url, { cache: 'reload' })).catch(() => {})));
+        await self.skipWaiting();
+    })());
+});
+
+self.addEventListener('activate', event => {
+    event.waitUntil((async () => {
+        const keys = await caches.keys();
+        await Promise.all(keys.filter(k => k.startsWith('cordial-') && k !== CACHE).map(k => caches.delete(k)));
+        await self.clients.claim();
+    })());
+});
+
+async function networkFirst(request, fallbackUrl) {
+    const cache = await caches.open(CACHE);
+    try {
+        const fresh = await fetch(request);
+        if (fresh && fresh.ok && fresh.type !== 'opaqueredirect') {
+            // Save under the plain address too, so "?v=29" and "?v=30" share one offline copy
+            const url = new URL(request.url);
+            cache.put(url.origin === self.location.origin ? url.pathname : request, fresh.clone());
+        }
+        return fresh;
+    } catch (e) {
+        const saved = await cache.match(request, { ignoreSearch: true })
+            || (fallbackUrl && (await cache.match(fallbackUrl)));
+        if (saved) return saved;
+        throw e;
+    }
+}
+
+// Answer from the saved copy straight away, and quietly refresh it for next time
+async function cacheFirst(request) {
+    const cache = await caches.open(CACHE);
+    const saved = await cache.match(request);
+    const refresh = fetch(request).then(fresh => {
+        if (fresh && (fresh.ok || fresh.type === 'opaque')) cache.put(request, fresh.clone());
+        return fresh;
+    });
+    if (saved) {
+        refresh.catch(() => {});
+        return saved;
+    }
+    return refresh;
+}
+
+self.addEventListener('fetch', event => {
+    const { request } = event;
+    if (request.method !== 'GET') return;
+    const url = new URL(request.url);
+
+    // Opening the app (or reloading any #/page): fresh page when online, saved page when not
+    if (request.mode === 'navigate') {
+        event.respondWith(networkFirst(request, '/index.html'));
+        return;
+    }
+    // The app's own files
+    if (url.origin === self.location.origin) {
+        event.respondWith(networkFirst(request));
+        return;
+    }
+    // Fonts and the CDN libraries
+    if (STATIC_HOSTS.includes(url.hostname)) {
+        event.respondWith(cacheFirst(request));
+    }
+    // Everything else (Supabase data, uploads, video) goes straight to the network
+});
