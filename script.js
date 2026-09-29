@@ -1992,7 +1992,9 @@ document.addEventListener('DOMContentLoaded', () => {
             },
             { label: load('diaryPin', null) ? 'Change private PIN' : 'Set private PIN', icon: 'i-lock', onClick: setPin },
             { label: 'Change name', icon: 'i-user', onClick: renameUser },
-            { label: 'Export entries', icon: 'i-download', onClick: exportData }
+            { label: 'Export entries', icon: 'i-download', onClick: exportData },
+            { sep: true },
+            { label: 'Settings', icon: 'i-settings', onClick: () => setView('settings') }
         ]);
     }
 
@@ -2175,7 +2177,7 @@ document.addEventListener('DOMContentLoaded', () => {
             emit('note', n);
             render();
         },
-        render, setView, setTitle, showToast, ask, askLink, openPopover, closePopover,
+        render, setView, setTitle, showToast, ask, askLink, openPopover, closePopover, setPin, exportData, isDark,
         escapeHTML, initials, shortDate, dayLabel, dayKey, renameUser, fullText,
         // The AI assistant reads and writes the open entry through this
         editorApi: {

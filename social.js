@@ -121,7 +121,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!signedIn()) {
             app.openPopover(anchor, [
                 { label: 'Sign in / create account', icon: 'i-user', onClick: () => openAuth() },
-                { label: 'Change name', icon: 'i-pencil', onClick: () => app.renameUser() }
+                { label: 'Change name', icon: 'i-pencil', onClick: () => app.renameUser() },
+                { label: 'Settings', icon: 'i-settings', onClick: () => app.setView('settings') }
             ]);
             return;
         }
@@ -130,6 +131,7 @@ document.addEventListener('DOMContentLoaded', () => {
             { label: s.profile.avatar_path ? 'Change profile photo' : 'Add profile photo', icon: 'i-camera', onClick: changeAvatar },
             ...(s.profile.avatar_path ? [{ label: 'Remove photo', icon: 'i-trash', onClick: removeAvatar }] : []),
             { label: 'Change name', icon: 'i-pencil', onClick: () => app.renameUser() },
+            { label: 'Settings', icon: 'i-settings', onClick: () => app.setView('settings') },
             { label: 'Sign out', icon: 'i-logout', onClick: signOut }
         ]);
     };
@@ -289,6 +291,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function setAuthMode(mode) {
         authMode = mode;
         const signup = mode === 'signup';
+        $('auth-forgot').hidden = signup;
         authDialog.querySelectorAll('.signup-only').forEach(el => { el.hidden = !signup; });
         authDialog.querySelectorAll('.auth-tabs .tab').forEach(t =>
             t.setAttribute('aria-selected', String(t.dataset.mode === mode)));
@@ -314,6 +317,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const btn = $('auth-google');
         btn.disabled = true;
         showAuthMessage('Opening Google…');
+        try {
+            const res = await fetch(`${cfg.supabaseUrl}/auth/v1/settings`, { headers: { apikey: cfg.supabaseKey } });
+            const settings = await res.json();
+            if (!settings.external || !settings.external.google) {
+                btn.disabled = false;
+                return showAuthMessage('Google sign-in isn’t switched on for Cordial yet. Please use your email and password for now.', true);
+            }
+        } catch (e) { /* offline or blocked: let Supabase report it */ }
         const { error } = await client.auth.signInWithOAuth({
             provider: 'google',
             options: {
@@ -329,6 +340,40 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     $('auth-cancel').addEventListener('click', () => authDialog.close());
+
+    // Forgot password: Supabase emails a link that brings them back here signed in (PASSWORD_RECOVERY)
+    $('auth-forgot').addEventListener('click', async () => {
+        if (!client) return;
+        const email = $('auth-email').value.trim();
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+            $('auth-email').focus();
+            return showAuthMessage('Type your email above, then tap “Forgot password?” again.', true);
+        }
+        const btn = $('auth-forgot');
+        btn.disabled = true;
+        const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+        btn.disabled = false;
+        if (error) {
+            return showAuthMessage(/rate|seconds/i.test(error.message)
+                ? 'Please wait a minute before asking for another link.'
+                : 'Couldn’t send the reset email — check the address and try again.', true);
+        }
+        showAuthMessage(`If ${email} has an account, a reset link is on its way. Open it on this device to choose a new password.`);
+    });
+
+    async function chooseNewPassword() {
+        for (;;) {
+            const r = await app.ask({ title: 'Choose a new password', text: 'You’re signed in from your reset link. Pick a new password (at least 8 characters).', value: '', placeholder: 'New password', ok: 'Save password', inputType: 'password' });
+            if (!r) return app.showToast('Password not changed — you can change it any time in Settings');
+            if (r.value.length < 8) { app.showToast('Use at least 8 characters'); continue; }
+            const { error } = await client.auth.updateUser({ password: r.value });
+            if (error) {
+                app.showToast(/different|same/i.test(error.message) ? 'Pick a password you haven’t used before' : 'Couldn’t save your password — try again');
+                continue;
+            }
+            return app.showToast('Password updated — you’re signed in');
+        }
+    }
     $('auth-username').addEventListener('input', e => {
         e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '');
     });
@@ -396,7 +441,10 @@ document.addEventListener('DOMContentLoaded', () => {
             app.render();
             return;
         }
-        if (previousUser === session.user.id && s.profile) return; // token refresh
+        if (previousUser === session.user.id && s.profile) {
+            if (event === 'PASSWORD_RECOVERY') chooseNewPassword();
+            return; // token refresh
+        }
 
         s.profile = await ensureProfile(session.user);
         if (!s.profile) return app.render();
@@ -406,7 +454,8 @@ document.addEventListener('DOMContentLoaded', () => {
         subscribe();
         syncAllShared();
         app.render();
-        if (event === 'SIGNED_IN' && previousUser === null) app.showToast(`Signed in as @${s.profile.username}`);
+        if (event === 'PASSWORD_RECOVERY') chooseNewPassword();
+        else if (event === 'SIGNED_IN' && previousUser === null) app.showToast(`Signed in as @${s.profile.username}`);
     }
 
     function resetSocial() {
@@ -1355,7 +1404,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function decorateRepost(p) {
         p.reposts = p.reposts || [];
         const latest = p.reposts
-            .filter(r => r.user_id !== p.author)
+            .slice()
             .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
         p.latestRepost = latest || null;
         p.sortAt = Math.max(Date.parse(p.shared_at), latest ? Date.parse(latest.created_at) : 0);
@@ -1428,6 +1477,35 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         app.showToast(mine ? 'Repost removed' : 'Reposted — your friends will see it in their feed');
+    }
+
+    // Your own post: share it again so it comes back to the top of your friends' feeds
+    async function reshareOwn(entryId) {
+        const post = postsFor('entry').find(p => p.id === entryId);
+        if (!post) return;
+        const me = s.profile.id;
+        const now = new Date().toISOString();
+        post.reposts = [...post.reposts.filter(r => r.user_id !== me), { user_id: me, created_at: now, profile: { username: s.profile.username, display_name: s.profile.display_name } }];
+        decorateRepost(post);
+        app.render();
+        await client.from('diary_reposts').delete().eq('entry_id', entryId).eq('user_id', me);
+        const { error } = await client.from('diary_reposts').insert({ entry_id: entryId });
+        if (error) {
+            app.showToast('Couldn’t reshare your post');
+            s.feed = null;
+            app.render();
+            return;
+        }
+        app.showToast('Reshared — it’s back at the top of your friends’ feeds');
+    }
+
+    function openShareOwn(anchor, post) {
+        const reshared = post.reposts.some(r => r.user_id === s.profile.id);
+        app.openPopover(anchor, [
+            { label: reshared ? 'Reshare again' : 'Reshare to the feed', icon: 'i-repost', onClick: () => reshareOwn(post.id) },
+            ...(reshared ? [{ label: 'Undo reshare', icon: 'i-undo', onClick: () => toggleRepost(post.id) }] : []),
+            { label: 'Add to your story', icon: 'i-plus', onClick: () => window.diaryStories && window.diaryStories.shareEntry(post.local_id, post.title || post.body, post) }
+        ]);
     }
 
     async function setAllowReposts(post, allow) {
@@ -1870,6 +1948,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 ? (p.latestRepost.user_id === me ? 'You' : (p.latestRepost.profile && p.latestRepost.profile.display_name) || 'A friend')
                 : '',
             canRepost: p.author !== me && p.allow_reposts !== false && s.friends.some(f => f.id === p.author),
+            canShareOwn: p.author === me,
+            reshared: !!(p.latestRepost && p.latestRepost.user_id === p.author),
             canComment: true,
             tags: hashtags(p),
             mine: p.author === me
@@ -1919,7 +1999,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return `
             <article class="post ig" data-post="${key}" data-search="${esc(`${profile.display_name} ${profile.username} ${o.title || ''} ${o.body || ''}`.toLowerCase())}">
                 ${o.pinned ? '<p class="repost-line pinned-line"><svg class="i"><use href="#i-pin-note"/></svg>Pinned by the admins</p>' : ''}
-                ${o.repostedBy ? `<p class="repost-line"><svg class="i"><use href="#i-repost"/></svg>${esc(o.repostedBy)} reposted</p>` : ''}
+                ${o.repostedBy ? `<p class="repost-line"><svg class="i"><use href="#i-repost"/></svg>${esc(o.repostedBy)} ${o.reshared ? 'reshared this' : 'reposted'}</p>` : ''}
                 <header class="post-head">
                     ${avatar(person, 'md')}
                     <div class="post-who">
@@ -1939,6 +2019,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         const on = o.reposts.some(r => r.user_id === me);
                         return `<button class="act repost-btn" data-action="repost" data-id="${esc(o.id)}" aria-pressed="${on}" aria-label="${on ? 'Undo repost' : 'Repost to your friends'}"><svg class="i"><use href="#i-repost"/></svg><span class="act-count">${o.reposts.length || ''}</span></button>`;
                     })() : ''}
+                    ${o.canShareOwn ? `<button class="act repost-btn" data-action="share-own" data-id="${esc(o.id)}" aria-haspopup="menu" aria-pressed="${o.reposts.some(r => r.user_id === me)}" aria-label="Share: reshare or add to your story"><svg class="i"><use href="#i-repost"/></svg><span class="act-count">${o.reposts.length || ''}</span></button>` : ''}
                     ${o.mine || !s.friends.some(f => f.id === o.author) ? '' : `<button class="act" data-action="message-friend" data-id="${esc(o.author)}" aria-label="Message ${esc(profile.display_name)}"><svg class="i"><use href="#i-send"/></svg></button>`}
                     ${o.kind === 'entry' ? `
                         <button class="act save-btn" data-action="save-post" data-id="${esc(o.id)}" aria-pressed="${o.saved}" aria-label="${o.saved ? 'Remove from Saved' : 'Save post'}">
@@ -2148,6 +2229,7 @@ document.addEventListener('DOMContentLoaded', () => {
         client, state: s, esc, avatar, avatarUrl, timeAgo, gate, extFor, randomId, uploadImage, hydrateStorage,
         renderPost, commentCount, openComments, repaintComments, MOOD_EMOJI: () => MOOD_EMOJI,
         respond, openChat, focusPost, commentsBlock, addComment, deleteComment, toggleSaved, postsFor,
+        changeAvatar, removeAvatar, signOut, openAuth,
         setInboxTab(tab) { s.inboxTab = tab; app.render(); }
     };
 
@@ -2512,6 +2594,10 @@ document.addEventListener('DOMContentLoaded', () => {
             ]);
         },
         'repost': el => toggleRepost(el.dataset.id),
+        'share-own': el => {
+            const post = postsFor('entry').find(p => p.id === el.dataset.id);
+            if (post) openShareOwn(el, post);
+        },
         'go-reels': () => app.setView('reels'),
         'go-library': () => app.setView('library'),
         'feed-tab': el => {
@@ -2547,6 +2633,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         if (local) app.openNote(local.id);
                         else app.showToast('That entry isn’t on this device');
                     } },
+                    { label: 'Reshare to the feed', icon: 'i-repost', onClick: () => reshareOwn(post.id) },
                     { label: 'Add to your story', icon: 'i-plus', onClick: () => window.diaryStories && window.diaryStories.shareEntry(post.local_id, post.title || post.body, post) },
                     post.allow_reposts === false
                         ? { label: 'Allow reposts', icon: 'i-repost', onClick: () => setAllowReposts(post, true) }
@@ -2624,7 +2711,7 @@ document.addEventListener('DOMContentLoaded', () => {
         'close-chat': () => {
             const pane = content.querySelector('.chat-pane');
             const animated = pane && document.body.classList.contains('chat-open')
-                && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                && !(document.documentElement.dataset.motion === 'reduce' || window.matchMedia('(prefers-reduced-motion: reduce)').matches);
             if (!animated) {
                 s.activeFriend = null;
                 app.render();

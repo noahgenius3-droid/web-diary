@@ -817,7 +817,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // A small burst of confetti from an element (skipped when motion is reduced)
     function celebrate(el, count = 22) {
-        if (!el || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+        if (!el || (document.documentElement.dataset.motion === 'reduce' || window.matchMedia('(prefers-reduced-motion: reduce)').matches)) return;
         const r = el.getBoundingClientRect();
         const colours = ['#4f46e5', '#ec4899', '#f59e0b', '#10b981', '#8b5cf6', '#06b6d4'];
         for (let i = 0; i < count; i++) {

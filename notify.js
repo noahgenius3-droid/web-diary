@@ -383,6 +383,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Missed calls are logged by the callee's own device (call.js calls this)
     window.diaryNotify = {
+        alertStatus, enableAlerts,
         logMissedCall(callerId) {
             if (!s.profile || !callerId) return;
             client.from('diary_notifications').insert({ actor: callerId, type: 'missed_call', data: {} }).then(() => {});

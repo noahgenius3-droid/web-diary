@@ -8704,3 +8704,189 @@ button, [role="button"], .tab, .tab-item, .chip, .pill, .nav-item, .story, .reel
     .lib-head .create-post, .lib-head .create-post span { font-size: 0.9rem; gap: 6px; }
 }
 .reader-head .lib-eyebrow { color: var(--accent); }
+
+/* ---------- Settings ---------- */
+.settings { max-width: 720px; margin: 0 auto; display: grid; gap: 16px; padding-bottom: 32px; }
+.st-head .muted { margin: 2px 0 0; }
+.st-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 6px 16px;
+    box-shadow: var(--shadow);
+}
+.st-card h3 {
+    margin: 12px 0 4px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+.st-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 56px;
+    padding: 10px 0;
+    border-top: 1px solid var(--border);
+}
+.st-card h3 + .st-row { border-top: 0; }
+.st-row[hidden] { display: none; }
+.st-ic {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: var(--accent-soft);
+    color: var(--accent);
+}
+.st-ic .i { width: 18px; height: 18px; }
+.st-text { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.st-text strong { font-size: 0.92rem; font-weight: 600; color: var(--text); }
+.st-text small { font-size: 0.8rem; color: var(--text-muted); line-height: 1.35; }
+
+.st-btn {
+    flex: none;
+    min-height: 36px;
+    padding: 0 14px;
+    border-radius: 999px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 100ms var(--ease-out), background 120ms;
+}
+.st-btn:active { transform: scale(0.97); }
+.st-btn.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
+@media (hover: hover) and (pointer: fine) {
+    .st-btn:hover { background: var(--input); }
+    .st-btn.danger:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+}
+
+.st-seg {
+    flex: none;
+    display: inline-flex;
+    padding: 3px;
+    gap: 2px;
+    border-radius: 999px;
+    background: var(--input);
+    border: 1px solid var(--border);
+}
+.st-seg button {
+    min-height: 32px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+.st-seg button[aria-checked="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+
+.st-swatches { flex: none; display: flex; gap: 8px; }
+.st-swatch {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: 0;
+    background: var(--sw);
+    cursor: pointer;
+    box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px transparent;
+    transition: box-shadow 150ms var(--ease-out), transform 100ms var(--ease-out);
+}
+.st-swatch:active { transform: scale(0.92); }
+.st-swatch[aria-checked="true"] { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--sw); }
+.st-swatch:focus-visible { outline: 2px solid var(--text); outline-offset: 4px; }
+
+.st-switch { flex: none; }
+.st-switch .switch { width: 44px; height: 26px; }
+.st-switch .switch::after { width: 22px; height: 22px; }
+.st-switch input:checked + .switch::after { transform: translateX(18px); }
+
+.st-profile { display: flex; align-items: center; gap: 16px; padding: 16px; flex-wrap: wrap; }
+.st-avatar { position: relative; border: 0; padding: 0; background: none; cursor: pointer; border-radius: 50%; }
+.st-avatar .photo-badge {
+    position: absolute; right: -2px; bottom: -2px;
+    display: grid; place-items: center;
+    width: 28px; height: 28px; border-radius: 50%;
+    background: var(--accent-solid); color: #fff;
+    border: 2px solid var(--surface);
+}
+.st-avatar .photo-badge .i { width: 14px; height: 14px; }
+.st-who { flex: 1; min-width: 140px; display: grid; gap: 2px; }
+.st-who strong { font-size: 1.1rem; font-weight: 700; letter-spacing: -0.01em; }
+.st-who small { color: var(--text-muted); font-size: 0.85rem; }
+.st-who .st-provider { color: var(--text-faint); font-size: 0.78rem; }
+.st-profile-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.st-danger { border-color: color-mix(in srgb, var(--danger) 30%, var(--border)); }
+.st-danger .st-ic { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+.st-foot { text-align: center; }
+
+@media (max-width: 560px) {
+    .settings { gap: 12px; }
+    .st-row { flex-wrap: wrap; row-gap: 10px; }
+    .st-row:has(> .st-seg, > .st-swatches) > .st-text { flex: 1 1 calc(100% - 48px); }
+    .st-row > .st-seg, .st-row > .st-swatches { margin-left: 48px; }
+    .st-row > .st-seg { flex: 1; }
+    .st-seg button { flex: 1; min-height: 36px; }
+    .st-profile { text-align: left; }
+    .st-profile-actions { width: 100%; }
+    .st-profile-actions .st-btn { flex: 1; min-height: 44px; }
+    .st-btn { min-height: 40px; }
+}
+
+/* Accent colours (Settings → Appearance). Each light shade passes 4.5:1 on white; dark shades on #09090b */
+:root[data-accent="violet"] { --accent: #7c3aed; --accent-hover: #6d28d9; --accent-soft: rgba(124, 58, 237, 0.1); --soft-accent: #f5f3ff; --accent-solid: #7c3aed; --bubble-out: #7c3aed; --board-blue: #7c3aed; }
+:root[data-accent="rose"] { --accent: #e11d48; --accent-hover: #be123c; --accent-soft: rgba(225, 29, 72, 0.1); --soft-accent: #fff1f2; --accent-solid: #e11d48; --bubble-out: #e11d48; --board-blue: #e11d48; --bubble-out-meta: #ffe4e6; }
+:root[data-accent="emerald"] { --accent: #047857; --accent-hover: #065f46; --accent-soft: rgba(4, 120, 87, 0.1); --soft-accent: #ecfdf5; --accent-solid: #047857; --bubble-out: #047857; --board-blue: #047857; --bubble-out-meta: #d1fae5; }
+:root[data-accent="violet"][data-theme="dark"] { --accent: #a78bfa; --accent-hover: #c4b5fd; --accent-soft: rgba(167, 139, 250, 0.14); --soft-accent: rgba(167, 139, 250, 0.14); --board-blue: #a78bfa; }
+:root[data-accent="rose"][data-theme="dark"] { --accent: #fb7185; --accent-hover: #fda4af; --accent-soft: rgba(251, 113, 133, 0.14); --soft-accent: rgba(251, 113, 133, 0.14); --board-blue: #fb7185; }
+:root[data-accent="emerald"][data-theme="dark"] { --accent: #34d399; --accent-hover: #6ee7b7; --accent-soft: rgba(52, 211, 153, 0.14); --soft-accent: rgba(52, 211, 153, 0.14); --board-blue: #34d399; }
+@media (prefers-color-scheme: dark) {
+    :root[data-accent="violet"]:not([data-theme="light"]) { --accent: #a78bfa; --accent-hover: #c4b5fd; --accent-soft: rgba(167, 139, 250, 0.14); --soft-accent: rgba(167, 139, 250, 0.14); --board-blue: #a78bfa; }
+    :root[data-accent="rose"]:not([data-theme="light"]) { --accent: #fb7185; --accent-hover: #fda4af; --accent-soft: rgba(251, 113, 133, 0.14); --soft-accent: rgba(251, 113, 133, 0.14); --board-blue: #fb7185; }
+    :root[data-accent="emerald"]:not([data-theme="light"]) { --accent: #34d399; --accent-hover: #6ee7b7; --accent-soft: rgba(52, 211, 153, 0.14); --soft-accent: rgba(52, 211, 153, 0.14); --board-blue: #34d399; }
+}
+
+/* Text size (Settings → Appearance); the app is sized in rem */
+:root[data-text="small"] { font-size: 93.75%; }
+:root[data-text="large"] { font-size: 112.5%; }
+
+/* Reduce motion (Settings), same as the OS preference */
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+}
+
+/* Forgot password link under the password field */
+.auth-forgot {
+    justify-self: end;
+    align-self: flex-end;
+    margin: -4px 0 4px auto;
+    display: block;
+    min-height: 32px;
+    padding: 0 2px;
+    border: 0;
+    background: none;
+    color: var(--accent);
+    font: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+.auth-forgot[hidden] { display: none; }
+.auth-forgot:disabled { opacity: 0.5; cursor: default; }
+@media (hover: hover) and (pointer: fine) { .auth-forgot:hover { text-decoration: underline; } }
