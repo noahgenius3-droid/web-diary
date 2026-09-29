@@ -61,6 +61,9 @@ document.addEventListener('DOMContentLoaded', () => {
         suggestions: [],
         feedDraft: { text: '', photos: [] }, // the feed composer survives re-renders
         comments: new Map(),                  // "entry:<id>" | "post:<id>" -> { open, loading, items, ownerId }
+        previews: new Map(),                  // "entry:<id>" -> the latest two comments, shown under each card
+        rendered: new Map(),                  // "entry:<id>" | "post:<id>" -> the last data a card was drawn with (the post view reuses it)
+        detail: null,                         // key of the post open in the post view
         posting: false,
         rec: null,           // in-progress chat voice recording
         replyTo: {},         // friend id -> message id being replied to
@@ -166,24 +169,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (old) client.storage.from('diary-avatars').remove([old]);
         app.render();
         app.showToast('Profile photo updated');
-    }
-
-    // Use the Google profile photo as the starting avatar (quietly skipped if it can't be fetched)
-    async function importAvatar(profile, url) {
-        try {
-            const res = await fetch(url);
-            if (!res.ok) return;
-            const blob = await Media.squareImage(new File([await res.blob()], 'google.jpg', { type: 'image/jpeg' }), 512);
-            const bytes = await Media.bytes(blob);
-            const path = `${profile.id}/${randomId()}.jpg`;
-            const up = await client.storage.from('diary-avatars').upload(path, bytes.buf, { contentType: 'image/jpeg', upsert: false });
-            if (up.error) return;
-            const { data } = await client.from('diary_profiles').update({ avatar_path: path }).eq('id', profile.id).select().single();
-            if (data && s.profile && s.profile.id === data.id) {
-                s.profile = data;
-                app.render();
-            }
-        } catch (e) { /* keep initials */ }
     }
 
     async function removeAvatar() {
@@ -311,34 +296,6 @@ document.addEventListener('DOMContentLoaded', () => {
     authDialog.querySelectorAll('.auth-tabs .tab').forEach(t =>
         t.addEventListener('click', () => setAuthMode(t.dataset.mode)));
 
-    // Google: the browser goes to Google and comes back here signed in (handled by onAuthStateChange)
-    $('auth-google').addEventListener('click', async () => {
-        if (!client) return;
-        const btn = $('auth-google');
-        btn.disabled = true;
-        showAuthMessage('Opening Google…');
-        try {
-            const res = await fetch(`${cfg.supabaseUrl}/auth/v1/settings`, { headers: { apikey: cfg.supabaseKey } });
-            const settings = await res.json();
-            if (!settings.external || !settings.external.google) {
-                btn.disabled = false;
-                return showAuthMessage('Google sign-in isn’t switched on for Cordial yet. Please use your email and password for now.', true);
-            }
-        } catch (e) { /* offline or blocked: let Supabase report it */ }
-        const { error } = await client.auth.signInWithOAuth({
-            provider: 'google',
-            options: {
-                redirectTo: location.origin + location.pathname,
-                queryParams: { prompt: 'select_account' }
-            }
-        });
-        if (error) {
-            btn.disabled = false;
-            showAuthMessage(/provider is not enabled|Unsupported provider/i.test(error.message)
-                ? 'Google sign-in isn’t switched on yet — use your email for now.'
-                : error.message, true);
-        }
-    });
     $('auth-cancel').addEventListener('click', () => authDialog.close());
 
     // Forgot password: Supabase emails a link that brings them back here signed in (PASSWORD_RECOVERY)
@@ -465,8 +422,10 @@ document.addEventListener('DOMContentLoaded', () => {
             profile: null, friends: [], incoming: [], outgoing: [], unread: {}, last: {}, feed: null, feedAuthor: null,
             threads: {}, activeFriend: null, drafts: {}, pending: {}, online: new Set(), urls: new Map(),
             remoteIds: new Set(), channel: null, presence: null, comments: new Map(),
-            saved: new Set(), savedReels: new Set(), savedExtra: []
+            saved: new Set(), savedReels: new Set(), savedExtra: [],
+            previews: new Map(), rendered: new Map()
         });
+        closePost(true);
         if (window.diaryCommunities) window.diaryCommunities.reset();
         updateBadge();
     }
@@ -476,17 +435,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (existing) return existing;
 
         const meta = user.user_metadata || {};
-        const viaGoogle = (user.app_metadata && user.app_metadata.provider) === 'google';
         let username = String(meta.username || '').toLowerCase();
-        if (!username && viaGoogle) {
-            username = String(user.email || '').split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').slice(0, 20);
-        }
-        const displayName = String(meta.display_name || meta.full_name || meta.name || String(user.email || 'friend').split('@')[0]).slice(0, 40);
-        let confirmName = viaGoogle; // Google users pick their @username once
+        const displayName = String(meta.display_name || String(user.email || 'friend').split('@')[0]).slice(0, 40);
 
         for (;;) {
-            if (confirmName || !USERNAME_RE.test(username)) {
-                confirmName = false;
+            if (!USERNAME_RE.test(username)) {
                 const r = await app.ask({
                     title: 'Choose a username',
                     text: 'Friends add you by username: 3–20 lowercase letters, numbers or _.',
@@ -501,11 +454,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const { data, error } = await client.from('diary_profiles')
                 .insert({ id: user.id, username, display_name: displayName }).select().single();
-            if (!error) {
-                const photo = meta.avatar_url || meta.picture;
-                if (photo) importAvatar(data, photo);
-                return data;
-            }
+            if (!error) return data;
             if (error.code === '23505') {
                 app.showToast(`@${username} is taken — try another`);
                 username = '';
@@ -1398,6 +1347,29 @@ document.addEventListener('DOMContentLoaded', () => {
         s.suggestions = suggestRes.error ? [] : suggestRes.data;
         await loadSavedExtra();
         if (app.state.view === 'feed') app.render();
+        loadPreviews(feed);
+    }
+
+    // The latest two comments on each post, fetched in one go and painted under the cards
+    async function loadPreviews(feed) {
+        const ids = feed.filter(p => commentCount(p) > 0).map(p => p.id).slice(0, 60);
+        if (!ids.length) return;
+        const { data, error } = await client.from('diary_comments')
+            .select('id, body, created_at, author, entry_id, author_profile:diary_profiles!diary_comments_author_fkey(username, display_name, avatar_path)')
+            .in('entry_id', ids)
+            .order('created_at', { ascending: false })
+            .limit(240);
+        if (error || !data) return;
+        const grouped = new Map();
+        data.forEach(c => {
+            const list = grouped.get(c.entry_id) || [];
+            if (list.length < 2) list.unshift(c);
+            grouped.set(c.entry_id, list);
+        });
+        grouped.forEach((list, id) => {
+            s.previews.set(`entry:${id}`, list);
+            repaintComments(`entry:${id}`);
+        });
     }
 
     // The newest repost by someone other than the author puts the post back at the top of the feed
@@ -1767,6 +1739,13 @@ document.addEventListener('DOMContentLoaded', () => {
                             <p>${s.feedFilter === 'saved' ? 'Tap the bookmark on any post to save it here — only you can see what you save.' : 'Turn on <strong>Share with friends</strong> in an entry, or add friends to see theirs here.'}</p>
                         </div>`}
                     </div>
+                    ${list.length > 2 ? `
+                        <div class="feed-end">
+                            <span class="fe-check" aria-hidden="true"><svg class="i"><use href="#i-check"/></svg></span>
+                            <strong>You’re all caught up</strong>
+                            <small>${filterLabel ? 'That’s everything here.' : 'You’ve seen every post from your friends lately.'}</small>
+                            <button type="button" class="link-btn accent" data-action="feed-top">Back to top</button>
+                        </div>` : ''}
                 </section>
 
                 <aside class="social-right">
@@ -1962,22 +1941,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Instagram / Facebook style post, shared by the feed and communities.
     // o.kind: 'entry' (feed) | 'post' (community). Photo posts show media first, text posts lead with the text.
-    function renderPost(o) {
-        const me = s.profile.id;
-        const profile = o.profile || { username: 'unknown', display_name: 'Someone' };
-        const person = { id: o.author, display_name: profile.display_name, avatar_path: profile.avatar_path };
-        const liked = o.likes.some(l => l.user_id === me);
-        const photos = (o.photos || []).filter(ph => ph && typeof ph.path === 'string');
-        const body = o.html ? Rich.sanitize(o.html) : esc(o.body || '');
-        const long = (o.body || '').length > 280 || (o.body || '').split('\n').length > 5;
-        const name = o.mine ? 'You' : esc(profile.display_name);
-        const key = `${o.kind}:${o.id}`;
+    // Tapping the card opens the post view (full post + every comment); the pieces below are shared by both.
+    function postPhotos(o) {
+        return (o.photos || []).filter(ph => ph && typeof ph.path === 'string');
+    }
 
-        const media = photos.length ? `
+    function postPerson(o) {
+        const profile = o.profile || { username: 'unknown', display_name: 'Someone' };
+        return { profile, person: { id: o.author, display_name: profile.display_name, avatar_path: profile.avatar_path }, name: o.mine ? 'You' : esc(profile.display_name) };
+    }
+
+    function fullDate(iso) {
+        const d = new Date(iso);
+        return isNaN(d) ? '' : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    }
+
+    function postMediaHTML(o, photos) {
+        const key = `${o.kind}:${o.id}`;
+        return `
             <div class="post-media" data-like-kind="${o.kind}" data-like-id="${esc(o.id)}">
                 <div class="carousel" data-count="${photos.length}">
-                    ${photos.map(ph => `
-                        <button type="button" class="slide" data-action="post-photo" data-bucket="${o.bucket}" data-img="${esc(ph.path)}" aria-label="View photo">
+                    ${photos.map((ph, i) => `
+                        <button type="button" class="slide" data-action="post-photo" data-key="${esc(key)}" data-bucket="${o.bucket}" data-img="${esc(ph.path)}" aria-label="Photo ${i + 1} of ${photos.length}">
                             <img data-path="${esc(ph.path)}" data-bucket="${o.bucket}" alt="" loading="lazy">
                         </button>`).join('')}
                 </div>
@@ -1985,16 +1970,51 @@ document.addEventListener('DOMContentLoaded', () => {
                     <span class="slide-count">1/${photos.length}</span>
                     <div class="dots">${photos.map((_, i) => `<span${i === 0 ? ' class="on"' : ''}></span>`).join('')}</div>` : ''}
                 <span class="burst" aria-hidden="true"><svg class="i"><use href="#i-heart-fill"/></svg></span>
-            </div>` : '';
+            </div>`;
+    }
 
-        const caption = `
-            <div class="post-caption${photos.length ? '' : ' text-only'}">
-                ${photos.length ? `<strong class="cap-name">${name}</strong> ` : ''}
+    function postCaptionHTML(o, photos, full) {
+        const { name } = postPerson(o);
+        const body = o.html ? Rich.sanitize(o.html) : esc(o.body || '');
+        const long = !full && ((o.body || '').length > 280 || (o.body || '').split('\n').length > 5);
+        return `
+            <div class="post-caption${photos.length && !full ? '' : ' text-only'}">
+                ${photos.length && !full ? `<strong class="cap-name">${name}</strong> ` : ''}
                 ${o.title ? `<strong class="cap-title">${esc(o.title)}</strong>` : ''}
                 <div class="post-text rich-content${long ? ' clamped toggleable' : ''}"${long ? ' data-action="toggle-text" title="Tap to expand or collapse"' : ''}>${body}</div>
                 ${long ? '<button class="read-more" data-action="expand-post">more</button>' : ''}
             </div>
             ${o.tags && o.tags.length ? `<div class="post-tags">${o.tags.map(t => `<button class="tag-link" data-action="feed-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('')}</div>` : ''}`;
+    }
+
+    function postActionsHTML(o) {
+        const me = s.profile.id;
+        const { profile } = postPerson(o);
+        const key = `${o.kind}:${o.id}`;
+        const liked = o.likes.some(l => l.user_id === me);
+        return `
+            <button class="act like-btn" data-action="like" data-kind="${o.kind}" data-id="${esc(o.id)}" aria-pressed="${liked}" aria-label="${liked ? 'Unlike' : 'Like'}">
+                <svg class="i"><use href="#${liked ? 'i-heart-fill' : 'i-heart'}"/></svg><span class="act-count">${o.likes.length || ''}</span>
+            </button>
+            <button class="act" data-action="post-open" data-key="${esc(key)}" data-focus="input" aria-label="Comment"><svg class="i"><use href="#i-chat"/></svg><span class="act-count">${o.commentCount || ''}</span></button>
+            ${o.canRepost ? (() => {
+                const on = o.reposts.some(r => r.user_id === me);
+                return `<button class="act repost-btn" data-action="repost" data-id="${esc(o.id)}" aria-pressed="${on}" aria-label="${on ? 'Undo repost' : 'Repost to your friends'}"><svg class="i"><use href="#i-repost"/></svg><span class="act-count">${o.reposts.length || ''}</span></button>`;
+            })() : ''}
+            ${o.canShareOwn ? `<button class="act repost-btn" data-action="share-own" data-id="${esc(o.id)}" aria-haspopup="menu" aria-pressed="${o.reposts.some(r => r.user_id === me)}" aria-label="Share: reshare or add to your story"><svg class="i"><use href="#i-repost"/></svg><span class="act-count">${o.reposts.length || ''}</span></button>` : ''}
+            ${o.mine || !s.friends.some(f => f.id === o.author) ? '' : `<button class="act" data-action="message-friend" data-id="${esc(o.author)}" aria-label="Message ${esc(profile.display_name)}"><svg class="i"><use href="#i-send"/></svg></button>`}
+            ${o.kind === 'entry' ? `
+                <button class="act save-btn" data-action="save-post" data-id="${esc(o.id)}" aria-pressed="${o.saved}" aria-label="${o.saved ? 'Remove from Saved' : 'Save post'}">
+                    <svg class="i"><use href="#${o.saved ? 'i-bookmark-fill' : 'i-bookmark'}"/></svg>
+                </button>` : ''}`;
+    }
+
+    function renderPost(o) {
+        const photos = postPhotos(o);
+        const { profile, person, name } = postPerson(o);
+        const key = `${o.kind}:${o.id}`;
+        s.rendered.set(key, o);
+        if (s.detail === key) scheduleDetailRepaint();
 
         return `
             <article class="post ig" data-post="${key}" data-search="${esc(`${profile.display_name} ${profile.username} ${o.title || ''} ${o.body || ''}`.toLowerCase())}">
@@ -2004,30 +2024,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${avatar(person, 'md')}
                     <div class="post-who">
                         <strong>${name}${o.badge ? ` <span class="post-badge">${o.badge}</span>` : ''}</strong>
-                        <span class="muted">@${esc(profile.username)} · ${timeAgo(o.createdAt)}${o.mood ? ` · ${MOOD_EMOJI[o.mood] || ''}` : ''}</span>
+                        <span class="muted">@${esc(profile.username)} · <button type="button" class="post-time" data-action="post-open" data-key="${esc(key)}" title="${esc(fullDate(o.createdAt))} — open post">${timeAgo(o.createdAt)}</button>${o.mood ? ` · ${MOOD_EMOJI[o.mood] || ''}` : ''}</span>
                     </div>
                     <button class="more-btn" data-action="post-menu" data-kind="${o.kind}" data-id="${esc(o.id)}" aria-label="Post options"><svg class="i"><use href="#i-more"/></svg></button>
                 </header>
-                ${photos.length ? media : caption}
+                ${photos.length ? postMediaHTML(o, photos) : postCaptionHTML(o, photos, false)}
                 ${o.bodyExtra || ''}
-                <div class="post-actions">
-                    <button class="act like-btn" data-action="like" data-kind="${o.kind}" data-id="${esc(o.id)}" aria-pressed="${liked}" aria-label="${liked ? 'Unlike' : 'Like'}">
-                        <svg class="i"><use href="#${liked ? 'i-heart-fill' : 'i-heart'}"/></svg><span class="act-count">${o.likes.length || ''}</span>
-                    </button>
-                    <button class="act" data-action="comments-focus" data-key="${key}" aria-label="Comment"><svg class="i"><use href="#i-chat"/></svg><span class="act-count">${o.commentCount || ''}</span></button>
-                    ${o.canRepost ? (() => {
-                        const on = o.reposts.some(r => r.user_id === me);
-                        return `<button class="act repost-btn" data-action="repost" data-id="${esc(o.id)}" aria-pressed="${on}" aria-label="${on ? 'Undo repost' : 'Repost to your friends'}"><svg class="i"><use href="#i-repost"/></svg><span class="act-count">${o.reposts.length || ''}</span></button>`;
-                    })() : ''}
-                    ${o.canShareOwn ? `<button class="act repost-btn" data-action="share-own" data-id="${esc(o.id)}" aria-haspopup="menu" aria-pressed="${o.reposts.some(r => r.user_id === me)}" aria-label="Share: reshare or add to your story"><svg class="i"><use href="#i-repost"/></svg><span class="act-count">${o.reposts.length || ''}</span></button>` : ''}
-                    ${o.mine || !s.friends.some(f => f.id === o.author) ? '' : `<button class="act" data-action="message-friend" data-id="${esc(o.author)}" aria-label="Message ${esc(profile.display_name)}"><svg class="i"><use href="#i-send"/></svg></button>`}
-                    ${o.kind === 'entry' ? `
-                        <button class="act save-btn" data-action="save-post" data-id="${esc(o.id)}" aria-pressed="${o.saved}" aria-label="${o.saved ? 'Remove from Saved' : 'Save post'}">
-                            <svg class="i"><use href="#${o.saved ? 'i-bookmark-fill' : 'i-bookmark'}"/></svg>
-                        </button>` : ''}
-                </div>
+                <div class="post-actions">${postActionsHTML(o)}</div>
                 ${o.likes.length ? likedBy(o.likes) : ''}
-                ${photos.length ? caption : ''}
+                ${photos.length ? postCaptionHTML(o, photos, false) : ''}
                 ${o.extraHTML || ''}
                 ${commentsBlock(o.kind, o.id, o.commentCount, o.canComment)}
             </article>`;
@@ -2046,34 +2051,56 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Comments ----------
-    // Threads are cached per post as "entry:<id>" / "post:<id>"; blocks re-render in place so typing isn't lost elsewhere
-    function commentsBlock(kind, id, count, canComment) {
+    // Threads are cached per post as "entry:<id>" / "post:<id>"; blocks re-render in place so typing isn't lost elsewhere.
+    // mode 'card': the latest two comments + a quick reply under a feed card. mode 'full': the whole thread in the post view.
+    function commentsBlock(kind, id, count, canComment, mode = 'card') {
         const key = `${kind}:${id}`;
         const thread = s.comments.get(key);
         const me = s.profile.id;
-        let list = '';
-        if (thread && thread.open) {
-            list = thread.loading
-                ? '<p class="muted small">Loading comments…</p>'
+        const loaded = thread && thread.open && !thread.loading;
+        const total = loaded ? thread.items.length : count;
+        const who = c => (c.author === me ? 'You' : esc((c.author_profile && c.author_profile.display_name) || 'Someone'));
+
+        if (mode === 'full' || mode === 'sheet') {
+            const list = !loaded
+                ? '<div class="pv-c-skel" aria-label="Loading comments"><i></i><i></i><i></i></div>'
                 : thread.items.map(c => {
                     const author = c.author_profile || { display_name: 'Someone' };
                     const canDelete = c.author === me || thread.ownerId === me;
                     return `
-                        <div class="comment">
-                            ${avatar({ id: c.author, display_name: author.display_name, avatar_path: author.avatar_path }, 'xs')}
-                            <p><strong>${c.author === me ? 'You' : esc(author.display_name)}</strong> ${esc(c.body)}
-                                <span class="comment-meta">${timeAgo(c.created_at)}${canDelete ? ` · <button class="link-btn" data-action="comment-delete" data-key="${key}" data-id="${esc(c.id)}">Delete</button>` : ''}</span></p>
+                        <div class="comment full" data-comment="${esc(c.id)}">
+                            ${avatar({ id: c.author, display_name: author.display_name, avatar_path: author.avatar_path }, 'sm')}
+                            <div class="c-main">
+                                <p class="c-bubble"><strong>${who(c)}</strong> ${esc(c.body)}</p>
+                                <span class="comment-meta">
+                                    <time datetime="${esc(c.created_at)}" title="${esc(fullDate(c.created_at))}">${timeAgo(c.created_at)}</time>
+                                    ${mode === 'full' && canComment && c.author !== me && author.username ? ` · <button type="button" class="link-btn" data-pv="reply" data-name="${esc(author.username)}">Reply</button>` : ''}
+                                    ${canDelete ? ` · <button type="button" class="link-btn" data-action="comment-delete" data-key="${key}" data-id="${esc(c.id)}">Delete</button>` : ''}
+                                </span>
+                            </div>
                         </div>`;
-                }).join('') || '<p class="muted small">No comments yet — start the conversation.</p>';
+                }).join('') || `<div class="pv-c-empty"><svg class="i"><use href="#i-chat"/></svg><strong>No comments yet</strong><span>${canComment ? 'Start the conversation.' : 'Nobody has commented yet.'}</span></div>`;
+            return `
+                <section class="comments full" data-comments="${key}" data-mode="${mode}" aria-label="Comments">
+                    ${mode === 'full' ? `<h3 class="pv-c-head">Comments${total ? ` <span>${total}</span>` : ''}</h3>` : ''}
+                    <div class="comment-list">${list}</div>
+                    ${mode === 'sheet' && canComment ? `
+                        <form class="comment-form" data-form="comment" data-key="${key}">
+                            <input name="body" maxlength="2000" placeholder="Add a comment…" autocomplete="off" enterkeyhint="send" aria-label="Add a comment">
+                            <button class="link-btn accent">Post</button>
+                        </form>` : ''}
+                </section>`;
         }
-        const total = thread && thread.open && !thread.loading ? thread.items.length : count;
+
+        const recent = loaded ? thread.items.slice(-2) : (s.previews.get(key) || []);
         return `
-            <div class="comments" data-comments="${key}">
-                ${!(thread && thread.open) && total ? `<button class="link-btn muted-link" data-action="comments-open" data-key="${key}">View ${total === 1 ? '1 comment' : `all ${total} comments`}</button>` : ''}
-                ${list ? `<div class="comment-list">${list}</div>` : ''}
+            <div class="comments" data-comments="${key}" data-mode="card">
+                ${total ? `<button type="button" class="link-btn muted-link" data-action="post-open" data-key="${key}">View ${total === 1 ? '1 comment' : `all ${total} comments`}</button>` : ''}
+                ${recent.length ? `<div class="comment-preview">${recent.map(c => `
+                    <p class="cp-line" data-action="post-open" data-key="${key}"><strong>${who(c)}</strong> ${esc(c.body)}</p>`).join('')}</div>` : ''}
                 ${canComment ? `
                     <form class="comment-form" data-form="comment" data-key="${key}">
-                        <input name="body" maxlength="2000" placeholder="Add a comment…" autocomplete="off" aria-label="Add a comment">
+                        <input name="body" maxlength="2000" placeholder="Add a comment…" autocomplete="off" enterkeyhint="send" aria-label="Add a comment">
                         <button class="link-btn accent">Post</button>
                     </form>` : ''}
             </div>`;
@@ -2126,7 +2153,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (thread && thread.open && !thread.loading) {
             if (!thread.items.some(c => c.id === data.id)) thread.items.push(data);
         } else {
-            await openComments(key);
+            s.previews.set(key, [...(s.previews.get(key) || []), data].slice(-2));
         }
         bumpCommentCount(key, 1);
         repaintComments(key);
@@ -2150,26 +2177,37 @@ document.addEventListener('DOMContentLoaded', () => {
         if (kind === 'reel' && window.diaryStories) window.diaryStories.paintCounts(id);
     }
 
+    // Repaints every copy of a thread: the card under the feed post and the post view, each in its own mode
     function repaintComments(key) {
-        const el = document.querySelector(`[data-comments="${CSS.escape(key)}"]`);
-        if (!el) return;
         const [kind, id] = key.split(':');
         const post = postsFor(kind).find(p => p.id === id);
         const canComment = kind !== 'post' || (window.diaryCommunities && window.diaryCommunities.canInteract());
-        el.outerHTML = commentsBlock(kind, id, post ? commentCount(post) : 0, canComment);
+        document.querySelectorAll(`[data-comments="${CSS.escape(key)}"]`).forEach(el => {
+            el.outerHTML = commentsBlock(kind, id, post ? commentCount(post) : 0, canComment, el.dataset.mode || 'card');
+        });
+        const countSel = `[data-post="${CSS.escape(key)}"] .post-actions [data-focus="input"] .act-count`;
+        if (kind !== 'reel') document.querySelectorAll(s.detail === key ? `${countSel}, #post-view [data-pd="actions"] [data-focus="input"] .act-count` : countSel).forEach(n => {
+            n.textContent = (post && commentCount(post)) || '';
+        });
     }
 
-    // Realtime: new comments from others land in open threads
+    // Realtime: new comments from others land in open threads, and in the card previews
     function onCommentInsert(c) {
         const key = c.entry_id ? `entry:${c.entry_id}` : c.reel_id ? `reel:${c.reel_id}` : `post:${c.post_id}`;
+        if (c.author === s.profile.id) return; // addComment already has it
+        const friend = s.friends.find(f => f.id === c.author);
+        const comment = { ...c, author_profile: friend ? { display_name: friend.display_name, username: friend.username, avatar_path: friend.avatar_path } : null };
         const thread = s.comments.get(key);
-        if (thread && thread.open && !thread.loading && !thread.items.some(x => x.id === c.id)) {
-            if (c.author === s.profile.id) return;
-            const friend = s.friends.find(f => f.id === c.author);
-            thread.items.push({ ...c, author_profile: friend ? { display_name: friend.display_name, username: friend.username } : null });
-            bumpCommentCount(key, 1);
-            repaintComments(key);
+        if (thread && thread.open && !thread.loading) {
+            if (thread.items.some(x => x.id === c.id)) return;
+            thread.items.push(comment);
+        } else if (c.entry_id) {
+            s.previews.set(key, [...(s.previews.get(key) || []), comment].slice(-2));
+        } else {
+            return;
         }
+        bumpCommentCount(key, 1);
+        repaintComments(key);
     }
 
     // Carousel position → dots + counter
@@ -2188,6 +2226,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const media = e.target.closest('.post-media');
         if (!media) return;
         e.preventDefault();
+        clearTimeout(s.photoTap);
         const burst = media.querySelector('.burst');
         burst.classList.remove('pop');
         void burst.offsetWidth;
@@ -2209,8 +2248,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Scroll to a post once it's on screen (views may still be loading) and flash it
-    function focusPost(key) {
+    // Scroll to a post once it's on screen (views may still be loading) and flash it; { open: true } also opens the post view
+    function focusPost(key, opts = {}) {
         let tries = 0;
         const tick = () => {
             const el = content.querySelector(`[data-post="${CSS.escape(key)}"]`);
@@ -2218,12 +2257,280 @@ document.addEventListener('DOMContentLoaded', () => {
                 el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 el.classList.add('flash');
                 setTimeout(() => el.classList.remove('flash'), 1800);
+                if (opts.open) openPost(key);
             } else if (tries++ < 40) {
                 setTimeout(tick, 200);
             }
         };
         tick();
     }
+
+    // ---------- Post view ----------
+    // A tapped post opens on its own: full text, photos, and the whole comment thread with a composer.
+    // Phones get a full-screen page that slides in from the right (and back out the same way); wider screens a centred card.
+    const postView = () => $('post-view');
+    const QUICK_EMOJI = ['❤️', '🙌', '🔥', '👏', '😂', '😮', '😢'];
+    let detailRepaintQueued = false;
+    let detailReturn = null;
+    let detailClosing = false;
+
+    function postDetailHTML(o) {
+        const key = `${o.kind}:${o.id}`;
+        const photos = postPhotos(o);
+        const { profile, person, name } = postPerson(o);
+        const first = o.mine ? '' : esc(profile.display_name.split(' ')[0]);
+        return `
+            <header class="pv-top">
+                <button type="button" class="icon-btn pv-close" data-pv="close" aria-label="Close post">
+                    <svg class="i pv-ic-back"><use href="#i-back"/></svg><svg class="i pv-ic-close"><use href="#i-close"/></svg>
+                </button>
+                <div class="pv-top-who">
+                    ${avatar(person, 'sm')}
+                    <span><strong>${name}${o.badge ? ` <span class="post-badge">${o.badge}</span>` : ''}</strong><small>@${esc(profile.username)} · ${timeAgo(o.createdAt)}${o.mood ? ` · ${MOOD_EMOJI[o.mood] || ''}` : ''}</small></span>
+                </div>
+                <button class="more-btn" data-action="post-menu" data-kind="${o.kind}" data-id="${esc(o.id)}" aria-label="Post options"><svg class="i"><use href="#i-more"/></svg></button>
+            </header>
+            ${photos.length ? `<div class="pv-media">${postMediaHTML(o, photos)}</div>` : ''}
+            <div class="pv-scroll">
+                <article class="pv-post" data-post="${key}">
+                    ${o.pinned ? '<p class="repost-line pinned-line"><svg class="i"><use href="#i-pin-note"/></svg>Pinned by the admins</p>' : ''}
+                    ${o.repostedBy ? `<p class="repost-line"><svg class="i"><use href="#i-repost"/></svg>${esc(o.repostedBy)} ${o.reshared ? 'reshared this' : 'reposted'}</p>` : ''}
+                    ${postCaptionHTML(o, photos, true)}
+                    <div data-pd="bodyextra">${o.bodyExtra || ''}</div>
+                    <div data-pd="extra">${o.extraHTML || ''}</div>
+                    <p class="pv-date">${esc(fullDate(o.createdAt))}</p>
+                </article>
+                ${commentsBlock(o.kind, o.id, o.commentCount, o.canComment, 'full')}
+            </div>
+            <footer class="pv-foot">
+                <div class="post-actions" data-pd="actions">${postActionsHTML(o)}</div>
+                <div class="pv-stats" data-pd="stats">${o.likes.length ? likedBy(o.likes) : ''}</div>
+                ${o.canComment ? `
+                    <div class="pv-emojis" role="group" aria-label="Add an emoji">
+                        ${QUICK_EMOJI.map(e => `<button type="button" data-pv="emoji" data-emoji="${e}" aria-label="Add ${e}">${e}</button>`).join('')}
+                    </div>
+                    <form class="pv-compose" data-form="comment" data-key="${key}">
+                        ${avatar(s.profile, 'sm')}
+                        <input name="body" id="pv-input" maxlength="2000" placeholder="${first ? `Reply to ${first}…` : 'Add a comment…'}" autocomplete="off" enterkeyhint="send" aria-label="Add a comment">
+                        <button class="pv-send" disabled>Post</button>
+                    </form>` : `<p class="pv-locked">${o.kind === 'post' ? 'Join the community to comment.' : 'Comments are off for this post.'}</p>`}
+            </footer>`;
+    }
+
+    // Posts in the order they appear on the page, for next / previous
+    function visiblePostKeys() {
+        return [...content.querySelectorAll('.post.ig[data-post]:not([hidden])')].map(el => el.dataset.post);
+    }
+
+    function paintDetailNav() {
+        const pv = postView();
+        const keys = visiblePostKeys();
+        const i = keys.indexOf(s.detail);
+        pv.querySelector('[data-pv="prev"]').disabled = i <= 0;
+        pv.querySelector('[data-pv="next"]').disabled = i < 0 || i >= keys.length - 1;
+    }
+
+    function openPost(key, opts = {}) {
+        const pv = postView();
+        const o = s.rendered.get(key);
+        if (!pv || !o) return;
+        if (pv.open && s.detail === key) {
+            if (opts.focus === 'input') $('pv-input')?.focus();
+            return;
+        }
+        const shell = $('pv-shell');
+        const photos = postPhotos(o);
+        s.detail = key;
+        shell.classList.toggle('has-media', photos.length > 0);
+        shell.innerHTML = postDetailHTML(o);
+        shell.scrollTop = 0;
+        hydrateStorage(shell);
+        const thread = s.comments.get(key);
+        if (!thread || !thread.open) openComments(key);
+        if (!pv.open) {
+            detailReturn = document.activeElement;
+            detailClosing = false;
+            pv.classList.remove('closing');
+            pv.showModal();
+            document.documentElement.classList.add('pv-lock');
+            if (!(history.state && history.state.postView)) history.pushState({ postView: true }, '');
+        }
+        paintDetailNav();
+        if (opts.focus === 'input') setTimeout(() => $('pv-input')?.focus(), 280);
+        else pv.querySelector('.pv-close').focus({ preventScroll: true });
+    }
+
+    function closePost(fromHistory = false) {
+        const pv = postView();
+        if (!pv || !pv.open || detailClosing) return;
+        detailClosing = true;
+        const finish = () => {
+            pv.close();
+            pv.classList.remove('closing');
+            $('pv-shell').innerHTML = '';
+            document.documentElement.classList.remove('pv-lock');
+            const key = s.detail;
+            s.detail = null;
+            detailClosing = false;
+            // Land back on the post you were reading
+            const card = key && content.querySelector(`[data-post="${CSS.escape(key)}"]`);
+            const target = detailReturn && document.contains(detailReturn) && !pv.contains(detailReturn)
+                ? detailReturn : card && card.querySelector('.post-time');
+            if (target) target.focus({ preventScroll: true });
+            detailReturn = null;
+        };
+        if (!fromHistory && history.state && history.state.postView) history.back();
+        const reduced = document.documentElement.dataset.motion === 'reduce' || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        if (reduced) return finish();
+        pv.classList.add('closing');
+        setTimeout(finish, 220);
+    }
+
+    function stepPost(dir) {
+        const keys = visiblePostKeys();
+        const next = keys[keys.indexOf(s.detail) + dir];
+        if (!next) return;
+        const card = content.querySelector(`[data-post="${CSS.escape(next)}"]`);
+        if (card) card.scrollIntoView({ block: 'center' });
+        openPost(next);
+    }
+
+    // Likes, saves, polls and reactions change while the post is open: patch those bits, keep scroll and typing
+    function scheduleDetailRepaint() {
+        if (detailRepaintQueued) return;
+        detailRepaintQueued = true;
+        queueMicrotask(() => {
+            detailRepaintQueued = false;
+            const pv = postView();
+            const o = s.detail && s.rendered.get(s.detail);
+            if (!pv || !pv.open || !o) return;
+            const set = (k, html) => {
+                const el = pv.querySelector(`[data-pd="${k}"]`);
+                if (el && el.innerHTML !== html) el.innerHTML = html;
+            };
+            set('actions', postActionsHTML(o));
+            set('stats', o.likes.length ? likedBy(o.likes) : '');
+            set('bodyextra', o.bodyExtra || '');
+            set('extra', o.extraHTML || '');
+        });
+    }
+
+    function scrollDetailToEnd() {
+        const shell = $('pv-shell');
+        const inner = shell.querySelector('.pv-scroll');
+        const scroller = inner && getComputedStyle(inner).overflowY !== 'visible' ? inner : shell;
+        scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+    }
+
+    (() => {
+        const pv = postView();
+        if (!pv) return;
+        pv.addEventListener('click', e => {
+            if (e.target === pv) return closePost();
+            const own = e.target.closest('[data-pv]');
+            if (own) {
+                const input = $('pv-input');
+                switch (own.dataset.pv) {
+                    case 'close': closePost(); break;
+                    case 'prev': stepPost(-1); break;
+                    case 'next': stepPost(1); break;
+                    case 'emoji':
+                        if (!input) break;
+                        input.value += own.dataset.emoji;
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                        input.focus();
+                        break;
+                    case 'reply':
+                        if (!input) break;
+                        input.value = `@${own.dataset.name} `;
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                        input.focus();
+                        break;
+                }
+                return;
+            }
+            const el = e.target.closest('[data-action]');
+            if (el && pv.contains(el) && app.actions[el.dataset.action]) app.actions[el.dataset.action](el, e);
+        });
+        pv.addEventListener('submit', async e => {
+            const form = e.target.closest('form[data-form="comment"]');
+            if (!form) return;
+            e.preventDefault();
+            const input = form.querySelector('input');
+            const body = input.value.trim();
+            if (!body) return;
+            input.value = '';
+            form.querySelector('.pv-send').disabled = true;
+            const ok = await addComment(form.dataset.key, body);
+            if (!ok) {
+                input.value = body;
+                form.querySelector('.pv-send').disabled = false;
+                return;
+            }
+            scrollDetailToEnd();
+        });
+        pv.addEventListener('input', e => {
+            if (e.target.id === 'pv-input') e.target.form.querySelector('.pv-send').disabled = !e.target.value.trim();
+        });
+        pv.addEventListener('cancel', e => { e.preventDefault(); closePost(); });
+        pv.addEventListener('keydown', e => {
+            if (e.target.closest('input, textarea, [contenteditable="true"]')) return;
+            if (e.key === 'ArrowRight' || e.key === 'j') { e.preventDefault(); stepPost(1); }
+            if (e.key === 'ArrowLeft' || e.key === 'k') { e.preventDefault(); stepPost(-1); }
+        });
+        pv.addEventListener('dblclick', e => {
+            const media = e.target.closest('.post-media');
+            if (!media) return;
+            e.preventDefault();
+            const burst = media.querySelector('.burst');
+            burst.classList.remove('pop');
+            void burst.offsetWidth;
+            burst.classList.add('pop');
+            const btn = pv.querySelector('.pv-foot .like-btn');
+            if (btn && btn.getAttribute('aria-pressed') !== 'true') btn.click();
+        });
+        pv.addEventListener('scroll', e => {
+            const track = e.target;
+            if (!track.classList || !track.classList.contains('carousel')) return;
+            const index = Math.round(track.scrollLeft / track.clientWidth);
+            const media = track.parentElement;
+            media.querySelectorAll('.dots span').forEach((d, i) => d.classList.toggle('on', i === index));
+            const counter = media.querySelector('.slide-count');
+            if (counter) counter.textContent = `${index + 1}/${track.children.length}`;
+        }, true);
+        // The phone's back button / gesture closes the post instead of leaving the app
+        window.addEventListener('popstate', () => { if (pv.open) closePost(true); });
+    })();
+
+    // A tap anywhere on a card that isn't a control opens the post (long text still expands in place)
+    content.addEventListener('click', e => {
+        const card = e.target.closest('.post.ig[data-post]');
+        if (!card || !content.contains(card)) return;
+        if (e.target.closest('button, a, input, textarea, select, label, form, video, [data-action], .comments, .cm-poll, .cm-reacts')) return;
+        if (window.getSelection && String(window.getSelection()).length) return;
+        openPost(card.dataset.post);
+    });
+
+    // Feed shortcuts on a keyboard: J / K move between posts, O or Enter opens, L likes
+    document.addEventListener('keydown', e => {
+        if (app.state.view !== 'feed' && app.state.view !== 'community') return;
+        if (e.metaKey || e.ctrlKey || e.altKey || document.querySelector('dialog[open]')) return;
+        if (e.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+        const keys = visiblePostKeys();
+        if (!keys.length) return;
+        const current = document.activeElement && document.activeElement.closest && document.activeElement.closest('.post.ig[data-post]');
+        const i = current ? keys.indexOf(current.dataset.post) : -1;
+        const go = n => {
+            const card = content.querySelector(`[data-post="${CSS.escape(keys[n])}"]`);
+            if (!card) return;
+            card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            card.querySelector('.post-time')?.focus({ preventScroll: true });
+        };
+        if (e.key === 'j') { e.preventDefault(); go(Math.min(keys.length - 1, i + 1)); }
+        else if (e.key === 'k') { e.preventDefault(); go(Math.max(0, i - 1)); }
+        else if ((e.key === 'o') && current) { e.preventDefault(); openPost(current.dataset.post); }
+        else if (e.key === 'l' && current) { e.preventDefault(); current.querySelector('.like-btn')?.click(); }
+    });
 
     window.diarySocial.internals = {
         client, state: s, esc, avatar, avatarUrl, timeAgo, gate, extFor, randomId, uploadImage, hydrateStorage,
@@ -2598,6 +2905,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const post = postsFor('entry').find(p => p.id === el.dataset.id);
             if (post) openShareOwn(el, post);
         },
+        'feed-top': () => {
+            document.querySelector('.main-col').scrollTo({ top: 0, behavior: 'smooth' });
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        },
         'go-reels': () => app.setView('reels'),
         'go-library': () => app.setView('library'),
         'feed-tab': el => {
@@ -2626,9 +2937,22 @@ document.addEventListener('DOMContentLoaded', () => {
             const post = postsFor('entry').find(p => p.id === el.dataset.id);
             if (!post) return;
             const mine = post.author === s.profile.id;
+            const key = `entry:${post.id}`;
+            const common = [
+                ...(s.detail === key ? [] : [{ label: 'Open post', icon: 'i-chat', onClick: () => openPost(key) }]),
+                { label: 'Copy text', icon: 'i-file', onClick: async () => {
+                    try {
+                        await navigator.clipboard.writeText([post.title, post.body].filter(Boolean).join('\n\n'));
+                        app.showToast('Copied');
+                    } catch (err) {
+                        app.showToast('Couldn’t copy on this device');
+                    }
+                } }
+            ];
             const items = mine
                 ? [
                     { label: 'Open entry', icon: 'i-edit', onClick: () => {
+                        closePost();
                         const local = app.getNotes().find(n => n.id === post.local_id);
                         if (local) app.openNote(local.id);
                         else app.showToast('That entry isn’t on this device');
@@ -2639,6 +2963,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         ? { label: 'Allow reposts', icon: 'i-repost', onClick: () => setAllowReposts(post, true) }
                         : { label: 'Turn off reposts', icon: 'i-repost', onClick: () => setAllowReposts(post, false) },
                     { label: 'Stop sharing', icon: 'i-lock', danger: true, onClick: () => {
+                        closePost();
                         const local = app.getNotes().find(n => n.id === post.local_id);
                         if (local) {
                             app.updateNote(local.id, { shared: false });
@@ -2658,9 +2983,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         ? [{ label: 'Undo repost', icon: 'i-repost', onClick: () => toggleRepost(post.id) }]
                         : []),
                     ...(s.friends.some(f => f.id === post.author) ? [{ label: 'Message', icon: 'i-chat', onClick: () => { app.setView('messages'); openChat(post.author); } }] : []),
-                    { label: `More from ${post.author_profile ? post.author_profile.display_name : 'them'}`, icon: 'i-user', onClick: () => { s.feedAuthor = post.author; app.render(); } }
+                    { label: `More from ${post.author_profile ? post.author_profile.display_name : 'them'}`, icon: 'i-user', onClick: () => { closePost(); s.feedAuthor = post.author; app.render(); } }
                 ];
-            app.openPopover(el, items);
+            app.openPopover(el, [...common, ...items]);
         },
         'suggest-add': el => {
             s.suggestions = s.suggestions.filter(p => p.username !== el.dataset.username);
@@ -2674,16 +2999,19 @@ document.addEventListener('DOMContentLoaded', () => {
         'like': el => (el.dataset.kind === 'post' && window.diaryCommunities
             ? window.diaryCommunities.toggleLike(el.dataset.id)
             : toggleLike(el.dataset.id)),
-        'comments-open': el => openComments(el.dataset.key),
-        'comments-focus': el => {
-            const input = content.querySelector(`[data-comments="${CSS.escape(el.dataset.key)}"] input`);
-            if (input) input.focus();
-            else app.showToast('Join the community to comment');
-        },
+        'comments-open': el => openPost(el.dataset.key),
+        'comments-focus': el => openPost(el.dataset.key, { focus: 'input' }),
+        'post-open': el => openPost(el.dataset.key, { focus: el.dataset.focus }),
         'comment-delete': el => deleteComment(el.dataset.key, el.dataset.id),
+        // In the post view a photo opens full screen; on a card one tap opens the post (a double tap likes it instead)
         'post-photo': el => {
-            const entry = s.urls.get(`${el.dataset.bucket}:${el.dataset.img}`);
-            if (entry) Media.lightbox(entry.url);
+            if (el.closest('#post-view') || !el.dataset.key) {
+                const entry = s.urls.get(`${el.dataset.bucket}:${el.dataset.img}`);
+                if (entry) Media.lightbox(entry.url);
+                return;
+            }
+            clearTimeout(s.photoTap);
+            s.photoTap = setTimeout(() => openPost(el.dataset.key), 260);
         },
         'expand-post': el => toggleText(el.parentElement.querySelector('.post-text')),
         // Tap the text itself to expand or collapse a long post (links inside still work)

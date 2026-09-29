@@ -1191,7 +1191,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function openReelComments(id) {
         sheetKey = `reel:${id}`;
         const r = (st.reels || []).find(x => x.id === id);
-        $('reel-sheet-body').innerHTML = I.commentsBlock('reel', id, r ? count(r) : 0, true);
+        $('reel-sheet-body').innerHTML = I.commentsBlock('reel', id, r ? count(r) : 0, true, 'sheet');
         if (!sheet.open) sheet.showModal();
         I.openComments(sheetKey);
     }

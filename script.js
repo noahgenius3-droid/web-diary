@@ -2119,6 +2119,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Toast ----------
     function showToast(message, undo = null) {
+        // A modal dialog sits above the page, so the toast has to live inside the top one to be seen
+        const host = [...document.querySelectorAll('dialog[open]')].filter(d => d.matches(':modal')).pop() || document.body;
+        if (toast.parentElement !== host) host.append(toast);
         toastText.textContent = message;
         undoFn = undo;
         toastUndo.hidden = !undo;

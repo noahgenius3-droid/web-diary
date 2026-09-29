@@ -14,7 +14,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const SIZES = [['small', 'Small'], ['default', 'Default'], ['large', 'Large']];
 
     let storageText = '';
-    let provider = null;
 
     function setTheme(mode) {
         if (mode === 'system') {
@@ -59,15 +58,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (el) el.textContent = storageText;
             }).catch(() => {});
         }
-        if (signedIn() && provider === null && I) {
-            I.client.auth.getUser().then(({ data }) => {
-                provider = (data.user && data.user.app_metadata && data.user.app_metadata.provider) || 'email';
-                const el = $('st-provider');
-                if (el) el.textContent = provider === 'google' ? 'Signed in with Google' : 'Signed in with email';
-                const pw = $('st-password-row');
-                if (pw) pw.hidden = provider !== 'email';
-            });
-        }
 
         const seg = (name, options, current) => `
             <div class="st-seg" role="radiogroup" aria-label="${name}">
@@ -96,7 +86,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="st-who">
                             <strong>${esc(p.display_name)}</strong>
                             <small>@${esc(p.username)}</small>
-                            <small class="st-provider" id="st-provider">${provider ? (provider === 'google' ? 'Signed in with Google' : 'Signed in with email') : ''}</small>
                         </div>
                         <div class="st-profile-actions">
                             ${go('st-rename', 'Edit name')}
@@ -129,7 +118,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <section class="st-card">
                     <h3>Privacy & security</h3>
                     ${row('i-lock', 'Private notes PIN', pinSet ? 'On — private notes need your PIN' : 'Off — protect private notes on this device', go('st-pin', pinSet ? 'Change' : 'Set PIN'))}
-                    ${signedIn() ? row('i-lock', 'Password', 'Change the password you sign in with', go('st-password', 'Change'), ` id="st-password-row"${provider && provider !== 'email' ? ' hidden' : ''}`) : ''}
+                    ${signedIn() ? row('i-lock', 'Password', 'Change the password you sign in with', go('st-password', 'Change')) : ''}
                     ${signedIn() ? row('i-logout', 'Sign out', 'Your notes stay on this device', go('st-signout', 'Sign out')) : ''}
                 </section>
 

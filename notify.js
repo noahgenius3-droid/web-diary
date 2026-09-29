@@ -128,15 +128,13 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'entry_repost':
             case 'entry_comment':
                 app.setView('feed');
-                if (x.type === 'entry_comment') I.openComments(`entry:${d.entry_id}`);
-                I.focusPost(`entry:${d.entry_id}`);
+                I.focusPost(`entry:${d.entry_id}`, { open: x.type === 'entry_comment' });
                 break;
             case 'post_like':
             case 'post_comment':
             case 'community_post':
                 app.setView('community', { communityId: d.community_id });
-                if (x.type === 'post_comment') I.openComments(`post:${d.post_id}`);
-                I.focusPost(`post:${d.post_id}`);
+                I.focusPost(`post:${d.post_id}`, { open: x.type === 'post_comment' });
                 break;
             case 'community_join':
             case 'call_started':

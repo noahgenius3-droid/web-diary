@@ -29,6 +29,28 @@
     </script>
 </head>
 <body>
+    <!-- Splash: plays while the app starts, then lifts away (see the end of this file) -->
+    <div class="splash" id="splash" aria-hidden="true">
+        <span class="sp-orb one"></span>
+        <span class="sp-orb two"></span>
+        <div class="sp-center">
+            <div class="sp-mark-wrap">
+                <span class="sp-ring"></span>
+                <span class="sp-mark">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path class="sp-draw" pathLength="1" d="M4 19.5V4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/>
+                        <path class="sp-draw late" pathLength="1" d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                        <path class="sp-heart" d="M12 12.6c-.2 0-2.8-1.5-2.8-3.3 0-.9.7-1.6 1.5-1.6.5 0 1 .3 1.3.7.3-.4.8-.7 1.3-.7.8 0 1.5.7 1.5 1.6 0 1.8-2.6 3.3-2.8 3.3z" fill="currentColor" stroke="none"/>
+                    </svg>
+                </span>
+            </div>
+            <p class="sp-word"><span>C</span><span>O</span><span>R</span><span>D</span><span>I</span><span>A</span><span>L</span></p>
+            <p class="sp-tag">Your diary, your people.</p>
+        </div>
+        <span class="sp-progress"><i></i></span>
+    </div>
+    <script>window.__splashAt = performance.now();</script>
+
     <!-- Icon sprite -->
     <svg width="0" height="0" style="position:absolute" aria-hidden="true">
         <symbol id="i-settings" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></g></symbol>
@@ -296,11 +318,6 @@
         <form id="auth-form" novalidate>
             <h3 id="auth-title">Sign in</h3>
             <p class="ask-text" id="auth-reason" hidden></p>
-            <button type="button" class="google-btn" id="auth-google">
-                <svg viewBox="0 0 48 48" aria-hidden="true" width="20" height="20"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.1-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
-                <span>Continue with Google</span>
-            </button>
-            <div class="auth-or" aria-hidden="true"><span>or use your email</span></div>
             <div class="tabs auth-tabs" role="tablist">
                 <button type="button" class="tab" role="tab" data-mode="signin">Sign in</button>
                 <button type="button" class="tab" role="tab" data-mode="signup">Create account</button>
@@ -481,6 +498,13 @@
         </form>
     </dialog>
 
+    <!-- Post view: a tapped feed or community post with all its comments -->
+    <dialog class="post-view" id="post-view" aria-label="Post">
+        <div class="pv-shell" id="pv-shell"></div>
+        <button type="button" class="pv-nav prev" data-pv="prev" aria-label="Previous post"><svg class="i"><use href="#i-left"/></svg></button>
+        <button type="button" class="pv-nav next" data-pv="next" aria-label="Next post"><svg class="i"><use href="#i-right"/></svg></button>
+    </dialog>
+
     <!-- Library reader -->
     <dialog class="reader" id="reader" aria-labelledby="reader-title-bar">
         <div class="reader-bar">
@@ -601,5 +625,29 @@
     <script src="settings.js"></script>
     <script src="transcribe.js"></script>
     <script src="ai.js"></script>
+    <script>
+        // Lift the splash once the first screen is drawn — after its intro has had time to play, never longer than 4s
+        (function () {
+            var el = document.getElementById('splash');
+            if (!el) return;
+            var reduce = document.documentElement.dataset.motion === 'reduce' || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            var done = false;
+            function lift() {
+                if (done) return;
+                done = true;
+                el.classList.add('out');
+                setTimeout(function () { el.remove(); }, reduce ? 220 : 620);
+            }
+            function ready() {
+                // Count from when the splash first painted, so a slow network never cuts the intro short
+                var wait = Math.max(0, (window.__splashAt || 0) + (reduce ? 450 : 1500) - performance.now());
+                requestAnimationFrame(function () { setTimeout(lift, wait); });
+            }
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready);
+            else ready();
+            setTimeout(lift, 4000);
+            el.addEventListener('click', lift); // impatient tap skips it
+        })();
+    </script>
 </body>
 </html>
