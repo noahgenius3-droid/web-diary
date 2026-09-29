@@ -1,16 +1,23 @@
-// Writing assistant + companion chat for the diary. Streams plain text back to the browser.
-// Secrets: ANTHROPIC_API_KEY (set with `supabase secrets set`). SUPABASE_URL / SUPABASE_ANON_KEY are provided by the platform.
+// Cordial's AI API: the writing assistant, companion chat, note summaries/suggestions and smart voice notes.
+// Streams plain text back to the browser. Works with either provider — whichever key is set:
+//   ANTHROPIC_API_KEY → Claude (preferred when present)
+//   GEMINI_API_KEY    → Google Gemini (free key from aistudio.google.com); GEMINI_MODEL optionally overrides the model
+// Set them in Supabase → Edge Functions → Secrets. SUPABASE_URL / SUPABASE_ANON_KEY are provided by the platform.
+// GET returns { ready, provider } so the app can tell whether AI is set up.
 import Anthropic from "npm:@anthropic-ai/sdk";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const MODEL = "claude-sonnet-5-5";
-const API_KEY = Deno.env.get("ANTHROPIC_API_KEY")?.trim();
-const anthropic = API_KEY ? new Anthropic({ apiKey: API_KEY }) : null;
+const CLAUDE_MODEL = "claude-sonnet-5-5";
+const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY")?.trim();
+const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY")?.trim();
+const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL")?.trim() || "gemini-flash-latest";
+const anthropic = ANTHROPIC_KEY ? new Anthropic({ apiKey: ANTHROPIC_KEY }) : null;
+const PROVIDER = anthropic ? "claude" : GEMINI_KEY ? "gemini" : null;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
 const COMPANION = `You are the companion built into a personal diary app. The person you're talking with is the diary's owner.
@@ -80,12 +87,87 @@ function isChatTurn(m: unknown): m is ChatTurn {
     typeof t.content === "string" && t.content.trim().length > 0 && t.content.length <= MAX_TEXT;
 }
 
+// ---------- Providers: each yields the reply as text chunks ----------
+type Turn = { role: "user" | "assistant"; content: string };
+
+async function* claudeStream(system: string, messages: Turn[], effort: "low" | "medium", signal: AbortSignal) {
+  const stream = anthropic!.messages.stream({ model: CLAUDE_MODEL, max_tokens: 16000, system, messages, output_config: { effort } });
+  signal.addEventListener("abort", () => stream.abort());
+  try {
+    for await (const event of stream) {
+      if (event.type === "content_block_delta" && event.delta.type === "text_delta") yield event.delta.text;
+    }
+    const final = await stream.finalMessage();
+    if (final.stop_reason === "refusal") yield "\n\nI can't help with that one.";
+  } catch (error) {
+    if (error instanceof Anthropic.AuthenticationError) throw new ProviderError(401, "The AI key was rejected. Check the ANTHROPIC_API_KEY secret.");
+    if (error instanceof Anthropic.RateLimitError) throw new ProviderError(429, "The assistant is busy right now - try again in a minute.");
+    if (error instanceof Anthropic.APIError) throw new ProviderError(error.status ?? 500, `The assistant hit an error (${error.status ?? "network"}). Please try again.`);
+    throw error;
+  }
+}
+
+async function* geminiStream(system: string, messages: Turn[], effort: "low" | "medium", signal: AbortSignal) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:streamGenerateContent?alt=sse`;
+  const res = await fetch(url, {
+    method: "POST",
+    signal,
+    headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY! },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: system }] },
+      contents: messages.map((m) => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] })),
+      generationConfig: { maxOutputTokens: 8192, temperature: effort === "low" ? 0.5 : 0.8 },
+    }),
+  });
+  if (!res.ok || !res.body) {
+    const detail = await res.text().catch(() => "");
+    console.error(`Gemini error ${res.status}`, detail.slice(0, 500));
+    if (res.status === 400 && /API key/i.test(detail)) throw new ProviderError(401, "The AI key was rejected. Check the GEMINI_API_KEY secret.");
+    if (res.status === 403) throw new ProviderError(401, "The AI key isn't allowed to use Gemini. Check the GEMINI_API_KEY secret.");
+    if (res.status === 404) throw new ProviderError(404, `The Gemini model "${GEMINI_MODEL}" wasn't found. Set GEMINI_MODEL to a current model.`);
+    if (res.status === 429) throw new ProviderError(429, "The free AI limit is used up for now - try again in a minute.");
+    throw new ProviderError(res.status, `The assistant hit an error (${res.status}). Please try again.`);
+  }
+  // Server-sent events: each "data:" line is a JSON chunk with the next bit of text
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  let blocked = false;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += value;
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith("data:")) continue;
+      try {
+        const chunk = JSON.parse(line.slice(5).trim());
+        const cand = chunk.candidates?.[0];
+        for (const part of cand?.content?.parts ?? []) if (typeof part.text === "string" && !part.thought) yield part.text;
+        if (cand?.finishReason === "SAFETY" || chunk.promptFeedback?.blockReason) blocked = true;
+      } catch { /* partial line */ }
+    }
+  }
+  if (blocked) yield "\n\nI can't help with that one.";
+}
+
+class ProviderError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+  if (req.method === "GET") {
+    // Names only (never values) of any key-like secrets, to spot a typo in the secret's name
+    const seen = Object.keys(Deno.env.toObject()).filter((k) => /GEMINI|ANTHROPIC|GOOGLE|API_KEY/i.test(k) && !k.startsWith("SUPABASE"));
+    return json(200, { ready: !!PROVIDER, provider: PROVIDER, model: PROVIDER === "claude" ? CLAUDE_MODEL : PROVIDER === "gemini" ? GEMINI_MODEL : null, keysSeen: seen });
+  }
   if (req.method !== "POST") return json(405, { error: "Method not allowed" });
-  if (!anthropic) {
-    console.error("ANTHROPIC_API_KEY secret is not set");
-    return json(503, { error: "The AI assistant isn't set up yet: the ANTHROPIC_API_KEY secret is missing." });
+  if (!PROVIDER) {
+    console.error("No AI key set (GEMINI_API_KEY or ANTHROPIC_API_KEY)");
+    return json(503, { error: "The AI assistant isn't set up yet: add a GEMINI_API_KEY (free) or ANTHROPIC_API_KEY secret in Supabase." });
   }
 
   let payload: Record<string, unknown>;
@@ -97,7 +179,7 @@ Deno.serve(async (req) => {
 
   // Build the request before spending quota, so bad input costs nothing.
   let system = COMPANION;
-  let messages: Anthropic.MessageParam[];
+  let messages: Turn[];
   let effort: "low" | "medium";
 
   if (payload.mode === "assist") {
@@ -139,38 +221,21 @@ Deno.serve(async (req) => {
   if (quotaError) return json(401, { error: "Please sign in again" });
   if (!allowed) return json(429, { error: "You've reached today's AI limit. It resets tomorrow." });
 
-  const stream = anthropic.messages.stream({
-    model: MODEL,
-    max_tokens: 16000,
-    system,
-    messages,
-    output_config: { effort },
-  });
+  const abort = new AbortController();
+  const chunks = PROVIDER === "claude"
+    ? claudeStream(system, messages, effort, abort.signal)
+    : geminiStream(system, messages, effort, abort.signal);
 
   const encoder = new TextEncoder();
   const body = new ReadableStream({
     async start(controller) {
       try {
-        for await (const event of stream) {
-          if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-            controller.enqueue(encoder.encode(event.delta.text));
-          }
-        }
-        const final = await stream.finalMessage();
-        if (final.stop_reason === "refusal") {
-          controller.enqueue(encoder.encode("\n\nI can't help with that one."));
-        }
+        for await (const text of chunks) controller.enqueue(encoder.encode(text));
       } catch (error) {
-        if (error instanceof Anthropic.AuthenticationError) {
-          console.error("Anthropic rejected the API key", error.message);
-          controller.enqueue(encoder.encode("\n\nThe AI assistant's API key was rejected. Check the ANTHROPIC_API_KEY secret."));
-        } else if (error instanceof Anthropic.RateLimitError) {
-          console.error("Anthropic rate limit", error.message);
-          controller.enqueue(encoder.encode("\n\nThe assistant is busy right now - try again in a minute."));
-        } else if (error instanceof Anthropic.APIError) {
-          console.error(`Anthropic API error ${error.status}`, error.message);
-          controller.enqueue(encoder.encode(`\n\nThe assistant hit an error (${error.status ?? "network"}). Please try again.`));
-        } else {
+        if (error instanceof ProviderError) {
+          console.error(`${PROVIDER} error ${error.status}: ${error.message}`);
+          controller.enqueue(encoder.encode(`\n\n${error.message}`));
+        } else if (!(error instanceof DOMException && error.name === "AbortError")) {
           console.error("Unexpected error", error);
           controller.enqueue(encoder.encode("\n\nThe assistant hit an error. Please try again."));
         }
@@ -178,7 +243,7 @@ Deno.serve(async (req) => {
       controller.close();
     },
     cancel() {
-      stream.abort();
+      abort.abort();
     },
   });
 
