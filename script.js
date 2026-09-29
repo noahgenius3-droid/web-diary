@@ -19,21 +19,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const today = () => new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     // Starting points on the Notes page. `journal` reuses today's morning/evening entry if one exists.
     const TEMPLATES = [
-        { id: 'blank', label: 'Blank note', desc: 'A clean page', icon: '📝', tone: 'purple', color: 'purple', make: () => ({}) },
-        { id: 'voice', label: 'Voice to note', desc: 'Record & transcribe', icon: '🎙️', tone: 'pink', transcribe: true },
-        { id: 'morning', label: 'Morning journal', desc: 'Gratitude and goals', icon: '☀️', tone: 'yellow', journal: 'morning' },
-        { id: 'evening', label: 'Evening reflection', desc: 'Highlights and lessons', icon: '🌙', tone: 'blue', journal: 'evening' },
-        { id: 'todo', label: 'To-Do list', desc: 'Checkboxes and more', icon: '✅', tone: 'green', color: 'green',
+        { id: 'blank', label: 'Blank note', desc: 'A clean page', icon: 'i-pencil', tone: 'purple', color: 'purple', make: () => ({}) },
+        { id: 'voice', label: 'Voice to note', desc: 'Record & transcribe', icon: 'i-wave', tone: 'pink', transcribe: true },
+        { id: 'morning', label: 'Morning journal', desc: 'Gratitude and goals', icon: 'i-sun', tone: 'yellow', journal: 'morning' },
+        { id: 'evening', label: 'Evening reflection', desc: 'Highlights and lessons', icon: 'i-moon', tone: 'blue', journal: 'evening' },
+        { id: 'todo', label: 'To-Do list', desc: 'Checkboxes and more', icon: 'i-checks', tone: 'green', color: 'green',
             make: () => ({ title: `To-do · ${today()}`, showGoals: true }) },
-        { id: 'gratitude', label: 'Gratitude list', desc: 'Three good things', icon: '🙏', tone: 'pink', color: 'pink',
+        { id: 'gratitude', label: 'Gratitude list', desc: 'Three good things', icon: 'i-heart', tone: 'pink', color: 'pink',
             make: () => ({ title: `Grateful for · ${today()}`, html: '<ol><li><br></li><li><br></li><li><br></li></ol>' }) },
-        { id: 'meeting', label: 'Meeting notes', desc: 'Attendees and agenda', icon: '🗓️', tone: 'yellow', color: 'yellow',
+        { id: 'meeting', label: 'Meeting notes', desc: 'Attendees and agenda', icon: 'i-calendar', tone: 'yellow', color: 'yellow',
             make: () => ({ title: `Meeting · ${today()}`, html: '<b>Attendees</b><ul><li><br></li></ul><b>Agenda</b><ul><li><br></li></ul><b>Action items</b><ul><li><br></li></ul>' }) },
-        { id: 'recipe', label: 'Recipe', desc: 'Ingredients and steps', icon: '🍲', tone: 'pink', color: 'pink',
+        { id: 'recipe', label: 'Recipe', desc: 'Ingredients and steps', icon: 'i-list', tone: 'pink', color: 'pink',
             make: () => ({ title: 'New recipe', html: '<b>Ingredients</b><ul><li><br></li></ul><b>Steps</b><ol><li><br></li></ol>' }) },
-        { id: 'travel', label: 'Travel log', desc: 'Places and moments', icon: '✈️', tone: 'blue', color: 'blue',
+        { id: 'travel', label: 'Travel log', desc: 'Places and moments', icon: 'i-pin', tone: 'blue', color: 'blue',
             make: () => ({ title: `Travel · ${today()}`, html: '<b>Where I went</b><br><br><b>Best moment</b><br><br><b>What I’ll remember</b><br>' }) },
-        { id: 'dream', label: 'Dream journal', desc: 'Before it fades', icon: '💭', tone: 'purple', color: 'purple',
+        { id: 'dream', label: 'Dream journal', desc: 'Before it fades', icon: 'i-sparkle', tone: 'purple', color: 'purple',
             make: () => ({ title: `Dream · ${today()}`, html: '<b>What happened</b><br><br><b>How I felt</b><br><br><b>What it might mean</b><br>' }) }
     ];
     const RANGES = [['all', 'All'], ['today', 'Today'], ['week', 'This Week'], ['month', 'This Month']];
@@ -333,7 +333,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="templates" role="list">
                     ${TEMPLATES.map(t => `
                         <button class="template-card" role="listitem" data-action="template" data-id="${t.id}">
-                            <span class="template-icon tone-${t.tone}" aria-hidden="true">${t.icon}</span>
+                            <span class="template-icon tone-${t.tone}" aria-hidden="true"><svg class="i"><use href="#${t.icon}"/></svg></span>
                             <span class="template-text"><strong>${t.label}</strong><small>${t.desc}</small></span>
                         </button>`).join('')}
                 </div>

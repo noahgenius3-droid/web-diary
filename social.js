@@ -2097,8 +2097,11 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="inbox${friend ? ' has-active' : ''}${s.showInfo && friend ? ' show-info' : ''}">
                 <aside class="inbox-list">
                     <div class="inbox-head">
-                        <h2>Inbox</h2>
-                        <button class="icon-btn solid" data-action="toggle-add" aria-label="Add a friend" title="Add a friend"><svg class="i"><use href="#i-plus"/></svg></button>
+                        <div class="inbox-titles">
+                            <h2>Messages</h2>
+                            <p class="inbox-sub">${inboxSummary()}</p>
+                        </div>
+                        <button class="compose-btn" data-action="toggle-add" aria-pressed="${s.addOpen}" aria-label="Add a friend by username" title="Add a friend"><svg class="i"><use href="#i-user-plus"/></svg></button>
                     </div>
                     <form class="add-friend" data-form="add-friend"${s.addOpen ? '' : ' hidden'}>
                         <input id="add-friend-input" placeholder="Friend’s username" autocomplete="off" aria-label="Friend's username">
@@ -2108,6 +2111,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <svg class="i"><use href="#i-search"/></svg>
                         <input type="search" id="chat-search" placeholder="Search chats and people" aria-label="Search chats">
                     </label>
+                    ${activeNow()}
                     <div class="inbox-tabs" role="tablist">
                         ${tab('all', 'All', 0)}${tab('unread', 'Unread', unreadCount)}${tab('requests', 'Requests', s.incoming.length)}
                     </div>
@@ -2122,6 +2126,31 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>`;
     };
 
+    function inboxSummary() {
+        const unread = Object.values(s.unread).filter(Boolean).length;
+        const online = s.friends.filter(f => s.online.has(f.id)).length;
+        return [
+            unread ? `${unread} unread` : 'All caught up',
+            online ? `${online} ${online === 1 ? 'friend' : 'friends'} online` : `${s.friends.length} ${s.friends.length === 1 ? 'friend' : 'friends'}`
+        ].join(' · ');
+    }
+
+    // Friends who are online right now, one tap from a chat (Messenger-style)
+    function activeNow() {
+        const online = sortedFriends().filter(f => s.online.has(f.id)).slice(0, 12);
+        if (!online.length) return '';
+        return `
+            <div class="active-now" aria-label="Active now">
+                <p class="active-label">Active now</p>
+                <div class="active-row">
+                    ${online.map(f => `
+                        <button class="active-friend" data-action="open-chat" data-id="${esc(f.id)}" aria-label="Chat with ${esc(f.display_name)}">
+                            ${avatar(f, 'lg')}<span>${esc(f.display_name.split(' ')[0])}</span>
+                        </button>`).join('')}
+                </div>
+            </div>`;
+    }
+
     function sortedFriends() {
         return [...s.friends].sort((a, b) => {
             const ta = s.last[a.id] ? Date.parse(s.last[a.id].created_at) : 0;
@@ -2135,7 +2164,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const face = f.avatar_path
             ? `<img src="${esc(avatarUrl(f.avatar_path))}" alt="" loading="lazy">`
             : esc(app.initials(f.display_name || '?'));
-        return `<span class="avatar ${size}${f.avatar_path ? ' has-photo' : ''}" data-presence="${esc(f.id || '')}">${face}<span class="presence-dot" aria-hidden="true"></span></span>`;
+        return `<span class="avatar ${size}${f.avatar_path ? ' has-photo' : ''}" data-presence="${esc(f.id || '')}"${f.avatar_path ? '' : ` style="background:${avatarColour(f.id || f.username || f.display_name)}"`}>${face}<span class="presence-dot" aria-hidden="true"></span></span>`;
+    }
+
+    // Each friend keeps the same colour everywhere (all pass 4.5:1 with white initials)
+    function avatarColour(key) {
+        const AVATAR_COLOURS = ['#2b3f7e', '#6d28d9', '#be185d', '#0e7490', '#b45309', '#15803d', '#9d174d', '#1d4ed8'];
+        let h = 0;
+        for (const ch of String(key || '')) h = (h * 31 + ch.charCodeAt(0)) | 0;
+        return AVATAR_COLOURS[Math.abs(h) % AVATAR_COLOURS.length];
     }
 
     function avatarUrl(path) {
@@ -2145,14 +2182,15 @@ document.addEventListener('DOMContentLoaded', () => {
     function convoRow(f) {
         const m = s.last[f.id];
         const unread = s.unread[f.id];
-        const preview = m ? `${m.sender === s.profile.id ? 'You: ' : ''}${previewOf(m)}` : 'Say hello 👋';
+        const mine = m && m.sender === s.profile.id;
+        const preview = m ? `${mine ? 'You: ' : ''}${previewOf(m)}` : 'Say hello 👋';
         return `
             <button class="convo${f.id === s.activeFriend ? ' active' : ''}${unread ? ' unread' : ''}" data-action="open-chat" data-id="${esc(f.id)}"
                 data-search="${esc(`${f.display_name} ${f.username}`.toLowerCase())}">
                 ${avatar(f, 'md')}
                 <span class="convo-main">
                     <span class="convo-top"><strong>${esc(f.display_name)}</strong>${m ? `<time>${shortTime(m.created_at)}</time>` : ''}</span>
-                    <span class="convo-bottom"><span class="convo-preview">${esc(preview)}</span>${unread ? `<span class="badge">${unread}</span>` : ''}</span>
+                    <span class="convo-bottom">${mine && !m.deleted_at ? `<span class="convo-ticks${m.read_at ? ' read' : ''}" aria-label="${m.read_at ? 'Read' : 'Sent'}"><svg class="i"><use href="#i-checks"/></svg></span>` : ''}<span class="convo-preview">${esc(preview)}</span>${unread ? `<span class="badge">${unread}</span>` : ''}</span>
                 </span>
             </button>`;
     }
@@ -2191,14 +2229,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="pending-atts" id="pending-atts" hidden></div>
                 <div class="rich-toolbar compact" id="chat-toolbar" role="toolbar" aria-label="Formatting"${s.showFormat ? '' : ' hidden'}></div>
                 <div class="composer-row">
+                    <button type="button" class="composer-plus" data-action="chat-add" title="Photo, document, voice note, drawing or formatting" aria-label="Add photo, document, voice note or drawing"><svg class="i"><use href="#i-plus"/></svg></button>
                     <div class="composer-box">
                         <div class="rich chat-input" id="chat-input" contenteditable="true" role="textbox" aria-multiline="true"
-                            aria-label="Message ${esc(friend.display_name)}" data-placeholder="Type your message…"></div>
+                            aria-label="Message ${esc(friend.display_name)}" data-placeholder="Message ${esc(friend.display_name.split(' ')[0])}…"></div>
                         <div class="composer-tools">
-                            <button type="button" class="tool-btn" data-action="chat-format" aria-pressed="${s.showFormat}" title="Formatting" aria-label="Formatting"><span class="aa">Aa</span></button>
-                            <button type="button" class="tool-btn" data-action="chat-add" title="Add photo, document, voice note or drawing" aria-label="Add"><svg class="i"><use href="#i-plus"/></svg></button>
                             <button type="button" class="tool-btn" data-action="chat-emoji" title="Emoji" aria-label="Emoji"><svg class="i"><use href="#i-smile"/></svg></button>
-                            <button type="button" class="tool-btn" data-action="chat-file" title="Attach a document" aria-label="Attach a document"><svg class="i"><use href="#i-paperclip"/></svg></button>
                         </div>
                         <div class="emoji-panel" id="emoji-panel" hidden>
                             ${EMOJI.map(e => `<button type="button" data-action="emoji" data-emoji="${e}" aria-label="${e}">${e}</button>`).join('')}
@@ -2267,11 +2303,10 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="msg ${mine ? 'out' : 'in'}${grouped ? ' grouped' : ''}${onlyEmoji ? ' jumbo' : ''}${reactions.length ? ' has-reacts' : ''}" data-msg="${id}">
                 ${mine || !friend ? '' : avatar(friend, 'xs')}
                 <div class="msg-card" title="${date.toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' })}">
-                    ${grouped ? '' : `<div class="msg-head"><strong>${mine ? 'You' : esc(friend ? friend.display_name : 'Friend')}</strong><time>${shortTime(m.created_at)}</time></div>`}
                     ${quote}
                     ${body}
                     ${atts ? `<div class="msg-atts">${atts}</div>` : ''}
-                    <span class="msg-meta">${grouped ? `<time>${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</time>` : ''}${mine ? `<span class="ticks${m.read_at ? ' read' : ''}" title="${m.read_at ? 'Read' : 'Sent'}"><svg class="i"><use href="#i-checks"/></svg></span>` : ''}</span>
+                    <span class="msg-meta"><time>${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</time>${mine ? `<span class="ticks${m.read_at ? ' read' : ''}" title="${m.read_at ? 'Read' : 'Sent'}"><svg class="i"><use href="#i-checks"/></svg></span>` : ''}</span>
                     ${reactions.length ? `<div class="msg-reacts">${reactions.map(([e, users]) => `<button type="button" class="react-chip${users.includes(me) ? ' mine' : ''}" data-action="react" data-id="${id}" data-emoji="${esc(e)}" aria-label="${esc(e)} ${users.length}">${esc(e)}${users.length > 1 ? `<span>${users.length}</span>` : ''}</button>`).join('')}</div>` : ''}
                 </div>
                 <div class="msg-tools">
@@ -2311,9 +2346,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${avatar(friend, 'lg')}
                     <div><strong>${esc(friend.display_name)}</strong><small>@${esc(friend.username)}</small></div>
                 </div>
-                <div class="info-actions">
-                    <button class="icon-btn outline" data-action="toggle-mute" aria-pressed="${muted}" title="${muted ? 'Unmute' : 'Mute'} notifications"><svg class="i"><use href="#i-bell"/></svg></button>
-                    <button class="primary-btn dark" data-action="friend-entries" data-id="${esc(friend.id)}">View shared entries</button>
+                <div class="info-quick">
+                    ${window.diaryCalls ? `<button class="info-q" data-action="call-friend" data-id="${esc(friend.id)}"><span class="info-q-ic"><svg class="i"><use href="#i-phone"/></svg></span>Call</button>` : ''}
+                    <button class="info-q" data-action="toggle-mute" aria-pressed="${muted}"><span class="info-q-ic"><svg class="i"><use href="#i-bell"/></svg></span>${muted ? 'Unmute' : 'Mute'}</button>
+                    <button class="info-q" data-action="friend-entries" data-id="${esc(friend.id)}"><span class="info-q-ic"><svg class="i"><use href="#i-feed"/></svg></span>Posts</button>
                 </div>
                 <div class="info-stats">
                     ${row('i-user', 'green', 'Status', `<span data-status="${esc(friend.id)}" data-away="Away">${s.online.has(friend.id) ? 'Active now' : 'Away'}</span>`)}
@@ -2529,12 +2565,6 @@ document.addEventListener('DOMContentLoaded', () => {
         'accept-request': el => respond(el.dataset.id, true),
         'decline-request': el => respond(el.dataset.id, false),
         'cancel-request': el => removeFriendship(el.dataset.id),
-        'chat-format': el => {
-            s.showFormat = !s.showFormat;
-            $('chat-toolbar').hidden = !s.showFormat;
-            el.setAttribute('aria-pressed', String(s.showFormat));
-            $('chat-input').focus();
-        },
         'chat-emoji': () => {
             const panel = $('emoji-panel');
             panel.hidden = !panel.hidden;
@@ -2548,7 +2578,12 @@ document.addEventListener('DOMContentLoaded', () => {
             { label: 'Photo', icon: 'i-image', onClick: async () => addPending(await Media.pickFiles('image/png,image/jpeg,image/gif,image/webp')) },
             { label: 'Document', icon: 'i-file', onClick: async () => addPending(await Media.pickFiles(DOC_ACCEPT)) },
             { label: 'Voice note', icon: 'i-mic', onClick: () => startVoice(0, true) },
-            { label: 'Drawing', icon: 'i-draw', onClick: drawForChat }
+            { label: 'Drawing', icon: 'i-draw', onClick: drawForChat },
+            { label: s.showFormat ? 'Hide text formatting' : 'Text formatting', icon: 'i-edit', onClick: () => {
+                s.showFormat = !s.showFormat;
+                $('chat-toolbar').hidden = !s.showFormat;
+                $('chat-input').focus();
+            } }
         ]),
         'vn-play': el => toggleVoice(el.closest('.vn')),
         'vn-seek': (el, e) => seekVoice(el.closest('.vn'), e),
@@ -2559,7 +2594,6 @@ document.addEventListener('DOMContentLoaded', () => {
             el.textContent = `${next}×`;
         },
         'vn-cancel': () => cancelVoice(),
-        'chat-file': async () => addPending(await Media.pickFiles(`${DOC_ACCEPT},image/*`)),
         'remove-pending': el => {
             const list = s.pending[s.activeFriend] || [];
             const item = list.find(p => p.id === el.dataset.id);
