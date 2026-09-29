@@ -36,6 +36,8 @@ function message(type: string, name: string, d: any = {}) {
       return { title: "New sign-in to Cordial", body: `Your account was opened on ${d.label || 'a new device'}. Not you? Change your password.`, url: "/#/settings", tag: "new-login" };
     case "live_started":
       return { title: `🔴 ${name} is live`, body: "Tap to watch now", url: "/#/explore", tag: "live" };
+    case "call_started":
+      return { title: `📞 ${name} started a ${d.video ? "video" : "voice"} call`, body: `In ${d.emoji ? d.emoji + " " : ""}${d.community_name || "your group"} · tap to join`, url: `/#/community/${d.community_id}`, tag: `call-${d.community_id}` };
     default:
       return null;
   }
@@ -71,7 +73,7 @@ Deno.serve(async (req) => {
   let sent = 0;
   await Promise.all((subs || []).map(async (sub) => {
     try {
-      await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, { TTL: 86400, urgency: "high" });
+      await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, { TTL: n.type === "call_started" ? 120 : 86400, urgency: "high" });
       sent++;
     } catch (e: any) {
       // The browser dropped this subscription (uninstalled, cleared, turned off): forget it

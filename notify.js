@@ -62,7 +62,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (n.open) paintPanel();
 
         const plain = describe(item, true);
-        if (item.type === 'call_started') showCallBanner(item);
+        if (item.type === 'call_started') { if (!(window.diaryCalls && window.diaryCalls.ringGroup && window.diaryCalls.ringGroup(item))) showCallBanner(item); }
         else if (item.type === 'live_started') showLivePopup(item);
         else if (item.type !== 'missed_call') app.showToast(plain);
         deviceAlert(item, plain);
@@ -98,7 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'post_comment': return `${who} commented on your post in ${group}:${quote}`;
             case 'community_post': return `${who} posted in ${group}:${quote}`;
             case 'community_join': return `${who} joined ${group}`;
-            case 'call_started': return `${who} started a voice call in ${group}`;
+            case 'call_started': return `${who} started a ${d.video ? 'video' : 'voice'} call in ${group}`;
             case 'missed_call': return `Missed voice call from ${who}`;
             case 'entry_repost': return `${who} reposted your post${quote}`;
             case 'reel_like': return `${who} liked your reel${quote}`;
@@ -490,7 +490,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Push (alerts while Cordial is closed) ----------
-    const PUSH_TYPES = new Set(['friend_request', 'friend_accepted', 'new_follower', 'live_started', 'mention', 'reply', 'new_login']);
+    const PUSH_TYPES = new Set(['friend_request', 'friend_accepted', 'new_follower', 'live_started', 'mention', 'reply', 'new_login', 'call_started']);
     const pushKey = () => (window.DIARY_CONFIG || {}).pushPublicKey;
     const pushSupported = () => canAlert && 'serviceWorker' in navigator && 'PushManager' in window && !!pushKey();
     const swReady = () => ('serviceWorker' in navigator && navigator.serviceWorker.controller !== undefined)

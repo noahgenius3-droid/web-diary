@@ -31,6 +31,49 @@ document.addEventListener('DOMContentLoaded', () => {
     let ringChannel = null; // listens for incoming calls
     let incoming = null;    // an unanswered incoming call
     const watchers = new Map(); // topic -> { channel, listeners:Set, people }
+    const closing = new Map();  // topic -> promise that settles once the old channel is gone
+
+    // Supabase hands back the *existing* channel when a topic is already open, and forgets channels by
+    // topic when they close — so a topic must never have two channels. Close the old one and wait for it.
+    function dropChannel(channel) {
+        if (!channel) return Promise.resolve();
+        const topic = channel.topic.replace(/^realtime:/, '');
+        const done = client.removeChannel(channel).catch(() => {}).then(() => {
+            if (closing.get(topic) === done) closing.delete(topic);
+        });
+        closing.set(topic, done);
+        return done;
+    }
+    async function freeTopic(topic) {
+        const w = watchers.get(topic);
+        if (w && w.channel) {
+            const ch = w.channel;
+            w.channel = null;
+            dropChannel(ch);
+        }
+        const until = Date.now() + 3000;
+        while (Date.now() < until) {
+            if (closing.has(topic)) await Promise.race([closing.get(topic), new Promise(r => setTimeout(r, 300))]);
+            else if (client.getChannels().some(c => c.topic === `realtime:${topic}`)) await new Promise(r => setTimeout(r, 100));
+            else break;
+        }
+    }
+    const roomOn = topic => [call, held].find(c => c && c.topic === topic) || null;
+    function openWatch(topic, w) {
+        if (w.channel || roomOn(topic) || closing.has(topic)) return;
+        const channel = client.channel(topic, { config: { private: true, presence: { key: `watch-${me()}-${Math.random().toString(36).slice(2, 6)}` } } });
+        w.channel = channel;
+        channel.on('presence', { event: 'sync' }, () => {
+            if (w.channel !== channel) return;
+            feedWatchers(topic, Object.entries(channel.presenceState()));
+        }).subscribe();
+    }
+    function feedWatchers(topic, entries) {
+        const w = watchers.get(topic);
+        if (!w) return;
+        w.people = entries.filter(([key]) => !key.startsWith('watch-')).map(([key, meta]) => ({ id: key, ...((Array.isArray(meta) ? meta[0] : meta) || {}) }));
+        w.listeners.forEach(fn => fn(w.people));
+    }
 
     const me = () => s.profile && s.profile.id;
     const myMeta = () => ({
@@ -58,25 +101,34 @@ document.addEventListener('DOMContentLoaded', () => {
         watch(topic, listener) {
             let w = watchers.get(topic);
             if (!w) {
-                const channel = client.channel(topic, { config: { private: true, presence: { key: `watch-${me()}-${Math.random().toString(36).slice(2, 6)}` } } });
-                w = { channel, listeners: new Set(), people: [] };
+                w = { channel: null, listeners: new Set(), people: [] };
                 watchers.set(topic, w);
-                channel.on('presence', { event: 'sync' }, () => {
-                    w.people = Object.entries(channel.presenceState())
-                        .filter(([key]) => !key.startsWith('watch-'))
-                        .map(([key, metas]) => ({ id: key, ...(metas[0] || {}) }));
-                    w.listeners.forEach(fn => fn(w.people));
-                }).subscribe();
+                // While you're in this call, its own room tells us who's there
+                const room = roomOn(topic);
+                if (room && room.people) feedWatchers(topic, [...room.people.entries()]);
+                else openWatch(topic, w);
             }
             w.listeners.add(listener);
             listener(w.people);
             return () => {
                 w.listeners.delete(listener);
-                if (!w.listeners.size) {
-                    client.removeChannel(w.channel);
+                if (!w.listeners.size && watchers.get(topic) === w) {
                     watchers.delete(topic);
+                    dropChannel(w.channel);
+                    w.channel = null;
                 }
             };
+        },
+        // Someone started a call in one of your groups: ring like a normal incoming call
+        ringGroup(item) {
+            const d = (item && item.data) || {};
+            if (!d.community_id || !item.actor || item.actor === me()) return false;
+            if (Date.now() - new Date(item.created_at || Date.now()).getTime() > 90000) return false; // old news
+            const topic = `diary_call:c:${d.community_id}`;
+            if ((call && call.topic === topic) || (held && held.topic === topic) || incoming) return false;
+            const who = item.actor_profile || {};
+            onRing({ from: item.actor, name: who.display_name || 'Someone', avatar_path: who.avatar_path || null, topic, group: d.community_name || 'your group', emoji: d.emoji, video: !!d.video });
+            return !!incoming;
         },
         topicFor: cm => `diary_call:c:${cm.id}`,
         historyHTML, refreshHistory: () => { history.list = null; loadHistory(); },
@@ -188,6 +240,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!p || !p.topic || !p.from) return;
         if (call && call.topic === p.topic) return; // already in that call
         if (incoming) { // already ringing with someone else: they get "busy"
+            if (p.group) return; // a group call carries on without us; the banner still shows it
             ring(p.from, 'decline', { from: me(), busy: true });
             logCall({ direction: 'in', status: 'busy', peer: p.group ? null : p.from, communityId: communityOf(p.topic), title: p.group || p.name, video: p.video });
             return;
@@ -330,8 +383,13 @@ document.addEventListener('DOMContentLoaded', () => {
         return true;
     }
 
-    function openChannel() {
+    async function openChannel() {
         const c = call;
+        c.channel = null;
+        c.channelReady = false;
+        // The community page may be watching this room, or we may have just left it: clear the topic first
+        await freeTopic(c.topic);
+        if (call !== c && held !== c) return;
         const channel = client.channel(c.topic, { config: { private: true, presence: { key: me() }, broadcast: { self: false } } });
         c.channel = channel;
         c.channelReady = false;
@@ -353,8 +411,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         c.reconnects++;
                         paintPanel('Reconnecting…');
                         setTimeout(() => {
-                            if (call !== c) return;
-                            client.removeChannel(channel);
+                            if (call !== c || c.channel !== channel) return;
+                            dropChannel(channel);
                             openChannel();
                         }, 1500 * c.reconnects);
                     } else {
@@ -373,6 +431,7 @@ document.addEventListener('DOMContentLoaded', () => {
         call.people = new Map(Object.entries(state)
             .filter(([key]) => !key.startsWith('watch-'))
             .map(([key, metas]) => [key, metas[0] || {}]));
+        feedWatchers(call.topic, [...call.people.entries()]);
 
         for (const [id] of call.people) {
             if (id === me() || call.peers.has(id)) continue;
@@ -393,7 +452,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // First one in a group call: let the other members know
             if (call.communityId && call.people.size === 1 && !call.notified) {
                 call.notified = true;
-                client.rpc('diary_notify_call', { p_community: call.communityId }).then(() => {});
+                client.rpc('diary_notify_call', { p_community: call.communityId, p_video: !!call.cam }).then(() => {});
             }
             const limit = call.cam ? VIDEO_COMFORTABLE : COMFORTABLE_SIZE;
             if (call.people.size > limit) app.showToast(`${call.cam ? 'Video' : 'Group'} calls work best with up to ${limit} people — it may be choppy`);
@@ -570,7 +629,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (c.wake) c.wake.release().catch(() => {});
         if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
         // Leave the room in the background: the screen never waits on the network
-        Promise.race([c.channel.untrack(), new Promise(r => setTimeout(r, 1500))]).catch(() => {}).finally(() => client.removeChannel(c.channel));
+        const ch = c.channel;
+        c.channel = null;
+        if (ch) {
+            const gone = Promise.race([ch.untrack(), new Promise(r => setTimeout(r, 1500))]).catch(() => {}).then(() => dropChannel(ch));
+            closing.set(c.topic, gone);
+            gone.then(() => {
+                if (closing.get(c.topic) === gone) closing.delete(c.topic);
+                // Anyone watching this room (the community page's "Join call" button) picks back up
+                const w = watchers.get(c.topic);
+                if (w) openWatch(c.topic, w);
+            });
+        }
         if (!wasActive) { paintHeld(); return; }
         clearMediaSession();
         $('call-reactions').hidden = true;
