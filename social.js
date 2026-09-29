@@ -1614,7 +1614,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     </form>
 
                     <div class="block-head">
-                        <h2>${filterLabel ? esc(filterLabel) : 'Feeds'}</h2>
+                        <h2>${filterLabel ? esc(filterLabel) : 'Latest from friends'}</h2>
                         <button class="chip reels-chip" data-action="go-reels"><svg class="i"><use href="#i-reel"/></svg>Reels</button>
                         <div class="feed-sort" role="group" aria-label="Sort posts">
                             <button data-action="feed-sort" data-sort="popular" aria-pressed="${s.feedSort === 'popular'}">Popular</button>
@@ -2169,7 +2169,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Each friend keeps the same colour everywhere (all pass 4.5:1 with white initials)
     function avatarColour(key) {
-        const AVATAR_COLOURS = ['#2b3f7e', '#6d28d9', '#be185d', '#0e7490', '#b45309', '#15803d', '#9d174d', '#1d4ed8'];
+        const AVATAR_COLOURS = ['#4f46e5', '#6d28d9', '#be185d', '#0e7490', '#b45309', '#15803d', '#9d174d', '#1d4ed8'];
         let h = 0;
         for (const ch of String(key || '')) h = (h * 31 + ch.charCodeAt(0)) | 0;
         return AVATAR_COLOURS[Math.abs(h) % AVATAR_COLOURS.length];

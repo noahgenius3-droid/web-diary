@@ -389,7 +389,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ctx.fillRect(0, 0, 1080, 1920);
         const words = String(text).replace(/\s+/g, ' ').trim().slice(0, 400).split(' ');
         const size = words.length > 60 ? 54 : words.length > 25 ? 66 : 84;
-        ctx.font = `700 ${size}px "Mulish", system-ui, sans-serif`;
+        ctx.font = `700 ${size}px "Inter", system-ui, sans-serif`;
         ctx.fillStyle = '#fff';
         ctx.textAlign = 'center';
         ctx.shadowColor = 'rgba(0,0,0,0.18)';
@@ -410,7 +410,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const height = shown.length * size * 1.3;
         shown.forEach((l, i) => ctx.fillText(i === 15 && lines.length > 16 ? `${l}…` : l, 540, 960 - height / 2 + i * size * 1.3 + size));
         ctx.shadowBlur = 0;
-        ctx.font = '600 40px "Mulish", system-ui, sans-serif';
+        ctx.font = '600 40px "Inter", system-ui, sans-serif';
         ctx.fillStyle = 'rgba(255,255,255,0.85)';
         ctx.fillText(`Cordial · @${s.profile.username}`, 540, 1800);
         return new Promise(resolve => canvas.toBlob(b => resolve(new File([b], 'story.jpg', { type: 'image/jpeg' })), 'image/jpeg', 0.9));
