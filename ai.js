@@ -300,6 +300,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function autoGrow() {
         input.style.height = 'auto';
-        input.style.height = Math.min(input.scrollHeight, 140) + 'px';
+        input.style.height = Math.min(input.scrollHeight, 260) + 'px';
     }
 });

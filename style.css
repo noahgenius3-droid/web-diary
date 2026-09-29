@@ -7657,3 +7657,39 @@ h1 {
 /* Meta text inside sent (indigo) bubbles: #e0e7ff on #4f46e5 = 5.4:1 */
 :root { --bubble-out-meta: #e0e7ff; }
 .tabs { background: color-mix(in srgb, var(--text) 6%, transparent); }
+
+/* =========================================================
+   Bigger message boxes: inbox chat and AI companion
+   ========================================================= */
+
+/* Inbox composer */
+.composer-box { min-height: 56px; padding: 6px 8px 6px 18px; border-radius: 28px; }
+.chat-input { min-height: 40px; max-height: 240px; padding: 9px 0; font-size: 1rem; line-height: 1.5; }
+.composer-plus, .send-btn.dark { width: 52px; height: 52px; }
+.composer-plus .i, .send-btn.dark .i { width: 22px; height: 22px; }
+.composer-tools .tool-btn { width: 40px; height: 40px; }
+.composer-tools .tool-btn .i { width: 21px; height: 21px; }
+
+/* Companion: a wider panel with a roomy box */
+.companion { width: min(480px, calc(100% - 24px)); }
+.companion-compose { gap: 10px; padding: 14px 16px 16px; }
+.compose-row { align-items: flex-end; gap: 10px; }
+.compose-row textarea {
+    min-height: 64px;
+    max-height: 260px;
+    padding: 14px 16px;
+    border-radius: 18px;
+    font-size: 1rem;
+    line-height: 1.5;
+}
+.companion .compose-row .send-btn { width: 52px; height: 52px; border-radius: 50%; flex-shrink: 0; }
+.companion .bubble p { font-size: 0.95rem; }
+
+@media (max-width: 760px) {
+    .composer-box { min-height: 52px; }
+    .composer-plus, .send-btn.dark { width: 48px; height: 48px; }
+    .companion { width: auto; }
+}
+.compose-row { display: flex; width: 100%; }
+.compose-row textarea { flex: 1 1 auto; width: 100%; }
+.chat-input:empty::before { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
