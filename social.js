@@ -166,6 +166,24 @@ document.addEventListener('DOMContentLoaded', () => {
         app.showToast('Profile photo updated');
     }
 
+    // Use the Google profile photo as the starting avatar (quietly skipped if it can't be fetched)
+    async function importAvatar(profile, url) {
+        try {
+            const res = await fetch(url);
+            if (!res.ok) return;
+            const blob = await Media.squareImage(new File([await res.blob()], 'google.jpg', { type: 'image/jpeg' }), 512);
+            const bytes = await Media.bytes(blob);
+            const path = `${profile.id}/${randomId()}.jpg`;
+            const up = await client.storage.from('diary-avatars').upload(path, bytes.buf, { contentType: 'image/jpeg', upsert: false });
+            if (up.error) return;
+            const { data } = await client.from('diary_profiles').update({ avatar_path: path }).eq('id', profile.id).select().single();
+            if (data && s.profile && s.profile.id === data.id) {
+                s.profile = data;
+                app.render();
+            }
+        } catch (e) { /* keep initials */ }
+    }
+
     async function removeAvatar() {
         const old = s.profile.avatar_path;
         const { data: profile, error } = await client.from('diary_profiles')
@@ -289,6 +307,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
     authDialog.querySelectorAll('.auth-tabs .tab').forEach(t =>
         t.addEventListener('click', () => setAuthMode(t.dataset.mode)));
+
+    // Google: the browser goes to Google and comes back here signed in (handled by onAuthStateChange)
+    $('auth-google').addEventListener('click', async () => {
+        if (!client) return;
+        const btn = $('auth-google');
+        btn.disabled = true;
+        showAuthMessage('Opening Google…');
+        const { error } = await client.auth.signInWithOAuth({
+            provider: 'google',
+            options: {
+                redirectTo: location.origin + location.pathname,
+                queryParams: { prompt: 'select_account' }
+            }
+        });
+        if (error) {
+            btn.disabled = false;
+            showAuthMessage(/provider is not enabled|Unsupported provider/i.test(error.message)
+                ? 'Google sign-in isn’t switched on yet — use your email for now.'
+                : error.message, true);
+        }
+    });
     $('auth-cancel').addEventListener('click', () => authDialog.close());
     $('auth-username').addEventListener('input', e => {
         e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '');
@@ -388,11 +427,17 @@ document.addEventListener('DOMContentLoaded', () => {
         if (existing) return existing;
 
         const meta = user.user_metadata || {};
+        const viaGoogle = (user.app_metadata && user.app_metadata.provider) === 'google';
         let username = String(meta.username || '').toLowerCase();
-        const displayName = String(meta.display_name || user.email.split('@')[0]).slice(0, 40);
+        if (!username && viaGoogle) {
+            username = String(user.email || '').split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/_+/g, '_').slice(0, 20);
+        }
+        const displayName = String(meta.display_name || meta.full_name || meta.name || String(user.email || 'friend').split('@')[0]).slice(0, 40);
+        let confirmName = viaGoogle; // Google users pick their @username once
 
         for (;;) {
-            if (!USERNAME_RE.test(username)) {
+            if (confirmName || !USERNAME_RE.test(username)) {
+                confirmName = false;
                 const r = await app.ask({
                     title: 'Choose a username',
                     text: 'Friends add you by username: 3–20 lowercase letters, numbers or _.',
@@ -407,7 +452,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const { data, error } = await client.from('diary_profiles')
                 .insert({ id: user.id, username, display_name: displayName }).select().single();
-            if (!error) return data;
+            if (!error) {
+                const photo = meta.avatar_url || meta.picture;
+                if (photo) importAvatar(data, photo);
+                return data;
+            }
             if (error.code === '23505') {
                 app.showToast(`@${username} is taken — try another`);
                 username = '';
@@ -441,9 +490,17 @@ document.addEventListener('DOMContentLoaded', () => {
             .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_community_posts' },
                 payload => window.diaryCommunities && window.diaryCommunities.onRemoteChange(payload))
             .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_shared_entries' },
-                () => {
-                    s.feed = null;
-                    if (app.state.view === 'feed') loadFeed();
+                payload => {
+                    const row = payload.new && payload.new.author ? payload.new : null;
+                    if (app.state.view !== 'feed' || !s.feed) {
+                        s.feed = null;
+                        return;
+                    }
+                    if (payload.eventType === 'INSERT' && row && row.author !== s.profile.id) {
+                        s.feedStale = true;
+                        const pill = content.querySelector('.new-posts');
+                        if (pill) pill.hidden = false;
+                    }
                 })
             .subscribe();
 
@@ -1519,7 +1576,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (blocked) return blocked;
         if (s.feed === null) {
             loadFeed();
-            return '<p class="muted">Loading updates…</p>';
+            return `<div class="social"><section class="social-main">${'<div class="post-skel"><span class="sk-row"><i class="sk-av"></i><i class="sk-line w40"></i></span><i class="sk-line"></i><i class="sk-line w70"></i><i class="sk-media"></i></div>'.repeat(3)}</section></div>`;
         }
 
         const me = s.profile.id;
@@ -1574,6 +1631,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         ${navItem('mine', 'i-user', 'My posts')}
                         ${navItem('saved', 'i-bookmark', 'Saved')}
                         <button class="social-nav-item" data-action="go-reels"><svg class="i"><use href="#i-reel"/></svg>Reels</button>
+                        <button class="social-nav-item" data-action="go-library"><svg class="i"><use href="#i-book"/></svg>Library</button>
                         <button class="social-nav-item" data-action="find-friends"><svg class="i"><use href="#i-send"/></svg>Direct</button>
                         <button class="social-nav-item" data-action="go-insights"><svg class="i"><use href="#i-chart"/></svg>Stats</button>
                     </nav>
@@ -1591,18 +1649,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 <section class="social-main">
                     ${window.diaryStories ? window.diaryStories.strip() : ''}
-                    <div class="social-top">
-                        <label class="search feed-search">
-                            <svg class="i"><use href="#i-search"/></svg>
-                            <input type="search" id="feed-search" placeholder="Search posts…" aria-label="Search posts">
-                        </label>
-                        <button class="create-post" data-action="create-post"><svg class="i"><use href="#i-plus"/></svg><span>Create new post</span></button>
+                    <button class="new-posts" data-action="feed-refresh"${s.feedStale ? '' : ' hidden'}><svg class="i"><use href="#i-refresh"/></svg>New posts</button>
+                    <div class="feed-bar">
+                        <div class="feed-tabs" role="tablist" aria-label="Show">
+                            ${[['latest', 'Latest'], ['popular', 'Popular'], ['saved', 'Saved']].map(([k, l]) => {
+                                const on = k === 'saved' ? s.feedFilter === 'saved' : (s.feedFilter === 'all' && !s.feedAuthor && s.feedSort === k);
+                                return `<button class="feed-tab" role="tab" aria-selected="${on}" data-action="feed-tab" data-tab="${k}">${l}</button>`;
+                            }).join('')}
+                        </div>
+                        <button class="icon-btn feed-search-btn" data-action="feed-search-toggle" aria-label="Search posts" aria-expanded="${!!s.feedSearchOpen}"><svg class="i"><use href="#i-search"/></svg></button>
+                        <button class="chip reels-chip" data-action="go-reels"><svg class="i"><use href="#i-reel"/></svg><span>Reels</span></button>
                     </div>
+                    <label class="search feed-search"${s.feedSearchOpen ? '' : ' hidden'}>
+                        <svg class="i"><use href="#i-search"/></svg>
+                        <input type="search" id="feed-search" placeholder="Search posts, people and #tags" aria-label="Search posts" enterkeyhint="search">
+                    </label>
 
-                    <form class="post-composer" data-form="feed-post">
+                    <form class="post-composer${s.feedDraft.text || s.feedDraft.photos.length ? ' open' : ''}" data-form="feed-post">
                         <div class="pc-row">
                             ${avatar(s.profile, 'md')}
-                            <textarea id="feed-text" rows="2" maxlength="5000" placeholder="What’s on your mind, ${esc(s.profile.display_name.split(' ')[0])}?" aria-label="Write a post"></textarea>
+                            <textarea id="feed-text" rows="1" maxlength="5000" placeholder="What’s new, ${esc(s.profile.display_name.split(' ')[0])}?" aria-label="Write a post"></textarea>
+                            <button type="button" class="pc-quick" data-action="feed-add-photos" aria-label="Add photos"><svg class="i"><use href="#i-image"/></svg></button>
                         </div>
                         <div class="pc-photos" id="feed-photos" hidden></div>
                         <div class="pc-foot">
@@ -1615,15 +1682,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
                     </form>
 
-                    <div class="block-head">
-                        <h2>${filterLabel ? esc(filterLabel) : 'Latest from friends'}</h2>
-                        <button class="chip reels-chip" data-action="go-reels"><svg class="i"><use href="#i-reel"/></svg>Reels</button>
-                        <div class="feed-sort" role="group" aria-label="Sort posts">
-                            <button data-action="feed-sort" data-sort="popular" aria-pressed="${s.feedSort === 'popular'}">Popular</button>
-                            <button data-action="feed-sort" data-sort="latest" aria-pressed="${s.feedSort === 'latest'}">Latest</button>
-                        </div>
-                    </div>
-                    ${filterLabel ? '<button class="chip filter-chip" data-action="feed-all"><svg class="i"><use href="#i-close"/></svg>Show everything</button>' : ''}
+                    ${filterLabel && s.feedFilter !== 'saved' ? `<button class="chip filter-chip" data-action="feed-all"><svg class="i"><use href="#i-close"/></svg>${esc(filterLabel)} · show everything</button>` : ''}
                     <div class="feed-list">
                         ${feedItems(list).join('') || `<div class="empty">
                             <p class="empty-title">${filterLabel ? 'Nothing here yet' : 'No posts yet'}</p>
@@ -1647,6 +1706,21 @@ document.addEventListener('DOMContentLoaded', () => {
                                 </div>
                             </div>`).join('') || '<p class="muted small">No new requests.</p>'}
                     </section>
+                    ${trendingTags().length ? `
+                        <section class="side-box">
+                            <h4>Trending in your circle</h4>
+                            <div class="trend-tags">${trendingTags().map(([t, n]) => `<button class="trend-tag" data-action="feed-tag" data-tag="${esc(t)}"><span>#${esc(t)}</span><small>${n} ${n === 1 ? 'post' : 'posts'}</small></button>`).join('')}</div>
+                        </section>` : ''}
+                    ${window.diaryLibrary && window.diaryLibrary.latest(3).length ? `
+                        <section class="side-box">
+                            <h4>From the Library</h4>
+                            ${window.diaryLibrary.latest(3).map(x => `
+                                <button class="lib-mini" data-action="lib-open" data-id="${esc(x.id)}">
+                                    ${window.diaryLibrary.cover(x)}
+                                    <span><strong>${esc(x.title)}</strong><small>${esc((x.author_profile && x.author_profile.display_name) || 'Someone')}</small></span>
+                                </button>`).join('')}
+                            <button class="link-btn center" data-action="go-library">Browse the Library</button>
+                        </section>` : ''}
                     <section class="side-box">
                         <h4>Suggestions for you</h4>
                         ${s.suggestions.map(p => `
@@ -1693,6 +1767,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!box) return;
         const photos = s.feedDraft.photos;
         box.hidden = !photos.length;
+        box.closest('.post-composer')?.classList.toggle('open', photos.length > 0 || !!s.feedDraft.text);
         box.innerHTML = photos.map(p => `
             <figure class="pc-thumb">
                 <img src="${p.preview}" alt="">
@@ -1759,6 +1834,13 @@ document.addEventListener('DOMContentLoaded', () => {
         ];
         items.sort(s.feedSort === 'popular' ? (a, b) => b.likes - a.likes || b.at - a.at : (a, b) => b.at - a.at);
         return items.map(item => item.html());
+    }
+
+    // The most-used #tags in the loaded feed
+    function trendingTags() {
+        const counts = new Map();
+        (s.feed || []).forEach(p => hashtags(p).forEach(t => counts.set(t, (counts.get(t) || 0) + 1)));
+        return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
     }
 
     function hashtags(p) {
@@ -1850,12 +1932,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${o.bodyExtra || ''}
                 <div class="post-actions">
                     <button class="act like-btn" data-action="like" data-kind="${o.kind}" data-id="${esc(o.id)}" aria-pressed="${liked}" aria-label="${liked ? 'Unlike' : 'Like'}">
-                        <svg class="i"><use href="#${liked ? 'i-heart-fill' : 'i-heart'}"/></svg>
+                        <svg class="i"><use href="#${liked ? 'i-heart-fill' : 'i-heart'}"/></svg><span class="act-count">${o.likes.length || ''}</span>
                     </button>
-                    <button class="act" data-action="comments-focus" data-key="${key}" aria-label="Comment"><svg class="i"><use href="#i-chat"/></svg></button>
+                    <button class="act" data-action="comments-focus" data-key="${key}" aria-label="Comment"><svg class="i"><use href="#i-chat"/></svg><span class="act-count">${o.commentCount || ''}</span></button>
                     ${o.canRepost ? (() => {
                         const on = o.reposts.some(r => r.user_id === me);
-                        return `<button class="act repost-btn" data-action="repost" data-id="${esc(o.id)}" aria-pressed="${on}" aria-label="${on ? 'Undo repost' : 'Repost to your friends'}"><svg class="i"><use href="#i-repost"/></svg></button>`;
+                        return `<button class="act repost-btn" data-action="repost" data-id="${esc(o.id)}" aria-pressed="${on}" aria-label="${on ? 'Undo repost' : 'Repost to your friends'}"><svg class="i"><use href="#i-repost"/></svg><span class="act-count">${o.reposts.length || ''}</span></button>`;
                     })() : ''}
                     ${o.mine || !s.friends.some(f => f.id === o.author) ? '' : `<button class="act" data-action="message-friend" data-id="${esc(o.author)}" aria-label="Message ${esc(profile.display_name)}"><svg class="i"><use href="#i-send"/></svg></button>`}
                     ${o.kind === 'entry' ? `
@@ -1863,14 +1945,23 @@ document.addEventListener('DOMContentLoaded', () => {
                             <svg class="i"><use href="#${o.saved ? 'i-bookmark-fill' : 'i-bookmark'}"/></svg>
                         </button>` : ''}
                 </div>
-                ${o.likes.length || (o.reposts && o.reposts.length) ? `<p class="post-likes">${[
-                    o.likes.length ? `${o.likes.length} ${o.likes.length === 1 ? 'like' : 'likes'}` : '',
-                    o.reposts && o.reposts.length ? `${o.reposts.length} ${o.reposts.length === 1 ? 'repost' : 'reposts'}` : ''
-                ].filter(Boolean).join(' · ')}</p>` : ''}
+                ${o.likes.length ? likedBy(o.likes) : ''}
                 ${photos.length ? caption : ''}
                 ${o.extraHTML || ''}
                 ${commentsBlock(o.kind, o.id, o.commentCount, o.canComment)}
             </article>`;
+    }
+
+    // "Liked by Gladys and 23 others", with the faces of friends who liked it
+    function likedBy(likes) {
+        const me = s.profile.id;
+        const people = likes.map(l => (l.user_id === me ? { ...s.profile, you: true } : s.friends.find(f => f.id === l.user_id))).filter(Boolean);
+        const named = people.find(p => !p.you) || people[0];
+        const faces = people.slice(0, 3).map(p => avatar(p, 'xs')).join('');
+        if (!named) return `<p class="post-likes">${likes.length} ${likes.length === 1 ? 'like' : 'likes'}</p>`;
+        const name = named.you ? 'you' : esc(named.display_name.split(' ')[0]);
+        const others = likes.length - 1;
+        return `<p class="post-likes">${faces ? `<span class="avatar-stack">${faces}</span>` : ''}<span>Liked by <strong>${name}</strong>${others > 0 ? ` and <strong>${others} ${others === 1 ? 'other' : 'others'}</strong>` : ''}</span></p>`;
     }
 
     // ---------- Comments ----------
@@ -2388,7 +2479,6 @@ document.addEventListener('DOMContentLoaded', () => {
         'refresh-feed': () => { s.feed = null; app.render(); },
         'feed-all': () => { s.feedAuthor = null; s.feedFilter = 'all'; app.render(); },
         'feed-filter': el => { s.feedAuthor = null; s.feedFilter = el.dataset.filter; app.render(); },
-        'feed-sort': el => { s.feedSort = el.dataset.sort; app.render(); },
         'feed-tag': el => {
             s.feedAuthor = null;
             s.feedFilter = `tag:${el.dataset.tag}`;
@@ -2397,14 +2487,6 @@ document.addEventListener('DOMContentLoaded', () => {
             document.querySelector('.main-col').scrollTo({ top: 0 });
         },
         'go-insights': () => app.setView('insights'),
-        'create-post': () => {
-            if (!window.diarySocial.requireSignIn('Sign in to share with friends.')) return;
-            const text = $('feed-text');
-            if (text) {
-                text.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                text.focus();
-            }
-        },
         'feed-add-photos': async () => addFeedPhotos(await Media.pickFiles('image/*')),
         'feed-camera': async () => addFeedPhotos(await Media.pickFiles('image/*', false, 'environment')),
         'feed-remove-photo': el => {
@@ -2431,6 +2513,28 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         'repost': el => toggleRepost(el.dataset.id),
         'go-reels': () => app.setView('reels'),
+        'go-library': () => app.setView('library'),
+        'feed-tab': el => {
+            s.feedAuthor = null;
+            if (el.dataset.tab === 'saved') s.feedFilter = 'saved';
+            else {
+                s.feedFilter = 'all';
+                s.feedSort = el.dataset.tab;
+            }
+            app.render();
+        },
+        'feed-search-toggle': () => {
+            s.feedSearchOpen = !s.feedSearchOpen;
+            app.render();
+            if (s.feedSearchOpen) $('feed-search')?.focus();
+        },
+        'feed-refresh': () => {
+            s.feedStale = false;
+            s.feed = null;
+            app.render();
+            document.querySelector('.main-col').scrollTo({ top: 0, behavior: 'smooth' });
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        },
         'post-menu': el => {
             if (el.dataset.kind === 'post' && window.diaryCommunities) return window.diaryCommunities.postMenu(el);
             const post = postsFor('entry').find(p => p.id === el.dataset.id);
@@ -2665,6 +2769,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (e.target.id === 'feed-text') {
             s.feedDraft.text = e.target.value;
+            e.target.closest('.post-composer')?.classList.toggle('open', !!e.target.value || s.feedDraft.photos.length > 0);
             e.target.style.height = 'auto';
             e.target.style.height = Math.min(e.target.scrollHeight, 240) + 'px';
         }

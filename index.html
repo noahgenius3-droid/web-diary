@@ -130,6 +130,7 @@
                 <button class="nav-item" data-view="highlights"><svg class="i"><use href="#i-marker"/></svg>Highlights</button>
                 <button class="nav-item" data-view="feed"><svg class="i"><use href="#i-feed"/></svg>Feed</button>
                 <button class="nav-item" data-view="reels"><svg class="i"><use href="#i-reel"/></svg>Reels</button>
+                <button class="nav-item" data-view="library"><svg class="i"><use href="#i-book"/></svg>Library</button>
                 <button class="nav-item" data-view="communities"><svg class="i"><use href="#i-users"/></svg>Communities</button>
                 <button class="nav-item" data-view="messages"><svg class="i"><use href="#i-chat"/></svg>Messages<span class="nav-count badge" id="messages-count"></span></button>
                 <button class="nav-item companion-link" id="companion-nav"><svg class="i"><use href="#i-sparkle"/></svg>Companion</button>
@@ -285,6 +286,11 @@
         <form id="auth-form" novalidate>
             <h3 id="auth-title">Sign in</h3>
             <p class="ask-text" id="auth-reason" hidden></p>
+            <button type="button" class="google-btn" id="auth-google">
+                <svg viewBox="0 0 48 48" aria-hidden="true" width="20" height="20"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.1-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
+                <span>Continue with Google</span>
+            </button>
+            <div class="auth-or" aria-hidden="true"><span>or use your email</span></div>
             <div class="tabs auth-tabs" role="tablist">
                 <button type="button" class="tab" role="tab" data-mode="signin">Sign in</button>
                 <button type="button" class="tab" role="tab" data-mode="signup">Create account</button>
@@ -464,6 +470,68 @@
         </form>
     </dialog>
 
+    <!-- Library reader -->
+    <dialog class="reader" id="reader" aria-labelledby="reader-title-bar">
+        <div class="reader-bar">
+            <button type="button" class="icon-btn" id="reader-close" aria-label="Close"><svg class="i"><use href="#i-back"/></svg></button>
+            <span class="reader-bar-title" id="reader-title-bar"></span>
+            <button type="button" class="icon-btn reader-aa" id="reader-smaller" aria-label="Smaller text">A−</button>
+            <button type="button" class="icon-btn reader-aa" id="reader-bigger" aria-label="Larger text">A+</button>
+            <button type="button" class="icon-btn" id="reader-like" aria-pressed="false" aria-label="Heart"><svg class="i"><use href="#i-heart"/></svg></button>
+            <button type="button" class="icon-btn" id="reader-save" aria-pressed="false" aria-label="Save to your shelf"><svg class="i"><use href="#i-bookmark"/></svg></button>
+            <button type="button" class="icon-btn" id="reader-delete" aria-label="Delete" hidden><svg class="i"><use href="#i-trash"/></svg></button>
+            <span class="reader-progress" aria-hidden="true"><i id="reader-prog"></i></span>
+        </div>
+        <article class="reader-body" id="reader-body"></article>
+    </dialog>
+
+    <!-- Publish to the Library -->
+    <dialog class="lib-compose" id="lib-compose" aria-labelledby="lc-heading">
+        <form id="lc-form" class="lc-form">
+            <header class="lc-head">
+                <button type="button" class="icon-btn" id="lc-cancel" aria-label="Cancel"><svg class="i"><use href="#i-close"/></svg></button>
+                <h3 id="lc-heading">Publish to the Library</h3>
+                <button type="submit" class="pc-post" id="lc-publish">Publish</button>
+            </header>
+            <div class="lc-body">
+                <div class="lc-chips" role="group" aria-label="What is it?">
+                    <button type="button" class="cm-filter" data-lc-kind="story">Story</button>
+                    <button type="button" class="cm-filter" data-lc-kind="book">Book</button>
+                    <button type="button" class="cm-filter" data-lc-kind="poem">Poem</button>
+                    <button type="button" class="cm-filter" data-lc-kind="essay">Essay</button>
+                </div>
+                <div class="lc-top">
+                    <button type="button" class="lc-cover" id="lc-cover"></button>
+                    <div class="lc-fields">
+                        <input id="lc-title" class="lc-title" maxlength="160" placeholder="Title" aria-label="Title" autocomplete="off">
+                        <textarea id="lc-desc" rows="3" maxlength="600" placeholder="A line or two about it (optional)" aria-label="Description"></textarea>
+                        <input id="lc-genre" maxlength="40" placeholder="Genre, e.g. romance, sci-fi, memoir" aria-label="Genre" list="lc-genres" autocomplete="off">
+                        <datalist id="lc-genres"><option value="Romance"><option value="Fantasy"><option value="Sci-fi"><option value="Mystery"><option value="Memoir"><option value="Poetry"><option value="Faith"><option value="Self-help"><option value="Short story"><option value="Children"></datalist>
+                    </div>
+                </div>
+                <div class="lc-source" role="group" aria-label="How do you want to add it?">
+                    <button type="button" class="cm-filter" data-lc-source="write">Write it here</button>
+                    <button type="button" class="cm-filter" data-lc-source="file">Upload PDF / EPUB</button>
+                    <button type="button" class="cm-filter" data-lc-source="note">Use a note</button>
+                </div>
+                <div id="lc-write" class="lc-write">
+                    <div class="rich-toolbar compact" id="lc-toolbar" role="toolbar" aria-label="Formatting"></div>
+                    <div class="rich lc-editor" id="lc-editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Your writing" data-placeholder="Once upon a time…"></div>
+                </div>
+                <div id="lc-upload" class="lc-upload" hidden>
+                    <button type="button" class="primary-btn" id="lc-pick-file"><svg class="i"><use href="#i-file"/></svg>Choose a PDF or EPUB</button>
+                    <p class="muted small" id="lc-file-name">No file chosen</p>
+                    <p class="muted small">Only share work you wrote or have the rights to. Up to 50 MB.</p>
+                </div>
+                <div class="lc-vis" role="group" aria-label="Who can read it?">
+                    <span class="muted small">Who can read it?</span>
+                    <button type="button" class="cm-filter" data-lc-vis="public">🌐 Everyone on Cordial</button>
+                    <button type="button" class="cm-filter" data-lc-vis="friends">👥 Friends only</button>
+                </div>
+            </div>
+        </form>
+    </dialog>
+
     <!-- Voice to note -->
     <dialog class="transcribe" id="transcribe" aria-labelledby="tr-title">
         <header class="tr-head">
@@ -515,6 +583,7 @@
     <script src="script.js"></script>
     <script src="social.js"></script>
     <script src="stories.js"></script>
+    <script src="library.js"></script>
     <script src="community.js"></script>
     <script src="call.js"></script>
     <script src="notify.js"></script>

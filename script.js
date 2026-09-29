@@ -1676,6 +1676,13 @@ document.addEventListener('DOMContentLoaded', () => {
             <p class="muted small share-hint">Shown first when you share to your feed or a group.</p>`);
 
         rows.push('<p class="share-label">More</p>');
+        if (window.diaryLibrary && !n.private && signed) {
+            rows.push(`
+                <button class="share-row" data-share="library">
+                    <span class="share-ic"><svg class="i"><use href="#i-book"/></svg></span>
+                    <span class="share-text"><strong>Publish to the Library</strong><small>Turn this note into a story others can read</small></span>
+                </button>`);
+        }
         if (navigator.share && !n.private) {
             rows.push(`
                 <button class="share-row" data-share="native">
@@ -1743,6 +1750,11 @@ document.addEventListener('DOMContentLoaded', () => {
             el.disabled = true;
             el.textContent = 'Posting…';
             if (await window.diaryCommunities.postNoteTo(g, n)) showToast(`Posted to ${g.name} 📓`);
+        } else if (what === 'library') {
+            shareSheet.close();
+            if (editor.open) editor.close();
+            window.diaryLibrary.publishNote(n);
+            return;
         } else if (what === 'find-groups') {
             shareSheet.close();
             if (editor.open) editor.close();
@@ -1960,7 +1972,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function openMainMenu(anchor) {
         const nav = [['home', 'Notes', 'i-notes'], ['calendar', 'Calendar', 'i-calendar'], ['insights', 'Insights', 'i-chart'],
-            ['photos', 'Photos', 'i-image'], ['highlights', 'Highlights', 'i-marker'], ['feed', 'Feed', 'i-feed'], ['reels', 'Reels', 'i-reel'], ['communities', 'Communities', 'i-users'], ['messages', 'Messages', 'i-chat'],
+            ['photos', 'Photos', 'i-image'], ['highlights', 'Highlights', 'i-marker'], ['feed', 'Feed', 'i-feed'], ['reels', 'Reels', 'i-reel'], ['library', 'Library', 'i-book'], ['communities', 'Communities', 'i-users'], ['messages', 'Messages', 'i-chat'],
             ['archive', 'Archive', 'i-archive'], ['trash', 'Trash', 'i-trash']]
             .map(([view, label, icon]) => ({ label, icon, cls: 'mobile-only', onClick: () => setView(view) }));
         openPopover(anchor, [
