@@ -61,7 +61,7 @@ document.addEventListener('DOMContentLoaded', () => {
         L.loading = false;
         L.items = items.error ? [] : items.data;
         L.saved = new Set((saved.data || []).map(r => r.item_id));
-        if (['library', 'feed'].includes(app.state.view)) app.render();
+        app.requestRender(['library', 'feed']);
     }
 
     const hearts = x => (x.likes || []).length;

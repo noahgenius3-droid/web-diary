@@ -33,8 +33,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const changed = () => { if (window.diaryBackup.onchange) window.diaryBackup.onchange(window.diaryBackup.status()); };
 
     // A cheap, stable fingerprint of a note's saved form
+    // Fingerprint that ignores key order: the database stores JSON with its keys re-ordered, and a
+    // plain JSON.stringify made every note look "changed" after each backup (re-import + redraw loop)
+    const stable = v => Array.isArray(v) ? `[${v.map(stable).join(',')}]`
+        : v && typeof v === 'object' ? `{${Object.keys(v).filter(k => v[k] !== undefined).sort().map(k => `${JSON.stringify(k)}:${stable(v[k])}`).join(',')}}`
+        : JSON.stringify(v === undefined ? null : v);
     function print(value) {
-        const str = JSON.stringify(value);
+        const str = stable(value);
         let h = 5381;
         for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
         return `${str.length}:${h >>> 0}`;

@@ -11213,3 +11213,8 @@ body { background: var(--bg); }
     .pop-item.pop-tile .i { width: 22px; height: 22px; color: var(--accent); }
     .pop-item.pop-tile:active { background: var(--panel); transform: scale(0.96); }
 }
+
+/* Redraws of the page you are already on stay still: entrance animations play only when you arrive */
+#content.repaint :is(.post, .msg, .mcard, .folder-card, .note-card, .typing-row, .comment.full, .incognito-banner, .ex-news, .mk-card, .gc-msg, .convo) { animation: none !important; }
+#content.repaint .msg.vanishing { animation: msg-vanish 420ms ease-in forwards !important; }
+body.chat-open #content.repaint .inbox .chat-pane:not(.leaving) { animation: none !important; }

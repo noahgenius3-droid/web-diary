@@ -200,7 +200,9 @@ document.addEventListener('DOMContentLoaded', () => {
         return `<span class="avatar-stack" title="${s.friends.length} friends">${shown.map(f => avatar(f, 'sm')).join('')}${extra > 0 ? `<span class="avatar sm more">+${extra}</span>` : ''}</span>`;
     };
 
-    app.hooks.afterRender = view => {
+    app.hooks.screenKey = view => (view === 'messages' && s.activeFriend) || '';
+
+    app.hooks.afterRender = (view, how = {}) => {
         // An open conversation takes the whole phone screen (see .chat-open in style.css)
         document.body.classList.toggle('chat-open', view === 'messages' && signedIn() && !!s.activeFriend);
         if (view === 'messages' && window.LiveLocation) window.LiveLocation.hydrate(content);
@@ -218,7 +220,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (view !== 'messages' || !signedIn()) return;
         const thread = $('chat-thread');
         if (thread) {
-            thread.scrollTop = thread.scrollHeight;
+            if (!how.repaint) thread.scrollTop = thread.scrollHeight;
             hydrateStorage(thread);
         }
         const info = content.querySelector('.chat-info');
@@ -230,7 +232,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 onFiles: addPending,
                 askLink: app.askLink
             });
-            input.innerHTML = Rich.sanitize(s.drafts[s.activeFriend] || '');
+            if (!how.repaint || !input.innerHTML) input.innerHTML = Rich.sanitize(s.drafts[s.activeFriend] || '');
             renderPending();
             renderReplyBar();
             if (s.typingFrom === s.activeFriend) showTyping(s.activeFriend);
@@ -494,7 +496,7 @@ document.addEventListener('DOMContentLoaded', () => {
             .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_friendships' },
                 async () => {
                     await loadFriends();
-                    if (['messages', 'feed'].includes(app.state.view)) app.render();
+                    app.requestRender(['messages', 'feed']);
                 })
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'diary_comments' },
                 payload => onCommentInsert(payload.new))
@@ -622,9 +624,13 @@ document.addEventListener('DOMContentLoaded', () => {
             .or(`and(sender.eq.${me},recipient.eq.${friendId}),and(sender.eq.${friendId},recipient.eq.${me})`)
             .order('created_at', { ascending: false })
             .limit(200);
+        const sig = list => (list || []).map(m => `${m.id}:${m.read_at || ''}:${m.deleted_at || ''}:${JSON.stringify(m.reactions || {})}:${m.expires_at || ''}`).join('|');
+        const before = sig(s.threads[friendId]);
+        if (error && s.threads[friendId]) return; // keep what's on screen if the network hiccups
         s.threads[friendId] = error ? [] : data.reverse();
         pruneVanished(friendId);
-        if (app.state.view === 'messages' && s.activeFriend === friendId) app.render();
+        if (before === sig(s.threads[friendId])) return;
+        if (app.state.view === 'messages' && s.activeFriend === friendId) app.requestRender('messages');
     }
 
     // Refresh: fetch the chat list, requests and the open conversation again, and reconnect live updates
@@ -1589,7 +1595,7 @@ document.addEventListener('DOMContentLoaded', () => {
         s.feed = feed;
         s.suggestions = suggestRes.error ? [] : suggestRes.data;
         await loadSavedExtra();
-        if (app.state.view === 'feed' || app.state.view === 'explore') app.render();
+        app.requestRender(['feed', 'explore']);
         loadPreviews(feed);
     }
 
@@ -1934,8 +1940,16 @@ document.addEventListener('DOMContentLoaded', () => {
         s.remoteAudio = new Map((data || []).filter(r => r.audio).map(r => [r.local_id, r.audio]));
     }
 
+    // On sign-in, only posts that changed since they were last uploaded are sent again (re-uploading every
+    // shared post each launch pinged every friend's app with live updates for nothing)
+    const sharedSig = n => `${n.updatedAt || n.createdAt || ''}|${(n.attachments || []).map(a => a.id).join(',')}`;
+    const sharedMemoKey = () => `diarySharedSig:${s.profile.id}`;
     function syncAllShared() {
-        app.getNotes().filter(n => n.shared && !n.private && !n.trashedAt).forEach(n => queue(() => upsertShared(n)));
+        const memo = load(sharedMemoKey(), {});
+        app.getNotes()
+            .filter(n => n.shared && !n.private && !n.trashedAt)
+            .filter(n => !(s.remoteIds.has(n.id) && memo[n.id] === sharedSig(n)))
+            .forEach(n => queue(() => upsertShared(n)));
     }
 
     // Upload new entry photos to the friends-only bucket and drop ones that were removed
@@ -2109,6 +2123,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         s.remoteIds.add(note.id);
         s.feed = null;
+        try {
+            const memo = load(sharedMemoKey(), {});
+            memo[note.id] = sharedSig(note);
+            localStorage.setItem(sharedMemoKey(), JSON.stringify(memo));
+        } catch (e) {}
         return { ok: true, photos: photos.length };
     }
 

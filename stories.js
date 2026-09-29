@@ -919,7 +919,7 @@ document.addEventListener('DOMContentLoaded', () => {
         st.reelsLoading = false;
         st.reels = error ? [] : data;
         st.reelsError = !!error;
-        if (['reels', 'feed', 'explore'].includes(app.state.view)) app.render();
+        app.requestRender(['reels', 'feed', 'explore']);
     }
 
     // ---------- Reels in the feed ----------

@@ -68,7 +68,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             entry.loading = false;
             entry.at = Date.now();
-            if (app.state.view === 'explore' && !document.getElementById('ex-search')?.value) app.render();
+            if (!document.getElementById('ex-search')?.value) app.requestRender('explore');
         })();
         return entry;
     }
@@ -172,7 +172,7 @@ document.addEventListener('DOMContentLoaded', () => {
         E.groupsLoading = true;
         try { E.groups = await window.diaryCommunities.all(); } catch (e) { E.groups = []; }
         E.groupsLoading = false;
-        if (app.state.view === 'explore') app.render();
+        app.requestRender('explore');
     }
 
     // ---------- Pieces ----------

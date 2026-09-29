@@ -65,7 +65,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const before = (L.list || []).map(x => x.id).join();
         L.list = error ? [] : data;
         paintStrips();
-        if (app.state.view === 'explore' && before !== L.list.map(x => x.id).join() && !document.getElementById('ex-search')?.value) app.render();
+        if (before !== L.list.map(x => x.id).join() && !document.getElementById('ex-search')?.value) app.requestRender('explore');
         if (!L.listSub) {
             L.listSub = client.channel(`diary-live-list-${me()}`)
                 .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_live_streams' }, () => {

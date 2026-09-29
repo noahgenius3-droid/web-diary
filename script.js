@@ -532,7 +532,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         col.addEventListener('touchstart', e => {
             if (e.touches.length !== 1 || refreshing || document.querySelector('dialog[open]')) return;
-            if (e.target.closest('input, textarea, [contenteditable="true"], .carousel, .ex-row, .live-strip, .stories-bar')) return;
+            if (e.target.closest('input, textarea, select, [contenteditable="true"], .carousel, .ex-row, .live-strip, .stories-bar, .chat-pane, .mk-slides, .ex-tabs, .ex-news-kinds, .mk-kinds')) return;
+            if (document.body.classList.contains('chat-open')) return;
             if (!atTop(e.target)) return;
             startY = e.touches[0].clientY;
             tracking = true;
@@ -543,7 +544,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!tracking) return;
             const dy = e.touches[0].clientY - startY;
             if (dy <= 0) { reset(); return; }
-            pull = dy * 0.55; // resistance, like a rubber band
+            if (dy < 14) return; // a small wobble while scrolling isn't a pull
+            pull = (dy - 14) * 0.55; // resistance, like a rubber band
             ptr.classList.add('pulling');
             paint();
         }, { passive: true });
@@ -631,10 +633,98 @@ document.addEventListener('DOMContentLoaded', () => {
                 : '<svg class="i" style="width:16px;height:16px"><use href="#i-user"/></svg>';
 
         document.body.dataset.view = state.view;
+        // Redrawing the page you're already on (new data arrived, a like, a live update) must be invisible:
+        // entrance animations don't replay, scroll positions stay, and the box you're typing in keeps focus
+        let key = null;
+        try { key = screenKey(); } catch (e) { /* the very first paint runs before the router is set up */ }
+        const repaint = key !== null && key === render.lastKey;
+        render.lastKey = key;
+        const scrolls = repaint ? saveScrolls() : null;
+        const focus = repaint ? saveFocus() : null;
+        content.classList.toggle('repaint', repaint);
         content.innerHTML = (views[state.view] || renderHome)();
         Media.hydrate(content);
         markArrival();
-        if (hooks.afterRender) hooks.afterRender(state.view);
+        if (hooks.afterRender) hooks.afterRender(state.view, { repaint });
+        if (scrolls) restoreScrolls(scrolls);
+        if (focus) restoreFocus(focus);
+    }
+
+    // Which screen is showing: the page, its id (a community, a folder) and anything a module adds (the open chat)
+    function screenKey() {
+        const routeKey = ROUTE_KEYS[state.view];
+        return [state.view, routeKey ? state[routeKey] : '', hooks.screenKey ? hooks.screenKey(state.view) : ''].join('|');
+    }
+
+    // Scrollable areas are matched by id, or by class and position, before and after the redraw
+    const SCROLLERS = '[id], .convo-list, .inbox-list, .ex-row, .ex-tabs, .ex-news-kinds, .mk-kinds, .mk-photos, .tabs, .cm-filters, .stories-bar, .live-strip, .nh-templates, .carousel, .mk-slides, .feed-tabs';
+    function scrollKey(el, i) {
+        return el.id ? `#${el.id}` : `${el.className}|${i}`;
+    }
+    function saveScrolls() {
+        const col = document.querySelector('.main-col');
+        const saved = { col: col ? col.scrollTop : 0, win: window.scrollY, els: new Map() };
+        content.querySelectorAll(SCROLLERS).forEach((el, i) => {
+            if (!el.scrollTop && !el.scrollLeft) return;
+            const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+            saved.els.set(scrollKey(el, i), { top: el.scrollTop, left: el.scrollLeft, nearBottom });
+        });
+        return saved;
+    }
+    function restoreScrolls(saved) {
+        const col = document.querySelector('.main-col');
+        if (col && Math.abs(col.scrollTop - saved.col) > 1) col.scrollTop = saved.col;
+        if (Math.abs(window.scrollY - saved.win) > 1) window.scrollTo(0, saved.win);
+        content.querySelectorAll(SCROLLERS).forEach((el, i) => {
+            const s = saved.els.get(scrollKey(el, i));
+            if (!s) return;
+            // A chat you were reading at the bottom stays at the bottom (new messages show); otherwise stay put
+            el.scrollTop = s.nearBottom && el.id === 'chat-thread' ? el.scrollHeight : s.top;
+            el.scrollLeft = s.left;
+        });
+    }
+
+    function saveFocus() {
+        const el = document.activeElement;
+        if (!el || el === document.body || !content.contains(el) || !el.id) return null;
+        const f = { id: el.id };
+        try {
+            if (typeof el.selectionStart === 'number') f.sel = [el.selectionStart, el.selectionEnd];
+        } catch (e) {}
+        return f;
+    }
+    function restoreFocus(f) {
+        const el = document.getElementById(f.id);
+        if (!el || !content.contains(el) || document.activeElement === el) return;
+        el.focus({ preventScroll: true });
+        try {
+            if (f.sel && typeof el.setSelectionRange === 'function') el.setSelectionRange(f.sel[0], f.sel[1]);
+            else if (el.isContentEditable) {
+                const r = document.createRange();
+                r.selectNodeContents(el);
+                r.collapse(false);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(r);
+            }
+        } catch (e) {}
+    }
+
+    // Data that arrives in the background asks for a redraw here: bursts become one redraw, and it waits
+    // until your finger is off the screen so scrolling is never interrupted
+    let renderTimer = null;
+    let touching = false;
+    document.addEventListener('touchstart', () => { touching = true; }, { passive: true, capture: true });
+    const touchEnd = () => { touching = false; };
+    document.addEventListener('touchend', touchEnd, { passive: true, capture: true });
+    document.addEventListener('touchcancel', touchEnd, { passive: true, capture: true });
+    function requestRender(forView) {
+        clearTimeout(renderTimer);
+        renderTimer = setTimeout(function go() {
+            if (touching) { renderTimer = setTimeout(go, 250); return; }
+            if (forView && ![].concat(forView).includes(state.view)) return;
+            render();
+        }, 80);
     }
 
     function displayName() {
@@ -2584,7 +2674,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     window.diaryApp = {
-        views, actions, hooks, state,
+        views, actions, hooks, state, requestRender,
         on(type, fn) { (listeners[type] = listeners[type] || []).push(fn); },
         getNotes: () => notes,
         newEntry: defaults => openEditor(null, defaults),
@@ -2710,7 +2800,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (folderList) folders = cleanFolders(folderList);
         sortNotes();
         persist();
-        render();
+        requestRender(); // quietly, whatever page is open
     }
 
     // Upgrades entries saved by earlier versions (plain text, no journal fields)

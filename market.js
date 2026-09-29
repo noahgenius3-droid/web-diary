@@ -95,14 +95,14 @@ document.addEventListener('DOMContentLoaded', () => {
         M.listings = all.error ? [] : all.data;
         M.mine = mine.error ? [] : mine.data;
         M.error = !!all.error;
-        if (['market', 'explore'].includes(app.state.view)) app.render();
+        app.requestRender(['market', 'explore']);
     }
 
     async function loadRequests() {
         const { data, error } = await client.from('diary_book_requests').select(REQUEST_SELECT).order('updated_at', { ascending: false }).limit(100);
         M.requests = error ? [] : data;
         paintBadge();
-        if (app.state.view === 'market') app.render();
+        app.requestRender('market');
         if (M.deal) paintDealHead();
     }
 
@@ -321,7 +321,16 @@ document.addEventListener('DOMContentLoaded', () => {
             d.className = `mk-dialog ${cls}`;
             d.setAttribute('aria-label', label);
             document.body.append(d);
-            d.addEventListener('click', e => { if (e.target === d) d.close(); });
+            // Dialogs live outside the page, so their buttons (close, edit, accept…) are wired up here;
+            // a tap on the dimmed backdrop closes the sheet
+            d.addEventListener('click', e => {
+                if (e.target === d) return d.close();
+                const el = e.target.closest('[data-action]');
+                if (el && d.contains(el) && app.actions[el.dataset.action]) {
+                    e.preventDefault();
+                    app.actions[el.dataset.action](el, e);
+                }
+            });
         }
         return d;
     }
