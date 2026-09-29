@@ -905,6 +905,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (canDelete) {
             items.push({ label: 'Delete post', icon: 'i-trash', danger: true, onClick: () => deletePost(post) });
         }
+        if (post.author !== me() && window.diarySafety) items.push({ label: 'Report post', icon: 'i-flag', onClick: () => window.diarySafety.report('post', post.id) });
         if (!items.length) items.push({ label: 'Copy text', icon: 'i-notes', onClick: () => navigator.clipboard?.writeText(post.body || post.title || '') });
         app.openPopover(el, items);
     }
@@ -1126,6 +1127,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 app.render();
             } });
             items.push({ label: `Remove ${name}`, icon: 'i-close', danger: true, onClick: () => app.actions['cm-remove-member']({ dataset: { id: m.user_id } }) });
+            items.push({ label: `Ban ${name}`, icon: 'i-block', danger: true, onClick: async () => {
+                const res = await app.ask({ title: `Ban ${name} from ${cm.name}?`, text: 'They’re removed and can’t rejoin, even with an invite code, until a moderator lifts the ban. Add a reason for the other moderators (optional).', value: '', placeholder: 'Reason', allowEmpty: true, ok: 'Ban', danger: true });
+                if (!res) return;
+                const { error } = await client.rpc('diary_ban_member', { p_cid: cm.id, p_user: m.user_id, p_reason: (res.value || '').trim() || null });
+                if (error) return app.showToast(error.message === 'Not allowed' ? 'You can only ban people below your role' : 'Couldn’t ban them');
+                c.members = c.members.filter(x => x.user_id !== m.user_id);
+                app.showToast(`${name} is banned from ${cm.name}`);
+                app.render();
+            } });
+            items.unshift({ label: `View ${name}’s profile`, icon: 'i-user', onClick: () => window.diaryProfile && window.diaryProfile.open(m.user_id) });
             app.openPopover(el, items);
         },
         'cm-chat-settings': el => {

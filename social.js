@@ -503,7 +503,12 @@ document.addEventListener('DOMContentLoaded', () => {
             return; // token refresh
         }
 
+        // Two-step verification: an account with an authenticator app needs its code before anything loads
+        if (client.auth.mfa && !(await passMfa())) return;
         s.profile = await ensureProfile(session.user);
+        client.from('diary_presence').select('status, status_until').maybeSingle().then(({ data }) => {
+            s.myStatus = data && (!data.status_until || Date.parse(data.status_until) > Date.now()) ? data.status : null;
+        }, () => {});
         if (!s.profile) return app.render();
 
         s.drafts = load(`diaryChatDrafts:${s.profile.id}`, {});
@@ -511,6 +516,7 @@ document.addEventListener('DOMContentLoaded', () => {
         subscribe();
         emptyIncognitoTrash();
         loadPrefs().then(() => app.requestRender('messages'));
+        registerDevice();
         setTimeout(flushOutbox, 1500);
         if (s.pendingRoute) { const r = s.pendingRoute; s.pendingRoute = null; setTimeout(() => routeTo(r), 300); }
         syncAllShared();
@@ -533,6 +539,32 @@ document.addEventListener('DOMContentLoaded', () => {
         closePost(true);
         if (window.diaryCommunities) window.diaryCommunities.reset();
         updateBadge();
+    }
+
+    let mfaAsking = false;
+    async function passMfa() {
+        try {
+            const { data: aal } = await client.auth.mfa.getAuthenticatorAssuranceLevel();
+            if (!aal || aal.nextLevel !== 'aal2' || aal.currentLevel === 'aal2') return true;
+            if (mfaAsking) return false;
+            mfaAsking = true;
+            const { data: factors } = await client.auth.mfa.listFactors();
+            const factor = factors && (factors.totp || []).find(f => f.status === 'verified');
+            if (!factor) { mfaAsking = false; return true; }
+            for (let tries = 0; tries < 3; tries++) {
+                const res = await app.ask({ title: 'Two-step verification', text: tries ? 'That code didn’t match. Try the newest code from your authenticator app.' : 'Enter the 6-digit code from your authenticator app.', value: '', placeholder: '123456', ok: 'Verify' });
+                if (!res) break;
+                const { error } = await client.auth.mfa.challengeAndVerify({ factorId: factor.id, code: String(res.value || '').replace(/\s/g, '') });
+                if (!error) { mfaAsking = false; return true; }
+            }
+            mfaAsking = false;
+            app.showToast('Signed out — the verification code is needed to sign in');
+            await client.auth.signOut();
+            return false;
+        } catch (e) {
+            mfaAsking = false;
+            return true;
+        }
     }
 
     async function ensureProfile(user) {
@@ -620,6 +652,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // Every 30 seconds while Cordial is open you check in; people's status comes back only as far as their
     // privacy settings allow (Settings → Privacy). "Online" means checked in within the last ~75 seconds.
     s.lastSeen = new Map(); // user id -> ISO time, when they let you see it
+    s.statuses = new Map(); // user id -> { status, text } (custom status)
+    s.allowCalls = new Map(); // user id -> 'friends' | 'nobody'
+    const STATUS = { available: '🟢 Available', busy: '⛔ Busy', meeting: '📅 In a meeting', dnd: '🔕 Do not disturb', away: '🌙 Away' };
+    function statusOf(id) {
+        const st = s.statuses.get(id);
+        return st && STATUS[st.status] ? { label: STATUS[st.status], text: st.text, status: st.status } : null;
+    }
     const presenceWatch = new Set(); // extra people to keep an eye on (an open profile, group members)
     function heartbeat() {
         if (!signedIn() || document.visibilityState !== 'visible') return;
@@ -637,6 +676,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (r.online) online.add(r.id);
             if (r.last_seen) s.lastSeen.set(r.id, r.last_seen); else s.lastSeen.delete(r.id);
             s.receipts.set(r.id, r.receipts !== false);
+            if (r.status) s.statuses.set(r.id, { status: r.status, text: r.status_text || '' }); else s.statuses.delete(r.id);
+            s.allowCalls.set(r.id, r.allow_calls || 'friends');
         });
         s.online = online;
         paintPresence();
@@ -665,7 +706,9 @@ document.addEventListener('DOMContentLoaded', () => {
         document.querySelectorAll('[data-presence]').forEach(el =>
             el.classList.toggle('online', s.online.has(el.dataset.presence)));
         document.querySelectorAll('[data-status]').forEach(el => {
-            el.textContent = presenceText(el.dataset.status) || el.dataset.away;
+            const st = el.hasAttribute('data-with-status') ? statusOf(el.dataset.status) : null;
+            const line = presenceText(el.dataset.status);
+            el.textContent = st ? [st.label + (st.text ? ` · ${st.text}` : ''), line].filter(Boolean).join(' · ') : (line || el.dataset.away);
             el.classList.toggle('is-online', s.online.has(el.dataset.status));
         });
     }
@@ -1206,7 +1249,7 @@ document.addEventListener('DOMContentLoaded', () => {
         updateBadge();
         queueDelivered([m.id]);
         const friend = s.friends.find(f => f.id === m.sender);
-        if (!isMuted('dm', m.sender)) {
+        if (!isMuted('dm', m.sender) && s.myStatus !== 'dnd') {
             app.showToast(m.vanish ? 'New incognito message' : `New message from ${friend ? friend.display_name : 'a friend'}`);
             const sound = prefOf('dm', m.sender).sound || 'chime';
             if (sound !== 'none' && window.diaryChatTools) window.diaryChatTools.playSound(sound);
@@ -1563,6 +1606,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${m.vanish ? '' : `<button type="button" data-action="msg-forward" data-id="${esc(String(id))}"><svg class="i"><use href="#i-forward"/></svg>Forward</button>`}
                 ${m.vanish || String(id).startsWith('tmp-') ? '' : `<button type="button" data-action="msg-link" data-id="${esc(String(id))}"><svg class="i"><use href="#i-link"/></svg>Copy link</button>`}
                 ${Rich.toText(m.body || '') && !m.vanish ? `<button type="button" data-action="msg-copy" data-id="${esc(String(id))}"><svg class="i"><use href="#i-notes"/></svg>Copy</button>` : ''}
+                ${!mine && Rich.toText(m.body || '') ? `<button type="button" data-action="msg-translate" data-id="${esc(String(id))}"><svg class="i"><use href="#i-sparkle"/></svg>Translate</button>` : ''}
+                ${!mine && !String(id).startsWith('tmp-') ? `<button type="button" data-action="msg-report" data-id="${esc(String(id))}"><svg class="i"><use href="#i-flag"/></svg>Report</button>` : ''}
                 ${mine && canEdit(m) && Rich.toText(m.body || '') ? `<button type="button" data-action="msg-edit" data-id="${esc(String(id))}"><svg class="i"><use href="#i-edit"/></svg>Edit</button>` : ''}
                 <button type="button" class="danger" data-action="msg-delete" data-id="${esc(String(id))}"><svg class="i"><use href="#i-trash"/></svg>Delete</button>
             </div>`;
@@ -1848,6 +1893,49 @@ document.addEventListener('DOMContentLoaded', () => {
         };
     }
 
+    // A friend's contact card, to share in a chat
+    function pickContact(anchor, done) {
+        const others = s.friends.filter(f => f.id !== s.activeFriend);
+        if (!others.length) return app.showToast('Add more friends to share their contact');
+        setTimeout(() => app.openPopover(anchor, others.slice(0, 30).map(f => ({
+            label: f.display_name, icon: 'i-contact',
+            onClick: () => done({ kind: 'contact', id: f.id, name: f.display_name, username: f.username })
+        }))), 0);
+    }
+
+    async function sendAttachmentOnly(friendId, attachments) {
+        const { data, error } = await client.from('diary_messages').insert({ recipient: friendId, body: '', attachments, client_id: randomId() }).select().single();
+        if (error) return app.showToast(/block/i.test(error.message || '') ? 'You can’t message this person' : 'Couldn’t send that');
+        (s.threads[friendId] = s.threads[friendId] || []).push(data);
+        s.last[friendId] = data;
+        appendMessage(data);
+        updateConvoRow(friendId);
+    }
+
+    function contactCardHTML(a) {
+        const person = { id: a.id, display_name: a.name || 'Someone' };
+        return `<div class="contact-card">${avatar(person, 'md')}<span class="contact-text"><strong>${esc(a.name || 'Someone')}</strong><small>${a.username ? `@${esc(a.username)}` : 'Cordial contact'}</small></span><button type="button" class="chip" data-action="contact-open" data-id="${esc(a.id)}">View</button></div>`;
+    }
+
+    function deviceId() {
+        let id = null;
+        try { id = localStorage.getItem('diaryDeviceId'); } catch (e) {}
+        if (!id) {
+            id = randomId().replace(/-/g, '').slice(0, 24);
+            try { localStorage.setItem('diaryDeviceId', id); } catch (e) {}
+        }
+        return id;
+    }
+    function deviceLabel() {
+        const ua = navigator.userAgent;
+        const os = /iPhone|iPad/.test(ua) ? (/iPad/.test(ua) ? 'iPad' : 'iPhone') : /Android/.test(ua) ? 'Android' : /Mac OS X/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : 'a device';
+        const br = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'a browser';
+        return `${br} on ${os}`;
+    }
+    function registerDevice() {
+        client.rpc('diary_register_device', { p_device: deviceId(), p_label: deviceLabel() }).then(() => {}, () => {});
+    }
+
     function convoMenu(anchor, friendId) {
         const p = prefOf('dm', friendId);
         const friend = s.friends.find(f => f.id === friendId);
@@ -1955,6 +2043,20 @@ document.addEventListener('DOMContentLoaded', () => {
         if (error && error.code === '23505') {
             // It already went through on an earlier try: use that copy (never a duplicate)
             ({ data, error } = await client.from('diary_messages').select('*').eq('sender', s.profile.id).eq('client_id', temp.client_id).maybeSingle());
+        }
+        if (error && /block/i.test(error.message || '')) {
+            s.threads[temp.recipient] = (s.threads[temp.recipient] || []).filter(m => m !== temp);
+            content.querySelector(`[data-msg="${temp.id}"]`)?.remove();
+            writeOutbox(readOutbox().filter(x => x.client_id !== temp.client_id));
+            app.showToast('You can’t message this person');
+            return true;
+        }
+        if (error && /row-level security/i.test(error.message || '')) {
+            s.threads[temp.recipient] = (s.threads[temp.recipient] || []).filter(m => m !== temp);
+            content.querySelector(`[data-msg="${temp.id}"]`)?.remove();
+            writeOutbox(readOutbox().filter(x => x.client_id !== temp.client_id));
+            app.showToast('Your account can’t send messages right now');
+            return true;
         }
         if (error || !data) {
             temp.pending = false;
@@ -3936,6 +4038,7 @@ document.addEventListener('DOMContentLoaded', () => {
         pickAudio, uploadAudio, voiceHTML, POST_AUDIO, linkTags, emojiPicker, POST_REACTIONS, peopleResults,
         presenceText, refreshPresence, paintPresence, heartbeat,
         chooseDelete, openRecentlyDeleted, editedTag, showHistory, prefOf, setPref, isMuted, muteMenu, soundMenu, FOREVER,
+        statusOf, contactCardHTML, pickContact, deviceId, deviceLabel, STATUS,
         loadFeed: () => { if (s.feed === null) loadFeed(); },
         // Open a feed post in the post view from anywhere (Explore, notifications), even if its card isn't on screen
         openEntry(id, opts) {
@@ -3962,7 +4065,9 @@ document.addEventListener('DOMContentLoaded', () => {
             </button>`;
 
         let rows;
-        if (s.inboxTab === 'requests') {
+        if (s.inboxTab === 'calls' && window.diaryCalls && window.diaryCalls.historyHTML) {
+            rows = window.diaryCalls.historyHTML();
+        } else if (s.inboxTab === 'requests') {
             rows = [
                 ...s.incoming.map(f => `
                     <div class="convo static">${avatar(f, 'md')}
@@ -4010,7 +4115,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     </label>
                     ${activeNow()}
                     <div class="inbox-tabs" role="tablist">
-                        ${tab('all', 'All', 0)}${tab('unread', 'Unread', unreadCount)}${tab('requests', 'Requests', s.incoming.length)}${[...s.prefs.values()].some(r => r.kind === 'dm' && r.archived) ? tab('archived', 'Archived', 0) : ''}
+                        ${tab('all', 'All', 0)}${tab('unread', 'Unread', unreadCount)}${tab('requests', 'Requests', s.incoming.length)}${[...s.prefs.values()].some(r => r.kind === 'dm' && r.archived) ? tab('archived', 'Archived', 0) : ''}${window.diaryCalls && window.diaryCalls.historyHTML ? tab('calls', 'Calls', 0) : ''}
                     </div>
                     <div class="convo-list">${rows}</div>
                     <p class="muted small inbox-foot">You’re <strong>@${esc(s.profile.username)}</strong> — share it so friends can add you.</p>
@@ -4110,6 +4215,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!a) return '';
         if (a.kind === 'audio') return '🎤 Voice note';
         if (a.kind === 'location') return '📍 Live location';
+        if (a.kind === 'contact') return `👤 ${a.name || 'Contact'}`;
         if (a.kind === 'image' || a.kind === 'drawing') return '📷 Photo';
         return `📎 ${a.name}`;
     }
@@ -4129,8 +4235,9 @@ document.addEventListener('DOMContentLoaded', () => {
             <header class="chat-head">
                 <button class="icon-btn back-chat" data-action="close-chat" aria-label="Back to inbox"><svg class="i"><use href="#i-back"/></svg></button>
                 <button type="button" class="chat-who" data-profile="${esc(friend.id)}" aria-label="View ${esc(friend.display_name)}’s profile">${avatar(friend, 'sm')}</button>
-                <div class="friend-name"><button type="button" class="chat-who-name" data-profile="${esc(friend.id)}">${esc(friend.display_name)}</button><small data-status="${esc(friend.id)}" data-away="@${esc(friend.username)}">${esc(presenceText(friend.id) || `@${friend.username}`)}</small></div>
-                ${window.diaryCalls ? `<button class="icon-btn accent" data-action="call-friend" data-id="${esc(friend.id)}" aria-label="Voice call ${esc(friend.display_name)}" title="Voice call"><svg class="i"><use href="#i-phone"/></svg></button><button class="icon-btn accent" data-action="call-friend" data-video="1" data-id="${esc(friend.id)}" aria-label="Video call ${esc(friend.display_name)}" title="Video call"><svg class="i"><use href="#i-video"/></svg></button>` : ''}
+                <div class="friend-name"><button type="button" class="chat-who-name" data-profile="${esc(friend.id)}">${esc(friend.display_name)}</button><small data-status="${esc(friend.id)}" data-with-status data-away="@${esc(friend.username)}">${esc([statusOf(friend.id) ? statusOf(friend.id).label : '', presenceText(friend.id)].filter(Boolean).join(' · ') || `@${friend.username}`)}</small></div>
+                ${window.diaryCalls && s.allowCalls.get(friend.id) !== 'nobody' && !(window.diarySafety && window.diarySafety.isBlocked(friend.id)) ? `<button class="icon-btn accent" data-action="call-friend" data-id="${esc(friend.id)}" aria-label="Voice call ${esc(friend.display_name)}" title="Voice call"><svg class="i"><use href="#i-phone"/></svg></button><button class="icon-btn accent" data-action="call-friend" data-video="1" data-id="${esc(friend.id)}" aria-label="Video call ${esc(friend.display_name)}" title="Video call"><svg class="i"><use href="#i-video"/></svg></button>` : ''}
+                <button class="icon-btn" data-action="chat-ai" aria-label="AI tools: summarise or suggest replies" title="AI tools" aria-haspopup="menu"><svg class="i"><use href="#i-sparkle"/></svg></button>
                 <button class="icon-btn" data-action="chat-search" aria-label="Search this chat" title="Search"><svg class="i"><use href="#i-search"/></svg></button>
                 <button class="icon-btn incognito-btn" data-action="chat-incognito" aria-pressed="${!!inc}" aria-label="Incognito chat${inc ? ' (on)' : ''}" title="Incognito chat"><svg class="i"><use href="#i-incognito"/></svg></button>
                 <button class="icon-btn refresh-btn" data-action="chat-refresh" aria-label="Refresh this chat" title="Refresh"><svg class="i"><use href="#i-refresh"/></svg></button>
@@ -4140,7 +4247,8 @@ document.addEventListener('DOMContentLoaded', () => {
             ${inc ? incognitoBanner(friend, inc) : ''}
             <div class="chat-thread" id="chat-thread">${body}</div>
             <button type="button" class="chat-jump" id="chat-jump" data-action="chat-jump" hidden aria-label="Jump to latest"><svg class="i"><use href="#i-down"/></svg><span></span></button>
-            <form class="composer${s.rec ? ' recording' : ''}" data-form="send-message">
+            ${window.diarySafety && window.diarySafety.isBlocked(friend.id) ? `<div class="chat-blocked" role="status"><svg class="i"><use href="#i-block"/></svg><span>You blocked ${esc(friend.display_name)}. You can’t message or call each other.</span><button type="button" class="chip" data-action="chat-unblock">Unblock</button></div>` : ''}
+            <form class="composer${s.rec ? ' recording' : ''}${window.diarySafety && window.diarySafety.isBlocked(friend.id) ? ' is-blocked' : ''}" data-form="send-message">
                 <div class="reply-bar" id="reply-bar" hidden></div>
                 <div class="quick-replies">${['👍', '❤️', '😂', 'On my way!', 'Talk later?', 'Thank you 🙏'].map(q => `<button type="button" class="quick-reply" data-action="quick-reply" data-text="${esc(q)}">${esc(q)}</button>`).join('')}</div>
                 <div class="pending-atts" id="pending-atts" hidden></div>
@@ -4237,6 +4345,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function attachmentHTML(a) {
+        if (a && a.kind === 'contact') return contactCardHTML(a);
         if (!a || typeof a.path !== 'string') return '';
         const path = esc(a.path);
         const name = esc(a.name || 'attachment');
@@ -4292,6 +4401,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     <span class="info-ic purple"><svg class="i"><use href="#i-bell"/></svg></span><span>Notifications</span>
                     <span class="share-toggle"><input type="checkbox" data-action="toggle-mute"${muted ? '' : ' checked'}><span class="switch" aria-hidden="true"></span></span>
                 </label>
+                ${window.diarySafety ? `<button class="info-row danger" data-action="${window.diarySafety.isBlocked(friend.id) ? 'chat-unblock' : 'chat-block'}">
+                    <span class="info-ic red"><svg class="i"><use href="#i-block"/></svg></span><span>${window.diarySafety.isBlocked(friend.id) ? 'Unblock' : 'Block'} ${esc(friend.display_name.split(' ')[0])}</span>
+                </button>
+                <button class="info-row danger" data-action="chat-report">
+                    <span class="info-ic red"><svg class="i"><use href="#i-flag"/></svg></span><span>Report ${esc(friend.display_name.split(' ')[0])}</span>
+                </button>` : ''}
                 <button class="info-row danger" data-action="friend-remove" data-id="${esc(friend.id)}">
                     <span class="info-ic red"><svg class="i"><use href="#i-trash"/></svg></span><span>Remove friend</span>
                 </button>
@@ -4425,6 +4540,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 } }
             ];
+            if (!mine && window.diarySafety) common.push({ label: 'Report post', icon: 'i-flag', onClick: () => window.diarySafety.report('entry', post.id, { who: (post.author_profile && post.author_profile.display_name) || '' }) });
             const items = mine
                 ? [
                     { label: 'Open entry', icon: 'i-edit', onClick: () => {
@@ -4527,6 +4643,48 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         'open-chat': el => openChat(el.dataset.id),
         'convo-menu': el => convoMenu(el, el.dataset.id),
+        'chat-block': () => {
+            const friend = s.friends.find(f => f.id === s.activeFriend);
+            if (friend && window.diarySafety) window.diarySafety.block(friend);
+        },
+        'chat-unblock': () => {
+            const friend = s.friends.find(f => f.id === s.activeFriend);
+            if (friend && window.diarySafety) window.diarySafety.unblock(friend);
+        },
+        'chat-report': () => {
+            const friend = s.friends.find(f => f.id === s.activeFriend);
+            if (friend && window.diarySafety) window.diarySafety.report('user', friend.id, { who: friend.display_name, offerBlock: window.diarySafety.isBlocked(friend.id) ? null : friend });
+        },
+        'msg-report': el => {
+            closeReactBar();
+            const friend = s.friends.find(f => f.id === s.activeFriend);
+            if (window.diarySafety) window.diarySafety.report('dm', el.dataset.id, { who: friend ? friend.display_name : '', offerBlock: friend && !window.diarySafety.isBlocked(friend.id) ? friend : null });
+        },
+        'msg-translate': el => {
+            closeReactBar();
+            const m = findMessage(el.dataset.id);
+            if (m && window.diaryChatTools) window.diaryChatTools.aiTranslate(Rich.toText(m.body || ''));
+        },
+        'chat-ai': el => {
+            const friend = s.friends.find(f => f.id === s.activeFriend);
+            const tools = window.diaryChatTools;
+            if (!friend || !tools) return;
+            const thread = s.threads[friend.id] || [];
+            const unread = (s.unreadMark && s.unreadMark.friendId === friend.id && s.unreadMark.count) || 0;
+            app.openPopover(el, [
+                { label: 'Summarise this chat', icon: 'i-list', onClick: () => tools.aiSummarise(dmConv(friend), thread) },
+                ...(unread ? [{ label: `Summarise the ${unread} unread`, icon: 'i-list', onClick: () => tools.aiSummarise(dmConv(friend), thread.slice(-Math.max(unread, 1) - 4), { unreadOnly: true }) }] : []),
+                { label: 'Suggest replies', icon: 'i-chat', onClick: () => tools.aiReplies(dmConv(friend), thread, text => {
+                    const input = $('chat-input');
+                    if (!input) return;
+                    input.innerHTML = Rich.textToHTML(text);
+                    saveDraft();
+                    input.focus();
+                    Rich.placeCaretAtEnd(input);
+                }) }
+            ]);
+        },
+        'contact-open': el => window.diaryProfile && window.diaryProfile.open(el.dataset.id),
         'msg-retry': el => {
             const m = findMessage(el.dataset.id);
             if (m) sendQueued(m);
@@ -4662,6 +4820,11 @@ document.addEventListener('DOMContentLoaded', () => {
             { label: 'Voice note', icon: 'i-mic', onClick: () => startVoice(0, true) },
             { label: 'Drawing', icon: 'i-draw', onClick: drawForChat },
             ...(window.LiveLocation && window.LiveLocation.supported ? [{ label: 'Live location', icon: 'i-pin', onClick: shareLocationInChat }] : []),
+            { label: 'Contact card', icon: 'i-contact', onClick: () => pickContact(el, card => sendAttachmentOnly(s.activeFriend, [card])) },
+            { label: 'Improve my wording ✨', icon: 'i-sparkle', onClick: () => {
+                const input = $('chat-input');
+                if (window.diaryChatTools && input) window.diaryChatTools.aiGrammar(Rich.toText(input.innerHTML), text => { input.innerHTML = Rich.textToHTML(text); saveDraft(); Rich.placeCaretAtEnd(input); });
+            } },
             { label: s.showFormat ? 'Hide text formatting' : 'Text formatting', icon: 'i-edit', onClick: () => {
                 s.showFormat = !s.showFormat;
                 $('chat-toolbar').hidden = !s.showFormat;

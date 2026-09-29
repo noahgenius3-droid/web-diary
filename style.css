@@ -11677,3 +11677,142 @@ button.ticks.failed { padding: 0; border: 0; background: #fee2e2; color: #dc2626
 .gc-mentions small { font-size: 0.74rem; color: var(--text-muted); }
 .mention-all { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: #f59e0b; color: #fff; font-weight: 800; }
 .ct-card .search.ct-q { order: 0; width: auto; }
+
+/* ==========================================================================
+   Phase 3: safety, moderation, calls history/hold/recording, status, security, group info
+   ========================================================================== */
+.suspended-bar { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 12px; padding: 10px 14px; border-radius: 14px; background: color-mix(in srgb, #dc2626 12%, var(--surface)); border: 1px solid color-mix(in srgb, #dc2626 40%, var(--border)); font-size: 0.86rem; line-height: 1.4; }
+.suspended-bar .i { flex: none; width: 18px; height: 18px; color: #dc2626; margin-top: 1px; }
+
+/* Blocked chat */
+.chat-blocked { display: flex; align-items: center; gap: 10px; margin: 8px 12px; padding: 10px 14px; border-radius: 14px; background: var(--input); font-size: 0.86rem; }
+.chat-blocked .i { width: 18px; height: 18px; color: #dc2626; flex: none; }
+.chat-blocked span { flex: 1; }
+.composer.is-blocked { display: none; }
+
+/* Report sheet */
+.report-reasons { display: grid; gap: 4px; margin: 0; padding: 0; border: 0; }
+.report-reason { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 12px; cursor: pointer; }
+.report-reason:has(input:checked) { background: var(--accent-soft); }
+.report-reason input, .report-block input { width: 18px; height: 18px; accent-color: var(--accent); }
+.report-block { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+
+/* Profile sheet: safety links, custom status */
+.ps-safety { display: flex; gap: 16px; margin-top: 12px; }
+.ps-safety .link-btn { display: inline-flex; align-items: center; gap: 5px; color: var(--text-muted); font-size: 0.82rem; }
+.ps-safety .i { width: 14px; height: 14px; }
+.ps-custom { margin: 2px 0 0; font-size: 0.85rem; font-weight: 600; }
+.ps-note { margin: 8px 0 0; padding: 8px 12px; border-radius: 12px; background: var(--input); font-size: 0.8rem; color: var(--text-muted); }
+
+/* Contact cards */
+.contact-card { display: flex; align-items: center; gap: 10px; min-width: 220px; padding: 8px 10px; border-radius: 14px; background: color-mix(in srgb, var(--surface) 70%, transparent); border: 1px solid var(--border); color: var(--text); }
+.contact-text { flex: 1; min-width: 0; display: grid; line-height: 1.25; }
+.contact-text small { font-size: 0.76rem; color: var(--text-muted); }
+.msg.out .contact-card { background: rgba(255, 255, 255, 0.15); border-color: rgba(255, 255, 255, 0.25); color: #fff; }
+.msg.out .contact-text small { color: rgba(255, 255, 255, 0.8); }
+
+/* AI sheet */
+.ai-badge { padding: 2px 8px; border-radius: 999px; background: linear-gradient(135deg, #7c3aed, #db2777); color: #fff; font-size: 0.72rem; font-weight: 800; }
+.ct-ai-out { min-height: 60px; }
+.ct-ai-text { margin: 0; white-space: pre-wrap; line-height: 1.5; }
+.ct-ai-chips { display: grid; gap: 8px; }
+.ct-ai-chips .chip { justify-content: flex-start; min-height: 42px; padding: 8px 14px; text-align: left; white-space: normal; line-height: 1.35; }
+
+/* Calls: held call, recording, history */
+.call-held, .call-rec-banner { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 8px 12px; border-radius: 12px; font-size: 0.82rem; font-weight: 700; }
+.call-held { background: rgba(251, 191, 36, 0.18); color: #fde68a; }
+.call-held span { flex: 1; }
+.call-held .chip { background: rgba(255, 255, 255, 0.14); color: #fff; border-color: transparent; }
+.call-held .chip.danger { background: #b91c1c; }
+.call-rec-banner { background: rgba(239, 68, 68, 0.2); color: #fecaca; }
+.call-rec-banner .i, .call-held .i { width: 16px; height: 16px; flex: none; }
+.call-rec-banner .i { color: #ef4444; animation: rec-blink 1.4s ease-in-out infinite; }
+@keyframes rec-blink { 50% { opacity: 0.35; } }
+.incoming-waiting { margin-top: 4px; padding: 3px 10px; border-radius: 999px; background: rgba(251, 191, 36, 0.2); color: #fde68a; opacity: 1 !important; }
+.round-btn.hold { background: #f59e0b; }
+.call-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.call-row.missed .call-row-text strong, .call-row.missed .call-row-text small { color: #dc2626; }
+.call-row-text { flex: 1; min-width: 0; display: grid; line-height: 1.3; }
+.call-row-text small { display: flex; align-items: center; gap: 4px; font-size: 0.78rem; color: var(--text-muted); }
+.call-row-text small .dir { width: 12px; height: 12px; }
+.call-row-text time { font-size: 0.72rem; color: var(--text-faint, var(--text-muted)); }
+.call-row-group { display: grid; place-items: center; flex: none; width: 44px; height: 44px; border-radius: 50%; background: var(--input); color: var(--text-muted); }
+.call-row-group.rec { color: #ef4444; }
+.call-row .convo-call.danger { color: #dc2626; }
+.call-rec-label { padding: 0 12px; }
+.rec-player { display: block; width: calc(100% - 24px); margin: 6px 12px 10px; border-radius: 12px; }
+video.rec-player { max-height: 240px; background: #000; }
+
+/* Settings: status, lists, devices */
+.st-status { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.st-status .chip.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
+.st-row.st-col { flex-wrap: wrap; }
+.st-list { flex-basis: 100%; display: grid; gap: 6px; margin: 8px 0 4px 44px; }
+.st-person { display: flex; align-items: center; gap: 10px; }
+.st-person > span:not(.st-dev-ic) { flex: 1; min-width: 0; display: grid; line-height: 1.3; font-weight: 600; }
+.st-person small { font-size: 0.76rem; font-weight: 500; color: var(--text-muted); }
+.st-dev-ic { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: var(--input); color: var(--text-muted); }
+.st-dev-ic .i { width: 16px; height: 16px; }
+.st-this { margin-left: 4px; padding: 1px 6px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 0.7rem; }
+.st-row.st-col > .st-btn.danger { margin: 4px 0 0 44px; }
+.st-two { display: inline-flex; gap: 6px; }
+.mfa-qr { display: grid; place-items: center; padding: 10px; border-radius: 14px; background: #fff; }
+.mfa-qr img { width: 190px; height: 190px; }
+.mfa-key { padding: 2px 6px; border-radius: 6px; background: var(--input); font-size: 0.82rem; word-break: break-all; }
+.bk-msg { padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.bk-msg small { font-size: 0.72rem; color: var(--text-muted); }
+.bk-msg p { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Group info */
+.gc-title[role="button"] { cursor: pointer; border-radius: 10px; }
+@media (hover: hover) and (pointer: fine) { .gc-title[role="button"]:hover strong { text-decoration: underline; } }
+.gi { gap: 8px; }
+.gi-top { display: grid; justify-items: center; gap: 4px; text-align: center; padding: 4px 0 6px; }
+.gi-emoji { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 18px; background: var(--input); font-size: 2rem; }
+.gi-top h3 { margin: 4px 0 0; font-size: 1.2rem; }
+.gi-desc { margin: 0; color: var(--text-muted); font-size: 0.9rem; }
+.gi-quick { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+.gi-list { display: grid; gap: 2px; }
+.gi-person { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; border: 0; border-radius: 12px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.gi-person:hover { background: var(--input); }
+.gi-person > span:not(.gc-role) { flex: 1; min-width: 0; display: grid; line-height: 1.3; }
+.gi-person small { font-size: 0.76rem; color: var(--text-muted); }
+.gi-pinned { display: flex; gap: 8px; align-items: flex-start; width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--input); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.gi-pinned .i { width: 16px; height: 16px; flex: none; margin-top: 2px; color: var(--accent); }
+.gi-report { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; }
+.gi-report p { margin: 0; font-size: 0.86rem; }
+.gi-report small { font-size: 0.74rem; color: var(--text-muted); text-transform: capitalize; }
+.gi-report-actions { display: flex; gap: 6px; }
+
+/* Moderation dashboard */
+.adm { display: grid; gap: 16px; padding-bottom: 30px; }
+.adm-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.adm-head h2 { margin: 0; }
+.adm-head p { margin: 2px 0 0; }
+.adm-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.adm-stat { display: grid; gap: 2px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
+.adm-stat strong { font-size: 1.4rem; font-variant-numeric: tabular-nums; }
+.adm-stat span { font-size: 0.78rem; color: var(--text-muted); }
+.adm-body { display: grid; gap: 10px; }
+.adm-report { display: grid; gap: 6px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
+.adm-report header { display: flex; align-items: center; gap: 8px; }
+.adm-report header strong { flex: 1; }
+.adm-report time { font-size: 0.76rem; color: var(--text-muted); }
+.adm-kind { padding: 2px 8px; border-radius: 999px; background: var(--input); font-size: 0.72rem; font-weight: 700; }
+.adm-meta { margin: 0; font-size: 0.82rem; color: var(--text-muted); }
+.adm-report blockquote { margin: 0; padding: 8px 12px; border-left: 3px solid var(--border-strong, var(--border)); background: var(--input); border-radius: 0 10px 10px 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.88rem; }
+.adm-details { margin: 0; font-size: 0.86rem; font-style: italic; }
+.adm-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.adm-actions .chip.danger { color: #dc2626; }
+.adm-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 14px; }
+.adm-row > span { flex: 1; display: grid; }
+.adm-row small { font-size: 0.76rem; color: var(--text-muted); }
+.adm-audit { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.adm-audit li { display: grid; grid-template-columns: 170px 1fr; gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 0.86rem; }
+.adm-audit time { color: var(--text-muted); font-size: 0.78rem; }
+@media (max-width: 520px) { .adm-audit li { grid-template-columns: 1fr; gap: 2px; } }
+
+/* Inbox rows: the ⋯ menu sits beside the call button; call history buttons are plain inline buttons */
+.convo-wrap > .convo { padding-right: 96px; }
+.convo-wrap > .convo-more { position: absolute; top: 50%; right: 52px; margin-top: -18px; }
+.call-row .convo-call { position: static; margin: 0; flex: none; opacity: 1; }

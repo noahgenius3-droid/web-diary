@@ -32,6 +32,8 @@ function message(type: string, name: string, d: any = {}) {
       return { title: `${name} mentioned you`, body: `${d.community_name ? `In ${d.community_name}: ` : ''}${d.snippet || ''}`.slice(0, 180), url: `/#/community/${d.community_id}/m/${d.message_id}`, tag: `gc-${d.community_id}` };
     case "reply":
       return { title: `${name} replied to you`, body: `${d.community_name ? `In ${d.community_name}: ` : ''}${d.snippet || ''}`.slice(0, 180), url: `/#/community/${d.community_id}/m/${d.message_id}`, tag: `gc-${d.community_id}` };
+    case "new_login":
+      return { title: "New sign-in to Cordial", body: `Your account was opened on ${d.label || 'a new device'}. Not you? Change your password.`, url: "/#/settings", tag: "new-login" };
     case "live_started":
       return { title: `🔴 ${name} is live`, body: "Tap to watch now", url: "/#/explore", tag: "live" };
     default:

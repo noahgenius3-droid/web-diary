@@ -357,5 +357,77 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (e) { /* sound is optional */ }
     }
 
-    window.diaryChatTools = { openSearch, openGallery, openForward, whoReacted, playSound, SOUNDS: Object.keys(SOUNDS), download };
+    // ---------- AI helpers (optional, always labelled) ----------
+    // task: chat_summary | chat_replies | translate | grammar. The conversation text goes to Cordial's AI
+    // function only when you ask; nothing is sent otherwise.
+    function transcript(conv, messages, limit = 120) {
+        return messages.filter(m => !m.deleted_at).slice(-limit).map(m => {
+            const who = conv.nameOf(authorOf(conv, m));
+            const t = textOf(conv, m) || ((m.attachments || [])[0] ? `[${(m.attachments[0].kind || 'attachment')}]` : '');
+            return `${who}: ${t}`;
+        }).join('\n').slice(-18000);
+    }
+
+    async function aiSheet(title, payload, { chips = false, onPick = null, onUse = null } = {}) {
+        const d = sheet('ai');
+        d.innerHTML = `
+            <div class="ct-card ct-ai">
+                ${head(title, '<span class="ai-badge" title="Written by AI — it can be wrong">✨ AI</span>')}
+                <div class="ct-ai-out" id="ct-ai-out" aria-live="polite"><p class="muted small">Thinking…</p></div>
+                <p class="muted small">AI can make mistakes — check anything important.</p>
+                ${onUse ? '<footer class="ct-foot"><button type="button" class="primary-btn block" id="ct-ai-use" disabled>Use this</button></footer>' : ''}
+            </div>`;
+        if (!d.open) d.showModal();
+        const out = d.querySelector('#ct-ai-out');
+        if (!window.diaryAI) { out.innerHTML = '<p>The AI assistant isn’t available.</p>'; return; }
+        let final = '';
+        try {
+            final = await window.diaryAI.stream(payload, text => {
+                if (chips) return;
+                out.innerHTML = `<p class="ct-ai-text">${esc(text)}</p>`;
+            });
+        } catch (e) {
+            out.innerHTML = `<p>${esc(e.message || 'The assistant isn’t available right now.')}</p>`;
+            return;
+        }
+        if (chips) {
+            const list = (window.diaryAI.listOf ? window.diaryAI.listOf(window.diaryAI.tagged(final, 'replies') || final) : final.split('\n'))
+                .map(x => x.replace(/^[-*\d.\s]+/, '').trim()).filter(Boolean).slice(0, 4);
+            out.innerHTML = list.length ? `<div class="ct-ai-chips">${list.map(r => `<button type="button" class="chip" data-reply="${esc(r)}">${esc(r)}</button>`).join('')}</div>` : `<p class="ct-ai-text">${esc(final)}</p>`;
+            out.onclick = e => {
+                const b = e.target.closest('[data-reply]');
+                if (!b) return;
+                d.close();
+                if (onPick) onPick(b.dataset.reply);
+            };
+        }
+        const use = d.querySelector('#ct-ai-use');
+        if (use) {
+            use.disabled = !final.trim();
+            use.onclick = () => { d.close(); onUse(final.trim()); };
+        }
+    }
+
+    function aiSummarise(conv, messages, { unreadOnly = false } = {}) {
+        const text = transcript(conv, messages);
+        if (!text.trim()) return app.showToast('Nothing to summarise yet');
+        aiSheet(unreadOnly ? 'Unread messages, summarised' : 'This chat, summarised', { mode: 'assist', task: 'chat_summary', text, title: unreadOnly ? 'Only the unread messages' : '' });
+    }
+    function aiReplies(conv, messages, onPick) {
+        const text = transcript(conv, messages, 30);
+        if (!text.trim()) return app.showToast('Say hello first — there’s nothing to reply to yet');
+        aiSheet('Suggested replies', { mode: 'assist', task: 'chat_replies', text, title: `I am ${conv.nameOf(s.profile.id) === 'You' ? s.profile.display_name : conv.nameOf(s.profile.id)}` }, { chips: true, onPick });
+    }
+    function aiTranslate(text) {
+        const lang = (navigator.language || 'en').split('-')[0];
+        let name = lang;
+        try { name = new Intl.DisplayNames([navigator.language || 'en'], { type: 'language' }).of(lang) || lang; } catch (e) {}
+        aiSheet(`Translation (${name})`, { mode: 'assist', task: 'translate', text, title: `Translate into ${name}` });
+    }
+    function aiGrammar(text, onUse) {
+        if (!text.trim()) return app.showToast('Write your message first');
+        aiSheet('Improved wording', { mode: 'assist', task: 'grammar', text }, { onUse });
+    }
+
+    window.diaryChatTools = { openSearch, openGallery, openForward, whoReacted, playSound, SOUNDS: Object.keys(SOUNDS), download, aiSummarise, aiReplies, aiTranslate, aiGrammar };
 });

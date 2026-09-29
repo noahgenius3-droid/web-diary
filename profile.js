@@ -34,7 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
         d.innerHTML = body(p || { id, display_name: 'Loading…', username: '' }, !p);
         if (!d.open) d.showModal();
         const [{ data }] = await Promise.all([
-            client.from('diary_profiles').select('id, username, display_name, avatar_path, created_at').eq('id', id).maybeSingle(),
+            client.rpc('diary_profile_card', { p_id: id }).maybeSingle(),
             I.refreshPresence ? I.refreshPresence([id]) : null
         ]);
         if (d.dataset.id !== id) return;
@@ -57,10 +57,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const rel = relationOf(p.id);
         const status = I.presenceText ? I.presenceText(p.id) : '';
         const online = s.online && s.online.has(p.id);
+        const blocked = window.diarySafety && window.diarySafety.isBlocked(p.id);
+        const st = I.statusOf ? I.statusOf(p.id) : null;
         const since = p.created_at ? new Date(p.created_at).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) : '';
         const btn = (action, icon, label, cls = '') => `<button type="button" class="ps-action ${cls}" data-ps="${action}"><svg class="i"><use href="#${icon}"/></svg><span>${label}</span></button>`;
         let actions = '';
-        if (!loading && !missing) {
+        if (!loading && !missing && blocked) {
+            actions = btn('unblock', 'i-block', 'Unblock', 'primary');
+        } else if (!loading && !missing) {
             if (rel === 'friend') {
                 actions = btn('message', 'i-chat', 'Message', 'primary')
                     + (window.diaryCalls ? btn('call', 'i-phone', 'Voice call') + btn('video', 'i-video', 'Video call') : '');
@@ -83,13 +87,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 <h2 id="ps-name">${esc(p.display_name || 'Someone')}</h2>
                 ${p.username ? `<p class="ps-handle">@${esc(p.username)}</p>` : ''}
                 <p class="ps-status${online ? ' on' : ''}" data-status="${esc(p.id)}" data-away="">${esc(status)}</p>
+                ${st ? `<p class="ps-custom">${esc(st.label)}${st.text ? ` · ${esc(st.text)}` : ''}</p>` : ''}
                 ${missing ? '<p class="muted">This account no longer exists.</p>' : ''}
+                ${blocked ? '<p class="ps-note">You blocked this person. They can’t message or call you.</p>' : p.limited ? '<p class="ps-note">This profile is only fully visible to their friends.</p>' : ''}
                 <div class="ps-facts">
                     ${rel === 'friend' ? '<span class="ps-fact"><svg class="i"><use href="#i-users"/></svg>Friends</span>' : ''}
                     ${s.following && s.following.has(p.id) ? '<span class="ps-fact"><svg class="i"><use href="#i-user"/></svg>You follow them</span>' : ''}
                     ${since ? `<span class="ps-fact"><svg class="i"><use href="#i-calendar"/></svg>On Cordial since ${esc(since)}</span>` : ''}
                 </div>
                 <div class="ps-actions">${loading ? '<span class="lv-spinner" aria-hidden="true"></span>' : actions}</div>
+                ${!loading && !missing && window.diarySafety ? `<div class="ps-safety">${blocked ? '' : '<button type="button" class="link-btn" data-ps="block"><svg class="i"><use href="#i-block"/></svg>Block</button>'}<button type="button" class="link-btn" data-ps="report"><svg class="i"><use href="#i-flag"/></svg>Report</button></div>` : ''}
             </div>`;
     }
 
@@ -118,6 +125,13 @@ document.addEventListener('DOMContentLoaded', () => {
             el.disabled = true;
             await I.respond(req.friendshipId, true);
             dlg.innerHTML = body(p, false);
+        } else if (what === 'block') {
+            if (await window.diarySafety.block(p)) dlg.innerHTML = body(p, false);
+        } else if (what === 'unblock') {
+            if (await window.diarySafety.unblock(p)) dlg.innerHTML = body(p, false);
+        } else if (what === 'report') {
+            dlg.close();
+            window.diarySafety.report('user', id, { who: p.display_name, offerBlock: window.diarySafety.isBlocked(id) ? null : p });
         } else if (what === 'follow') {
             if (I.toggleFollow) await I.toggleFollow(id, (p.display_name || '').split(' ')[0]);
             dlg.innerHTML = body(p, false);

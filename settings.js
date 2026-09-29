@@ -31,9 +31,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const P = { loaded: false, settings: { show_online: 'everyone', show_last_seen: 'everyone', read_receipts: true } };
     async function loadPresencePrivacy() {
         P.loaded = true;
-        const { data } = await I.client.from('diary_presence').select('show_online, show_last_seen, read_receipts').maybeSingle();
+        const { data } = await I.client.from('diary_presence').select('show_online, show_last_seen, read_receipts, status, status_text, status_until, allow_calls, photo_visibility, profile_visibility').maybeSingle();
         if (data) {
+            if (data.status_until && Date.parse(data.status_until) < Date.now()) Object.assign(data, { status: null, status_text: null });
             P.settings = data;
+            if (I.state) I.state.myStatus = data.status;
             if (app.state.view === 'settings') app.requestRender ? app.requestRender('settings') : app.render();
         }
     }
@@ -48,6 +50,207 @@ document.addEventListener('DOMContentLoaded', () => {
             return app.showToast('Couldn’t save that — check your connection');
         }
         app.showToast(value === 'nobody' ? 'Hidden from everyone' : value === 'friends' ? 'Only friends can see it' : 'Everyone can see it');
+    }
+
+    // ---------- Status, more privacy, security, chat backup ----------
+    const STATUSES = [['available', '🟢 Available'], ['busy', '⛔ Busy'], ['meeting', '📅 In a meeting'], ['dnd', '🔕 Do not disturb'], ['away', '🌙 Away']];
+    const SEC = { factors: null, devices: null, blocked: null, loading: false };
+
+    async function loadSecurity() {
+        if (SEC.loading || !I) return;
+        SEC.loading = true;
+        const [factors, devices, blocked] = await Promise.all([
+            I.client.auth.mfa ? I.client.auth.mfa.listFactors().catch(() => ({ data: null })) : { data: null },
+            I.client.from('diary_devices').select('*').order('last_seen', { ascending: false }),
+            window.diarySafety ? window.diarySafety.blockedList() : []
+        ]);
+        SEC.loading = false;
+        SEC.factors = factors && factors.data ? (factors.data.totp || []).filter(f => f.status === 'verified') : [];
+        SEC.devices = devices.data || [];
+        SEC.blocked = blocked || [];
+        if (app.state.view === 'settings') app.requestRender('settings');
+    }
+
+    async function setStatus(status) {
+        let text = null;
+        let until = null;
+        if (status) {
+            const res = await app.ask({ title: STATUSES.find(x => x[0] === status)[1], text: 'Add a short note (optional) — e.g. “Back at 3pm”. It clears itself after 8 hours.', value: P.settings.status === status ? (P.settings.status_text || '') : '', placeholder: 'What are you up to?', ok: 'Set status', allowEmpty: true });
+            if (!res) return;
+            text = (res.value || '').trim().slice(0, 80) || null;
+            until = new Date(Date.now() + 8 * 3600e3).toISOString();
+        }
+        const { error } = await I.client.rpc('diary_set_status', { p_status: status, p_text: text, p_until: until });
+        if (error) return app.showToast('Couldn’t set your status');
+        P.settings = { ...P.settings, status, status_text: text, status_until: until };
+        if (I.state) I.state.myStatus = status;
+        app.showToast(status ? 'Status set' : 'Status cleared');
+        app.render();
+    }
+
+    async function setPrivacyKey(key, value) {
+        const before = P.settings[key];
+        P.settings = { ...P.settings, [key]: value };
+        app.render();
+        const { error } = await I.client.rpc('diary_set_privacy', { p_key: key, p_value: value });
+        if (error) { P.settings = { ...P.settings, [key]: before }; app.render(); return app.showToast('Couldn’t save that'); }
+        app.showToast('Saved');
+    }
+
+    // Two-step verification with an authenticator app (TOTP)
+    async function enrollMfa() {
+        const mfa = I.client.auth.mfa;
+        if (!mfa) return app.showToast('Two-step verification isn’t available here');
+        const { data, error } = await mfa.enroll({ factorType: 'totp', friendlyName: `Cordial ${new Date().toLocaleDateString()}` });
+        if (error || !data) return app.showToast(error ? error.message : 'Couldn’t start two-step verification');
+        const d = mfaDialog();
+        d.innerHTML = `
+            <form class="ct-card" id="mfa-form">
+                <header class="ct-head"><strong>Turn on two-step verification</strong><button type="button" class="icon-btn" data-ct-close aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button></header>
+                <p class="muted small">1. Open an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password…) and scan this code.</p>
+                <div class="mfa-qr"><img src="${esc(data.totp.qr_code)}" alt="QR code for your authenticator app"></div>
+                <p class="muted small">Can’t scan it? Enter this key instead: <code class="mfa-key">${esc(data.totp.secret)}</code></p>
+                <label class="mk-field"><span>2. Type the 6-digit code it shows</span><input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></label>
+                <footer class="ct-foot"><button type="submit" class="primary-btn block">Verify and turn on</button></footer>
+            </form>`;
+        d.dataset.factor = data.id;
+        d.showModal();
+        d.querySelector('#mfa-form').onsubmit = async e => {
+            e.preventDefault();
+            const code = e.currentTarget.code.value.trim();
+            const { error: err } = await mfa.challengeAndVerify({ factorId: data.id, code });
+            if (err) return app.showToast('That code didn’t match — try the newest one');
+            d.dataset.factor = '';
+            d.close();
+            app.showToast('Two-step verification is on');
+            SEC.factors = null;
+            loadSecurity();
+        };
+        d.addEventListener('close', () => {
+            if (d.dataset.factor) mfa.unenroll({ factorId: d.dataset.factor }).catch(() => {}); // abandoned half-way
+        }, { once: true });
+    }
+
+    async function disableMfa() {
+        const f = (SEC.factors || [])[0];
+        if (!f) return;
+        const ok = await app.ask({ title: 'Turn off two-step verification?', text: 'Signing in will only need your password again.', ok: 'Turn off', danger: true });
+        if (!ok) return;
+        const { error } = await I.client.auth.mfa.unenroll({ factorId: f.id });
+        if (error) return app.showToast(error.message || 'Couldn’t turn it off');
+        app.showToast('Two-step verification is off');
+        SEC.factors = null;
+        loadSecurity();
+    }
+
+    let mfaDlg = null;
+    function mfaDialog() {
+        if (!mfaDlg) {
+            mfaDlg = document.createElement('dialog');
+            mfaDlg.className = 'ct-sheet';
+            document.body.append(mfaDlg);
+            mfaDlg.addEventListener('click', e => { if (e.target === mfaDlg || e.target.closest('[data-ct-close]')) mfaDlg.close(); });
+        }
+        return mfaDlg;
+    }
+
+    // ---------- Encrypted chat backup ----------
+    // Your chats already live safely in your account (they come back on any device you sign in on).
+    // This makes an extra copy you keep yourself, locked with a passphrase only you know.
+    const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
+    const unb64 = str => Uint8Array.from(atob(str), c => c.charCodeAt(0));
+    async function keyFrom(pass, salt) {
+        const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
+        return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 250000, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    }
+
+    async function backupChats() {
+        const res = await app.ask({ title: 'Back up your chats', text: 'Choose a passphrase (at least 8 characters). You’ll need it to open the backup — Cordial can’t recover it for you.', value: '', placeholder: 'Passphrase', ok: 'Continue', inputType: 'password' });
+        if (!res) return;
+        const pass = res.value || '';
+        if (pass.length < 8) return app.showToast('Use at least 8 characters');
+        const again = await app.ask({ title: 'Type it again', text: 'Just to be sure.', value: '', placeholder: 'Passphrase', ok: 'Make backup', inputType: 'password' });
+        if (!again || again.value !== pass) return app.showToast('Those didn’t match — try again');
+        app.showToast('Collecting your chats…');
+        try {
+            const me = I.state.profile.id;
+            const dms = [];
+            for (let from = 0; from < 20000; from += 1000) {
+                const { data, error } = await I.client.from('diary_messages').select('id, sender, recipient, body, attachments, created_at, edited_at')
+                    .is('deleted_at', null).order('id').range(from, from + 999);
+                if (error) throw error;
+                dms.push(...data);
+                if (data.length < 1000) break;
+            }
+            const groups = window.diaryCommunities && window.diaryCommunities.myGroups ? await window.diaryCommunities.myGroups() : [];
+            const gcs = {};
+            for (const g of groups) {
+                const { data } = await I.client.from('diary_community_messages').select('id, author, body, attachments, created_at, edited_at')
+                    .eq('community_id', g.id).is('deleted_at', null).order('id').limit(5000);
+                gcs[g.id] = { name: g.name, emoji: g.emoji, messages: data || [] };
+            }
+            const people = Object.fromEntries(I.state.friends.map(f => [f.id, { name: f.display_name, username: f.username }]));
+            people[me] = { name: I.state.profile.display_name, username: I.state.profile.username };
+            const plain = new TextEncoder().encode(JSON.stringify({ app: 'Cordial', version: 1, exported_at: new Date().toISOString(), me, people, dms, groups: gcs }));
+            const salt = crypto.getRandomValues(new Uint8Array(16));
+            const iv = crypto.getRandomValues(new Uint8Array(12));
+            const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await keyFrom(pass, salt), plain);
+            const file = new Blob([JSON.stringify({ cordialBackup: 1, salt: b64(salt), iv: b64(iv), data: b64(data) })], { type: 'application/json' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(file);
+            a.download = `cordial-chats-${new Date().toISOString().slice(0, 10)}.cordialbackup`;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+            app.showToast(`Backed up ${dms.length} messages and ${groups.length} group ${groups.length === 1 ? 'chat' : 'chats'}`);
+        } catch (e) {
+            app.showToast('Couldn’t make the backup — check your connection');
+        }
+    }
+
+    async function openBackup() {
+        const [file] = await Media.pickFiles('.cordialbackup,application/json', false);
+        if (!file) return;
+        const res = await app.ask({ title: 'Open chat backup', text: 'Enter the passphrase you chose for this backup.', value: '', placeholder: 'Passphrase', ok: 'Open', inputType: 'password' });
+        if (!res) return;
+        try {
+            const wrap = JSON.parse(await file.text());
+            const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(wrap.iv) }, await keyFrom(res.value || '', unb64(wrap.salt)), unb64(wrap.data));
+            showBackup(JSON.parse(new TextDecoder().decode(plain)));
+        } catch (e) {
+            app.showToast('Wrong passphrase, or that isn’t a Cordial backup');
+        }
+    }
+
+    function showBackup(b) {
+        const d = mfaDialog();
+        const name = id => (b.people[id] ? b.people[id].name : 'Someone');
+        const convos = {};
+        b.dms.forEach(m => {
+            const other = m.sender === b.me ? m.recipient : m.sender;
+            (convos[other] = convos[other] || []).push(m);
+        });
+        const list = [
+            ...Object.entries(convos).map(([id, msgs]) => ({ key: `dm:${id}`, title: name(id), msgs, who: m => name(m.sender) })),
+            ...Object.entries(b.groups || {}).map(([id, g]) => ({ key: `gc:${id}`, title: `${g.emoji || '💬'} ${g.name}`, msgs: g.messages, who: m => name(m.author) }))
+        ];
+        const render = key => {
+            const c = list.find(x => x.key === key);
+            d.innerHTML = `
+                <div class="ct-card">
+                    <header class="ct-head">${c ? '<button type="button" class="icon-btn" data-bk="" aria-label="Back"><svg class="i"><use href="#i-back"/></svg></button>' : ''}<strong>${c ? esc(c.title) : `Backup from ${esc(new Date(b.exported_at).toLocaleString())}`}</strong><button type="button" class="icon-btn" data-ct-close aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button></header>
+                    <div class="ct-results">${c
+                        ? c.msgs.map(m => `<div class="bk-msg"><small>${esc(c.who(m))} · ${esc(new Date(m.created_at).toLocaleString())}</small><p>${esc(Rich.toText(m.body || '') || ((m.attachments || [])[0] ? `[${m.attachments[0].kind}]` : ''))}</p></div>`).join('')
+                        : list.map(x => `<button type="button" class="ct-hit" data-bk="${esc(x.key)}"><span class="ct-hit-top"><strong>${esc(x.title)}</strong><time>${x.msgs.length} messages</time></span></button>`).join('') || '<p class="muted small">This backup is empty.</p>'}</div>
+                    <p class="muted small">A read-only copy from your backup file. Your live chats are unchanged.</p>
+                </div>`;
+        };
+        d.onclick = e => {
+            if (e.target === d || e.target.closest('[data-ct-close]')) return d.close();
+            const b2 = e.target.closest('[data-bk]');
+            if (b2) render(b2.dataset.bk);
+        };
+        render('');
+        if (!d.open) d.showModal();
     }
 
     async function loadFollowLists() {
@@ -112,6 +315,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const presence = P.settings;
         if (signedIn() && !P.loaded) loadPresencePrivacy();
+        if (signedIn() && SEC.devices === null) loadSecurity();
+        const WHO2 = [['everyone', 'Everyone'], ['friends', 'Friends']];
         const seg = (name, options, current) => `
             <div class="st-seg" role="radiogroup" aria-label="${name}">
                 ${options.map(([v, l]) => `<button type="button" role="radio" aria-checked="${current === v}" data-action="st-set" data-setting="${name}" data-value="${v}">${l}</button>`).join('')}
@@ -148,6 +353,13 @@ document.addEventListener('DOMContentLoaded', () => {
                         <button class="primary-btn" data-action="sign-in">Sign in or create an account</button>`}
                 </section>
 
+                ${signedIn() ? `<section class="st-card">
+                    <h3>Your status</h3>
+                    <div class="st-status">${STATUSES.map(([k, l]) => `<button type="button" class="chip${presence.status === k ? ' on' : ''}" data-action="st-status" data-value="${k}" aria-pressed="${presence.status === k}">${l}</button>`).join('')}
+                        ${presence.status ? '<button type="button" class="chip" data-action="st-status" data-value="">Clear</button>' : ''}</div>
+                    <p class="muted small">${presence.status ? `${esc((STATUSES.find(x => x[0] === presence.status) || ['', ''])[1])}${presence.status_text ? ` · “${esc(presence.status_text)}”` : ''}${presence.status_until ? ` · until ${esc(new Date(presence.status_until).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }))}` : ''}${presence.status === 'dnd' ? ' — calls and messages arrive quietly' : ''}` : 'Let friends know if you’re busy. Do not disturb silences message sounds and incoming calls.'}</p>
+                </section>` : ''}
+
                 <section class="st-card">
                     <h3>Appearance</h3>
                     ${row('i-moon', 'Theme', 'Follow your phone, or choose one', seg('theme', [['system', 'Auto'], ['light', 'Light'], ['dark', 'Dark']], theme))}
@@ -182,6 +394,22 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${signedIn() ? row('i-user', 'Who sees when you’re online', 'The green dot and “Active now”', seg('presence-online', PRESENCE, presence.show_online)) : ''}
                     ${signedIn() ? row('i-history', 'Who sees your last seen', presence.show_last_seen === 'nobody' ? 'Hidden — and you won’t see other people’s last seen either' : '“Last seen 5 min ago” when you’re away', seg('presence-last', PRESENCE, presence.show_last_seen)) : ''}
                     ${signedIn() ? row('i-checks', 'Read receipts', presence.read_receipts === false ? 'Off — people won’t see when you’ve read their messages, and you won’t see theirs' : 'On — blue ticks when a message has been read', toggle('st-receipts', presence.read_receipts !== false, 'Read receipts')) : ''}
+                    ${signedIn() ? row('i-phone', 'Who can call you', presence.allow_calls === 'nobody' ? 'No one — calls are blocked' : 'Your friends', seg('privacy-calls', [['friends', 'Friends'], ['nobody', 'No one']], presence.allow_calls || 'friends')) : ''}
+                    ${signedIn() ? row('i-image', 'Who sees your profile photo', 'Everyone else sees your initials', seg('privacy-photo', WHO2, presence.photo_visibility || 'everyone')) : ''}
+                    ${signedIn() ? row('i-user', 'Who sees your profile details', 'Like when you joined Cordial', seg('privacy-profile', WHO2, presence.profile_visibility || 'everyone')) : ''}
+                    ${signedIn() ? row('i-bell', 'Message previews in alerts', read('diaryPreviews', '1') === '1' ? 'Alerts show what the message says' : 'Alerts only say who it’s from', toggle('st-previews', read('diaryPreviews', '1') === '1', 'Message previews')) : ''}
+                    ${signedIn() ? `<div class="st-row st-col">
+                        <span class="st-ic"><svg class="i"><use href="#i-block"/></svg></span>
+                        <span class="st-text"><strong>Blocked people</strong><small>${SEC.blocked === null ? 'Loading…' : SEC.blocked.length ? `${SEC.blocked.length} blocked` : 'No one — block someone from their profile or chat'}</small></span>
+                        ${(SEC.blocked || []).length ? `<div class="st-list">${SEC.blocked.map(p => `<div class="st-person">${I.avatar(p, 'sm')}<span>${esc(p.display_name)}<small>@${esc(p.username)}</small></span><button type="button" class="st-btn" data-action="st-unblock" data-id="${esc(p.id)}">Unblock</button></div>`).join('')}</div>` : ''}
+                    </div>` : ''}
+                    ${signedIn() ? row('i-shield', 'Two-step verification', (SEC.factors || []).length ? 'On — signing in needs a code from your authenticator app' : 'Off — add a code from an authenticator app when you sign in', (SEC.factors || []).length ? go('st-mfa-off', 'Turn off') : go('st-mfa-on', 'Turn on')) : ''}
+                    ${signedIn() ? `<div class="st-row st-col">
+                        <span class="st-ic"><svg class="i"><use href="#i-grid"/></svg></span>
+                        <span class="st-text"><strong>Your devices</strong><small>Where your account is signed in. You get an alert when a new one signs in.</small></span>
+                        <div class="st-list">${(SEC.devices || []).map(d => `<div class="st-person"><span class="st-dev-ic"><svg class="i"><use href="#i-grid"/></svg></span><span>${esc(d.label || 'A device')}${I.deviceId && d.device_id === I.deviceId() ? ' <b class="st-this">This device</b>' : ''}<small>Last active ${esc(I.timeAgo(d.last_seen))} · first seen ${esc(new Date(d.first_seen).toLocaleDateString())}</small></span>${I.deviceId && d.device_id === I.deviceId() ? '' : `<button type="button" class="st-btn" data-action="st-forget-device" data-id="${esc(d.id)}">Remove</button>`}</div>`).join('') || '<p class="muted small">Loading…</p>'}</div>
+                        <button type="button" class="st-btn danger" data-action="st-signout-others">Sign out of all other devices</button>
+                    </div>` : ''}
                     ${signedIn() ? row('i-lock', 'Password', 'Change the password you sign in with', go('st-password', 'Change')) : ''}
                     ${signedIn() ? row('i-logout', 'Sign out', 'Your notes stay on this device', go('st-signout', 'Sign out')) : ''}
                 </section>
@@ -192,6 +420,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         ? row('i-refresh', 'Backup', `<span id="st-backup-sub">${esc(backupText())}</span>`, go('st-backup', 'Back up now'))
                         : row('i-lock', 'Back up your notes', 'Sign in and your notes are saved to your account, so they come back on any device', go('sign-in', 'Sign in'))) : ''}
                     ${row('i-download', 'Export your notes', 'Download everything as a file', go('st-export', 'Export'))}
+                    ${signedIn() ? row('i-lock', 'Chat backup', 'An extra, passphrase-locked copy of your chats (they’re already kept in your account)', `<span class="st-two">${go('st-chat-backup', 'Back up')}${go('st-chat-open', 'Open')}</span>`) : ''}
                     ${row('i-archive', 'Storage', `<span id="st-storage">${esc(storageText || 'Checking…')}</span>`, '')}
                     ${row('i-refresh', 'Reload the app', 'Get the latest version of Cordial', go('st-reload', 'Reload'))}
                     ${row('i-trash', 'Clear this device', 'Remove notes, photos and settings stored in this browser', go('st-clear', 'Clear', true))}
@@ -263,6 +492,9 @@ document.addEventListener('DOMContentLoaded', () => {
         'st-set': el => {
             const { setting, value } = el.dataset;
             if (setting === 'presence-online' || setting === 'presence-last') return setPresencePrivacy(setting === 'presence-online' ? 'show_online' : 'show_last_seen', value);
+            if (setting === 'privacy-calls') return setPrivacyKey('allow_calls', value);
+            if (setting === 'privacy-photo') return setPrivacyKey('photo_visibility', value);
+            if (setting === 'privacy-profile') return setPrivacyKey('profile_visibility', value);
             if (setting === 'theme') setTheme(value);
             if (setting === 'accent') setPref('accent', 'diaryAccent', value, 'indigo');
             if (setting === 'text') setPref('text', 'diaryTextSize', value, 'default');
@@ -295,6 +527,32 @@ document.addEventListener('DOMContentLoaded', () => {
         'st-remove-photo': () => I && I.removeAvatar(),
         'st-pin': () => app.setPin().then(() => app.render()),
         'st-reload': () => location.reload(),
+        'st-status': el => setStatus(el.dataset.value || null),
+        'st-unblock': async el => {
+            const p = (SEC.blocked || []).find(x => x.id === el.dataset.id);
+            if (p && window.diarySafety && await window.diarySafety.unblock(p)) { SEC.blocked = SEC.blocked.filter(x => x.id !== p.id); app.render(); }
+        },
+        'st-mfa-on': () => enrollMfa(),
+        'st-mfa-off': () => disableMfa(),
+        'st-forget-device': async el => {
+            const { error } = await I.client.from('diary_devices').delete().eq('id', el.dataset.id);
+            if (error) return app.showToast('Couldn’t remove it');
+            SEC.devices = SEC.devices.filter(d => d.id !== el.dataset.id);
+            app.render();
+        },
+        'st-signout-others': async () => {
+            const ok = await app.ask({ title: 'Sign out everywhere else?', text: 'Every other phone and computer signed in to your account will be signed out. This device stays signed in.', ok: 'Sign out others', danger: true });
+            if (!ok) return;
+            const { error } = await I.client.auth.signOut({ scope: 'others' });
+            if (error) return app.showToast('Couldn’t do that — try again');
+            const mine = I.deviceId ? I.deviceId() : null;
+            await I.client.from('diary_devices').delete().neq('device_id', mine || '');
+            SEC.devices = (SEC.devices || []).filter(d => d.device_id === mine);
+            app.showToast('Signed out of your other devices');
+            app.render();
+        },
+        'st-chat-backup': () => backupChats(),
+        'st-chat-open': () => openBackup(),
         'st-export': () => { app.exportData(); app.showToast('Your notes are downloading'); },
         'st-signout': async () => {
             const ok = await app.ask({ title: 'Sign out?', text: 'Your notes stay on this device.', ok: 'Sign out' });
@@ -346,6 +604,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const a = e.target.dataset && e.target.dataset.action;
         if (a === 'st-motion') {
             setPref('motion', 'diaryMotion', e.target.checked ? 'reduce' : 'full', 'full');
+        } else if (a === 'st-previews') {
+            write('diaryPreviews', e.target.checked ? '1' : '0');
+            app.showToast(e.target.checked ? 'Alerts show message text' : 'Alerts hide message text');
+            app.render();
         } else if (a === 'st-receipts') {
             const on = e.target.checked;
             P.settings = { ...P.settings, read_receipts: on };

@@ -181,7 +181,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <section class="gc" data-cid="${esc(community.id)}">
                 <header class="gc-head">
                     <span class="gc-emoji" aria-hidden="true">${esc(community.emoji || '💬')}</span>
-                    <div class="gc-title">
+                    <div class="gc-title" role="button" tabindex="0" data-action="gc-info" aria-label="Group info">
                         <strong>${esc(community.name)} chat</strong>
                         <small>${members} ${members === 1 ? 'member' : 'members'} · <span id="gc-online"></span></small>
                     </div>
@@ -208,6 +208,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <span class="gc-rec-wave" id="gc-rec-wave" aria-hidden="true"></span>
                         </div>
                         <textarea id="gc-input" rows="1" maxlength="4000" placeholder="Message ${esc(community.name)}…" aria-label="Message" enterkeyhint="send"></textarea>
+                        <button type="button" class="gc-tool" data-action="gc-contact" aria-label="Share a contact"><svg class="i"><use href="#i-contact"/></svg></button>
                         <button type="button" class="gc-tool gc-mic" id="gc-mic" data-action="gc-mic" aria-label="Record a voice note"><svg class="i"><use href="#i-mic"/></svg></button>
                         <button type="submit" class="gc-send" aria-label="Send"><svg class="i"><use href="#i-send"/></svg></button>
                     </div>
@@ -239,6 +240,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const photos = atts.filter(a => a.kind === 'image' && a.path);
         const locations = atts.filter(a => a.kind === 'location' && a.id);
         const voices = atts.filter(a => a.kind === 'audio' && a.path);
+        const contacts = atts.filter(a => a.kind === 'contact' && a.id);
         return `
             <div class="gc-msg${mine ? ' mine' : ''}${grouped ? ' grouped' : ''}${pinned ? ' is-pinned' : ''}${!mine && m.body && s.profile && new RegExp(`@(${s.profile.username}|everyone|all)\\b`, 'i').test(m.body) ? ' mentions-me' : ''}" data-mid="${m.id}">
                 ${!mine ? `<span class="gc-av">${grouped ? '' : `<button type="button" class="gc-who" data-profile="${esc(m.author)}" aria-label="View ${esc(p.display_name)}’s profile">${avatar(p, 'sm')}</button>`}</span>` : ''}
@@ -249,6 +251,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         ${reply ? `<button type="button" class="gc-quote" data-action="gc-goto" data-id="${reply.id}"><strong>${esc(personOf(reply.author).display_name)}</strong><span>${esc(reply.deleted_at ? 'Message deleted' : (reply.body || (reply.attachments || []).length ? (reply.body || '📎 Attachment') : '')).slice(0, 120)}</span></button>` : ''}
                         ${photos.length ? `<div class="gc-photos n${Math.min(photos.length, 4)}">${photos.slice(0, 4).map(ph => `<button type="button" class="gc-photo" data-action="gc-view-photo" data-path="${esc(ph.path)}"><img data-path="${esc(ph.path)}" data-bucket="${BUCKET}" alt=""></button>`).join('')}</div>` : ''}
                         ${voices.map(a => I.voiceHTML(a, BUCKET)).join('')}
+                        ${I.contactCardHTML ? contacts.map(I.contactCardHTML).join('') : ''}
                         ${locations.map(a => window.LiveLocation ? window.LiveLocation.cardHTML(a, { mine, person: p }) : '<p>📍 Live location</p>').join('')}
                         ${m.body ? `<p class="gc-text">${withMentions(I.linkTags ? I.linkTags(esc(m.body)) : esc(m.body))}</p>` : ''}
                         <span class="gc-meta">${I.editedTag ? I.editedTag('gc', m) : ''}${pinned ? '<svg class="i"><use href="#i-pin-note"/></svg>' : ''}${time}</span>
@@ -582,6 +585,102 @@ document.addEventListener('DOMContentLoaded', () => {
         C.showChat(r.communityId);
     });
 
+    // ---------- Group info page ----------
+    // Everything about the group in one place: who's in it and their roles, what's pinned, shared media,
+    // settings, and (for staff) reports from the group and banned members.
+    let infoDlg = null;
+    async function openInfo() {
+        const c = cm();
+        if (!c) return;
+        if (!infoDlg) {
+            infoDlg = document.createElement('dialog');
+            infoDlg.className = 'ct-sheet gc-info-sheet';
+            document.body.append(infoDlg);
+            infoDlg.addEventListener('click', e => {
+                if (e.target === infoDlg || e.target.closest('[data-ct-close]')) return infoDlg.close();
+                const el = e.target.closest('[data-gi]');
+                if (el) infoAction(el.dataset.gi, el);
+            });
+        }
+        const members = C.members();
+        if (!members.length) await C.loadMembers();
+        if (I.refreshPresence) I.refreshPresence(C.members().map(m => m.user_id));
+        paintInfo();
+        if (!infoDlg.open) infoDlg.showModal();
+        if (isStaff()) loadStaffExtras();
+    }
+
+    const staff = { reports: null, bans: null };
+    async function loadStaffExtras() {
+        const [reports, bans] = await Promise.all([
+            client.from('diary_reports').select('*').eq('community_id', g.cid).eq('status', 'open').order('created_at', { ascending: false }).limit(50),
+            client.from('diary_community_bans').select('user_id, reason, created_at, profile:diary_profiles!diary_community_bans_user_id_fkey(id, username, display_name, avatar_path)').eq('community_id', g.cid)
+        ]);
+        staff.reports = reports.data || [];
+        staff.bans = bans.data || [];
+        if (infoDlg && infoDlg.open) paintInfo();
+    }
+
+    function paintInfo() {
+        const c = cm();
+        if (!c || !infoDlg) return;
+        const order = { owner: 0, admin: 1, moderator: 2, member: 3 };
+        const members = [...C.members()].sort((a, b) => (order[a.role] ?? 4) - (order[b.role] ?? 4) || (a.profile?.display_name || '').localeCompare(b.profile?.display_name || ''));
+        const admins = members.filter(m => m.role !== 'member');
+        const pinned = c.pinned_message && g.messages.find(m => m.id === c.pinned_message);
+        const row = m => {
+            const p = m.profile ? { id: m.user_id, ...m.profile } : { id: m.user_id, display_name: 'Member' };
+            const line = (I.presenceText && I.presenceText(m.user_id)) || '';
+            return `<button type="button" class="gi-person" data-profile="${esc(m.user_id)}">${avatar(p, 'sm')}<span><strong>${esc(m.user_id === me() ? 'You' : p.display_name)}</strong><small>${esc(line || (p.username ? `@${p.username}` : ''))}</small></span>${ROLE[m.role] ? `<span class="gc-role role-${m.role}">${ROLE[m.role]}</span>` : ''}</button>`;
+        };
+        infoDlg.innerHTML = `
+            <div class="ct-card gi">
+                <header class="ct-head"><strong>Group info</strong><button type="button" class="icon-btn" data-ct-close aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button></header>
+                <div class="gi-top"><span class="gi-emoji">${esc(c.emoji || '💬')}</span><h3>${esc(c.name)}</h3>
+                    ${c.description ? `<p class="gi-desc">${esc(c.description)}</p>` : ''}
+                    <p class="muted small">${members.length} ${members.length === 1 ? 'member' : 'members'} · ${c.visibility === 'public' ? 'Public group' : 'Invite-only group'}${c.chat_mode === 'staff' ? ' · Announcements only' : ''}${c.slow_mode ? ` · Slow mode ${c.slow_mode}s` : ''}</p></div>
+                <div class="gi-quick">
+                    <button type="button" class="info-q" data-gi="search"><span class="info-q-ic"><svg class="i"><use href="#i-search"/></svg></span>Search</button>
+                    <button type="button" class="info-q" data-gi="media"><span class="info-q-ic"><svg class="i"><use href="#i-image"/></svg></span>Media</button>
+                    <button type="button" class="info-q" data-gi="deleted"><span class="info-q-ic"><svg class="i"><use href="#i-history"/></svg></span>Deleted</button>
+                    ${['owner', 'admin'].includes(myRole()) ? '<button type="button" class="info-q" data-gi="settings"><span class="info-q-ic"><svg class="i"><use href="#i-settings"/></svg></span>Settings</button>' : ''}
+                </div>
+                ${pinned ? `<h4 class="info-label">Pinned</h4><button type="button" class="gi-pinned" data-gi="goto" data-id="${pinned.id}"><svg class="i"><use href="#i-pin-note"/></svg><span>${esc((pinned.body || '📎 Attachment').slice(0, 160))}</span></button>` : ''}
+                ${admins.length ? `<h4 class="info-label">Admins &amp; moderators</h4><div class="gi-list">${admins.map(row).join('')}</div>` : ''}
+                <h4 class="info-label">Members</h4>
+                <div class="gi-list">${members.filter(m => m.role === 'member').map(row).join('') || '<p class="muted small">No other members yet.</p>'}</div>
+                ${isStaff() ? `
+                    <h4 class="info-label">Reports from this group</h4>
+                    ${staff.reports === null ? '<p class="muted small">Loading…</p>' : staff.reports.length ? staff.reports.map(r => `
+                        <div class="gi-report"><small>${esc(r.reason)} · ${esc(timeAgo(r.created_at))}</small>${r.snapshot ? `<p>${esc(r.snapshot.slice(0, 200))}</p>` : ''}${r.details ? `<p class="muted small">“${esc(r.details)}”</p>` : ''}
+                            <span class="gi-report-actions"><button type="button" class="chip" data-gi="report" data-id="${r.id}" data-act="dismiss">Dismiss</button>${r.kind === 'gc' || r.kind === 'post' ? `<button type="button" class="chip danger" data-gi="report" data-id="${r.id}" data-act="remove">Remove it</button>` : ''}</span></div>`).join('') : '<p class="muted small">No open reports. 🎉</p>'}
+                    <h4 class="info-label">Banned</h4>
+                    ${staff.bans === null ? '<p class="muted small">Loading…</p>' : staff.bans.length ? `<div class="gi-list">${staff.bans.map(b => `<div class="gi-person">${avatar(b.profile ? { id: b.user_id, ...b.profile } : { id: b.user_id, display_name: '?' }, 'sm')}<span><strong>${esc(b.profile ? b.profile.display_name : 'Someone')}</strong><small>${esc(b.reason || 'No reason given')}</small></span><button type="button" class="chip" data-gi="unban" data-id="${esc(b.user_id)}">Lift ban</button></div>`).join('')}</div>` : '<p class="muted small">No one is banned.</p>'}` : ''}
+            </div>`;
+        hydrateStorage(infoDlg);
+    }
+
+    async function infoAction(what, el) {
+        if (what === 'search') { infoDlg.close(); return app.actions['gc-search'](); }
+        if (what === 'media') { infoDlg.close(); return app.actions['gc-gallery'](); }
+        if (what === 'deleted') { infoDlg.close(); return app.actions['gc-recent-deleted'](); }
+        if (what === 'settings') return app.actions['cm-chat-settings'] && app.actions['cm-chat-settings'](el);
+        if (what === 'goto') { infoDlg.close(); return jumpTo(Number(el.dataset.id)); }
+        if (what === 'unban') {
+            const { error } = await client.rpc('diary_unban_member', { p_cid: g.cid, p_user: el.dataset.id });
+            if (error) return app.showToast('Couldn’t lift the ban');
+            app.showToast('Ban lifted — they can join again');
+            return loadStaffExtras();
+        }
+        if (what === 'report') {
+            const { error } = await client.rpc('diary_resolve_report', { p_id: el.dataset.id, p_action: el.dataset.act, p_note: null });
+            if (error) return app.showToast(error.message || 'Couldn’t do that');
+            app.showToast(el.dataset.act === 'dismiss' ? 'Report dismissed' : 'Removed');
+            if (el.dataset.act === 'remove') load();
+            return loadStaffExtras();
+        }
+    }
+
     // ---------- Editing & deleting ----------
     function startEdit(m) {
         const input = $('gc-input');
@@ -728,6 +827,8 @@ document.addEventListener('DOMContentLoaded', () => {
         'gc-goto': el => flash(Number(el.dataset.id)),
         'gc-cancel-reply': () => { g.reply = null; paintReply(); },
         'gc-cancel-edit': () => cancelEdit(),
+        'gc-info': () => openInfo(),
+        'gc-contact': el => I.pickContact && I.pickContact(el, card => send('', [card])),
         'gc-react': el => toggleReact(Number(el.dataset.id), el.dataset.emoji),
         'gc-react-who': el => {
             const byEmoji = g.reacts.get(Number(el.dataset.id)) || {};
@@ -799,6 +900,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 { label: 'Copy link', icon: 'i-link', onClick: () => navigator.clipboard.writeText(messageLink(m.id)).then(() => app.showToast('Link copied — it opens this message for group members'), () => app.showToast('Couldn’t copy the link')) }
             ];
             if (mine && m.body && Date.now() - Date.parse(m.created_at) < 24 * 3600 * 1000) items.push({ label: 'Edit', icon: 'i-edit', onClick: () => startEdit(m) });
+            if (!mine && window.diarySafety) items.push({ label: 'Report', icon: 'i-flag', onClick: () => window.diarySafety.report('gc', m.id, { who: personOf(m.author).display_name }) });
             if (m.body) items.push({ label: 'Copy text', icon: 'i-file', onClick: () => navigator.clipboard.writeText(m.body).then(() => app.showToast('Copied'), () => {}) });
             if (m.body && window.Speak && window.Speak.supported) items.push({ label: 'Listen', icon: 'i-volume', onClick: () => window.Speak.read(m.body, { title: `${personOf(m.author).display_name} in ${cm().name}` }) });
             if (isStaff()) items.push({ label: pinned ? 'Unpin' : 'Pin for everyone', icon: 'i-pin-note', onClick: async () => {

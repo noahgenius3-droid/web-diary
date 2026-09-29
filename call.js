@@ -27,6 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const canPip = !!document.pictureInPictureEnabled;
 
     let call = null;        // the active call
+    let held = null;        // a call on hold while you take another
     let ringChannel = null; // listens for incoming calls
     let incoming = null;    // an unanswered incoming call
     const watchers = new Map(); // topic -> { channel, listeners:Set, people }
@@ -37,6 +38,8 @@ document.addEventListener('DOMContentLoaded', () => {
         avatar_path: s.profile.avatar_path || null,
         muted: call ? call.muted : false,
         hand: call ? call.hand : false,
+        rec: !!(call && call.recorder),
+        held: false,
         cam: !!(call && call.cam),
         screen: call && call.screen ? (call.screenPaused ? 'paused' : 'on') : false
     });
@@ -76,9 +79,73 @@ document.addEventListener('DOMContentLoaded', () => {
             };
         },
         topicFor: cm => `diary_call:c:${cm.id}`,
+        historyHTML, refreshHistory: () => { history.list = null; loadHistory(); },
         activeTopic: () => (call ? call.topic : null),
         inCall: () => !!call
     };
+
+    // ---------- Call history ----------
+    function logCall(entry) {
+        if (!me()) return;
+        client.from('diary_call_log').insert({
+            direction: entry.direction, status: entry.status, video: !!entry.video,
+            peer: entry.peer || null, community_id: entry.communityId || null,
+            title: (entry.title || '').slice(0, 120), participants: entry.participants || 2,
+            started_at: entry.started_at || new Date().toISOString(), duration: Math.max(0, Math.round(entry.duration || 0))
+        }).then(() => { history.list = null; }, () => {});
+    }
+
+    const history = { list: null, recordings: null, loading: false, people: new Map() };
+    async function loadHistory() {
+        if (history.loading) return;
+        history.loading = true;
+        const [log, recs] = await Promise.all([
+            client.from('diary_call_log').select('*').order('started_at', { ascending: false }).limit(100),
+            client.from('diary_call_recordings').select('*').order('created_at', { ascending: false }).limit(50)
+        ]);
+        history.loading = false;
+        history.list = log.data || [];
+        history.recordings = recs.data || [];
+        const ids = [...new Set(history.list.map(x => x.peer).filter(Boolean))];
+        if (ids.length) {
+            const { data } = await client.from('diary_profiles').select('id, username, display_name, avatar_path').in('id', ids);
+            history.people = new Map((data || []).map(p => [p.id, p]));
+        } else history.people = new Map();
+        if (app.state.view === 'messages') app.requestRender('messages');
+    }
+
+    const STATUS_TEXT = { answered: '', missed: 'Missed', declined: 'Declined', cancelled: 'Cancelled', no_answer: 'No answer', busy: 'Busy' };
+    function historyHTML() {
+        if (history.list === null) { loadHistory(); return '<p class="inbox-empty">Loading your calls…</p>'; }
+        const rows = history.list.map(x => {
+            const person = x.peer ? (history.people.get(x.peer) || { id: x.peer, display_name: x.title || 'Someone' }) : null;
+            const name = person ? person.display_name : `${x.title || 'Group call'}`;
+            const missed = ['missed', 'no_answer'].includes(x.status) && x.direction === 'in';
+            const when = new Date(x.started_at);
+            const dur = x.duration ? Media.formatDuration(x.duration) : '';
+            const back = x.peer ? `<button type="button" class="convo-call" data-action="call-back" data-id="${esc(x.peer)}" aria-label="Voice call ${esc(name)}"><svg class="i"><use href="#i-phone"/></svg></button><button type="button" class="convo-call" data-action="call-back" data-video="1" data-id="${esc(x.peer)}" aria-label="Video call ${esc(name)}"><svg class="i"><use href="#i-video"/></svg></button>`
+                : x.community_id ? `<button type="button" class="convo-call" data-action="call-group" data-id="${esc(x.community_id)}" data-name="${esc(x.title || '')}" aria-label="Join ${esc(name)} call"><svg class="i"><use href="#i-phone"/></svg></button>` : '';
+            return `
+                <div class="call-row${missed ? ' missed' : ''}">
+                    ${person ? `<button type="button" class="chat-who" data-profile="${esc(person.id)}">${avatar(person, 'md')}</button>` : '<span class="call-row-group"><svg class="i"><use href="#i-users"/></svg></span>'}
+                    <span class="call-row-text">
+                        <strong>${esc(name)}</strong>
+                        <small><svg class="i dir"><use href="#${x.direction === 'in' ? 'i-down' : 'i-send'}"/></svg>${x.video ? 'Video' : 'Voice'} · ${esc(STATUS_TEXT[x.status] || (x.direction === 'in' ? 'Incoming' : 'Outgoing'))}${dur ? ` · ${dur}` : ''}${x.participants > 2 ? ` · ${x.participants} people` : ''}</small>
+                        <time>${esc(when.toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }))}</time>
+                    </span>
+                    ${back}
+                </div>`;
+        }).join('');
+        const recs = (history.recordings || []).map(r => `
+            <div class="call-row rec">
+                <span class="call-row-group rec"><svg class="i"><use href="#i-record"/></svg></span>
+                <span class="call-row-text"><strong>${esc(r.title || 'Call recording')}</strong><small>${r.duration ? Media.formatDuration(r.duration) : ''} · ${esc(Media.formatSize(r.size || 0))}</small><time>${esc(new Date(r.created_at).toLocaleString())}</time></span>
+                <button type="button" class="convo-call" data-action="rec-play" data-path="${esc(r.path)}" aria-label="Play recording"><svg class="i"><use href="#i-play"/></svg></button>
+                <button type="button" class="convo-call" data-action="rec-download" data-path="${esc(r.path)}" data-name="${esc((r.title || 'call') + (r.mime && r.mime.startsWith('video') ? '.webm' : '.webm'))}" aria-label="Download recording"><svg class="i"><use href="#i-download"/></svg></button>
+                <button type="button" class="convo-call danger" data-action="rec-delete" data-id="${esc(r.id)}" data-path="${esc(r.path)}" aria-label="Delete recording"><svg class="i"><use href="#i-trash"/></svg></button>
+            </div>`).join('');
+        return `${rows || '<p class="inbox-empty">No calls yet. Call a friend from their chat.</p>'}${recs ? `<h4 class="info-label call-rec-label">Recordings</h4>${recs}` : ''}`;
+    }
 
     // ---------- Ringing ----------
     setInterval(() => {
@@ -99,6 +166,7 @@ document.addEventListener('DOMContentLoaded', () => {
             })
             .on('broadcast', { event: 'decline' }, ({ payload }) => {
                 if (call && call.ringing === payload.from) {
+                    call.endStatus = payload.busy ? 'busy' : 'declined';
                     paintPanel(payload.busy ? `${call.title} is on another call` : `${call.title} declined`);
                     setTimeout(() => leave(false), 1400);
                 }
@@ -118,23 +186,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function onRing(p) {
         if (!p || !p.topic || !p.from) return;
-        if (call) {
-            if (call.topic === p.topic) return; // already in that call
+        if (call && call.topic === p.topic) return; // already in that call
+        if (incoming) { // already ringing with someone else: they get "busy"
             ring(p.from, 'decline', { from: me(), busy: true });
-            app.showToast(`${p.name || 'Someone'} tried to call you`);
+            logCall({ direction: 'in', status: 'busy', peer: p.group ? null : p.from, communityId: communityOf(p.topic), title: p.group || p.name, video: p.video });
             return;
         }
-        incoming = { ...p, timer: setTimeout(() => dismissIncoming(true), RING_TIMEOUT) };
+        incoming = { ...p, waiting: !!call, timer: setTimeout(() => dismissIncoming(true), RING_TIMEOUT) };
         $('incoming-avatar').innerHTML = avatar({ id: p.from, display_name: p.name, avatar_path: p.avatar_path }, 'xl');
         $('incoming-name').textContent = p.group ? `${p.emoji || '📞'} ${p.group}` : (p.name || 'Someone');
         $('incoming-sub').textContent = p.group
             ? `${p.name} is inviting you to the group ${p.video ? 'video ' : ''}call`
             : p.video ? 'Cordial video call…' : 'Cordial voice call…';
-        $('incoming-video').hidden = !p.video;
+        $('incoming-video').hidden = !p.video || !!call;
+        // Already on a call: answer by ending it, or put it on hold
+        $('incoming-hold').hidden = !call;
+        $('incoming-accept').setAttribute('title', call ? 'End current call & answer' : 'Answer');
+        $('incoming-waiting').hidden = !call;
+        if (call) $('incoming-waiting').textContent = `You’re on a call with ${call.title}`;
         $('incoming-accept').setAttribute('aria-label', p.video ? 'Answer with voice only' : 'Answer');
         $('call-incoming').hidden = false;
-        startRingtone();
-        if (navigator.vibrate) navigator.vibrate([400, 200, 400]);
+        // Do not disturb: the call shows, quietly
+        const dnd = I.statusOf && s.myStatus === 'dnd';
+        if (call) tone([880, 660], 0.2, 0.15, 0.1);
+        else if (!dnd) {
+            startRingtone();
+            if (navigator.vibrate) navigator.vibrate([400, 200, 400]);
+        }
     }
 
     function dismissIncoming(missed) {
@@ -143,37 +221,45 @@ document.addEventListener('DOMContentLoaded', () => {
         if (missed) {
             app.showToast(`Missed ${incoming.group ? `${incoming.group} call` : incoming.video ? 'video call' : 'call'} from ${incoming.name}`);
             if (!incoming.group && window.diaryNotify) window.diaryNotify.logMissedCall(incoming.from);
+            logCall({ direction: 'in', status: 'missed', peer: incoming.group ? null : incoming.from, communityId: communityOf(incoming.topic), title: incoming.group || incoming.name, video: incoming.video });
         }
         incoming = null;
         $('call-incoming').hidden = true;
         stopRingtone();
     }
 
-    function answer(withVideo) {
+    async function answer(withVideo, holdCurrent = false) {
         if (!incoming) return;
         const p = incoming;
         dismissIncoming(false);
+        if (call) {
+            if (holdCurrent) hold();
+            else leave(true);
+        }
         join(p.topic, p.group
             ? { title: p.group, subtitle: 'Group call', emoji: p.emoji, communityId: communityOf(p.topic) }
             : { title: p.name, subtitle: p.video ? 'Video call' : 'Voice call', person: { id: p.from, display_name: p.name, avatar_path: p.avatar_path } },
-        { video: withVideo });
+        { video: withVideo, log: { direction: 'in', peer: p.group ? null : p.from, video: withVideo || p.video } });
     }
     $('incoming-accept').addEventListener('click', () => answer(false));
     $('incoming-video').addEventListener('click', () => answer(true));
+    $('incoming-hold').addEventListener('click', () => answer(false, true));
     $('incoming-decline').addEventListener('click', () => {
         if (!incoming) return;
         if (!incoming.group) ring(incoming.from, 'decline', { from: me() });
+        logCall({ direction: 'in', status: 'declined', peer: incoming.group ? null : incoming.from, communityId: communityOf(incoming.topic), title: incoming.group || incoming.name, video: incoming.video });
         dismissIncoming(false);
     });
 
     async function startDirect(person, opts = {}) {
         if (!me()) return;
-        const ok = await join(dmTopic(person.id), { title: person.display_name, subtitle: opts.video ? 'Video call' : 'Voice call', person }, opts);
+        const ok = await join(dmTopic(person.id), { title: person.display_name, subtitle: opts.video ? 'Video call' : 'Voice call', person }, { ...opts, log: { direction: 'out', peer: person.id, video: !!opts.video } });
         if (!ok) return;
         call.ringing = person.id;
         paintPanel();
         call.ringTimer = setTimeout(() => {
             if (call && call.ringing === person.id) {
+                call.endStatus = 'no_answer';
                 paintPanel(`${person.display_name} didn’t answer`);
                 setTimeout(() => leave(true), 1400);
             }
@@ -204,9 +290,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Joining a room ----------
     async function join(topic, info, opts = {}) {
+        if (held && held.topic === topic) return switchCalls();
         if (call) {
             if (call.topic === topic) return expand();
-            await leave(true);
+            leave(true);
         }
         let local;
         try {
@@ -227,7 +314,8 @@ document.addEventListener('DOMContentLoaded', () => {
             people: new Map(),     // user id -> presence meta
             started: null, ringing: null, ringTimer: null, tick: null, stats: null,
             audioCtx: null, meters: new Map(), synced: false, notified: false,
-            reconnects: 0, channelReady: false, amModerator: false, wake: null, focus: null
+            reconnects: 0, channelReady: false, amModerator: false, wake: null, focus: null,
+            log: opts.log || { direction: 'out', communityId: info.communityId || null, video: !!opts.video }, maxPeople: 1, endStatus: null, recorder: null
         };
         setupMeter(me(), local);
         openChannel();
@@ -318,6 +406,15 @@ document.addEventListener('DOMContentLoaded', () => {
             clearTimeout(call.ringTimer);
         }
         if (call.people.size > 1 && !call.started) call.started = Date.now();
+        call.maxPeople = Math.max(call.maxPeople || 1, call.people.size);
+        // Someone in the call is recording: everyone sees it
+        const recording = [...call.people.entries()].filter(([id, m]) => id !== me() && m.rec).map(([id]) => nameOf(id));
+        const rb = $('call-rec-banner');
+        if (rb) {
+            const mine = !!call.recorder;
+            rb.hidden = !recording.length && !mine;
+            rb.innerHTML = `<svg class="i"><use href="#i-record"/></svg><span>${mine ? 'You are recording this call' : `${esc(recording.join(', '))} ${recording.length > 1 ? 'are' : 'is'} recording this call`}</span>`;
+        }
         paintPanel();
     }
 
@@ -352,6 +449,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 peer.audio.srcObject = stream;
                 peer.audio.play().catch(() => {});
                 setupMeter(id, stream);
+                if (call && call.recorder) call.recorder.addStream(stream);
             } else {
                 const key = index === 2 ? 'screenVideo' : 'camVideo';
                 if (!peer[key]) {
@@ -452,10 +550,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (call.focus === id) call.focus = null;
     }
 
-    function leave(notify) {
-        if (!call) return;
-        const c = call;
-        call = null;
+    function leave(notify, target = call) {
+        if (!target) return;
+        const c = target;
+        const wasActive = c === call;
+        if (wasActive) call = null;
+        else if (c === held) held = null;
+        if (c.recorder) stopRecording(c);
+        logCall({ ...c.log, status: c.started ? 'answered' : (c.endStatus || (c.log.direction === 'out' && c.person ? 'cancelled' : 'answered')), title: c.title, communityId: c.communityId || c.log.communityId, started_at: new Date(c.started || Date.now()).toISOString(), duration: c.started ? (Date.now() - c.started) / 1000 : 0, participants: c.maxPeople || 2 });
         clearInterval(c.tick);
         clearInterval(c.stats);
         clearTimeout(c.ringTimer);
@@ -469,6 +571,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
         // Leave the room in the background: the screen never waits on the network
         Promise.race([c.channel.untrack(), new Promise(r => setTimeout(r, 1500))]).catch(() => {}).finally(() => client.removeChannel(c.channel));
+        if (!wasActive) { paintHeld(); return; }
         clearMediaSession();
         $('call-reactions').hidden = true;
         chime('leave');
@@ -479,6 +582,8 @@ document.addEventListener('DOMContentLoaded', () => {
         $('call-status').textContent = lasted ? `Call ended · ${lasted}` : 'Call ended';
         $('call-stage').innerHTML = `<div class="call-ended-card">${c.person ? avatar(c.person, 'xl') : `<span class="call-ended-emoji">${esc(c.emoji || '📞')}</span>`}<strong>Call ended</strong>${lasted ? `<small>${lasted}</small>` : ''}</div>`;
         $('call-float').hidden = true;
+        // A call on hold comes back when this one ends
+        if (held) { setTimeout(() => { if (!call && held) switchCalls(); }, 900); }
         setTimeout(() => {
             if (call) return;
             panel.hidden = true;
@@ -524,6 +629,117 @@ document.addEventListener('DOMContentLoaded', () => {
             if (v && v.requestPictureInPicture) v.requestPictureInPicture().catch(() => {});
         }
     });
+
+    // ---------- Hold & switch ----------
+    // Holding a call keeps its connections but stops your microphone, camera and their sound
+    function hold() {
+        if (!call) return;
+        const c = call;
+        c.local.getAudioTracks().forEach(t => { t.enabled = false; });
+        if (c.cam) c.cam.enabled = false;
+        c.peers.forEach(p => { if (p.audio) p.audio.muted = true; });
+        if (c.channelReady) c.channel.track({ ...myMeta(), muted: true, held: true }).catch(() => {});
+        held = c;
+        call = null;
+        paintHeld();
+    }
+
+    function resume(c) {
+        call = c;
+        held = null;
+        c.local.getAudioTracks().forEach(t => { t.enabled = !c.muted; });
+        if (c.cam) c.cam.enabled = true;
+        c.peers.forEach(p => { if (p.audio) p.audio.muted = !c.speaker; });
+        publish();
+        if (c.channel) syncPeers();
+        showPanel();
+        paintHeld();
+    }
+
+    function switchCalls() {
+        const back = held;
+        if (!back) return;
+        if (call) hold(); // the current call goes on hold…
+        resume(back);     // …and the held one comes back
+    }
+
+    function paintHeld() {
+        const bar = $('call-held');
+        if (!bar) return;
+        bar.hidden = !held;
+        if (held) bar.innerHTML = `<svg class="i"><use href="#i-clock"/></svg><span>On hold: <strong>${esc(held.title)}</strong></span><button type="button" class="chip" data-held="switch">Switch</button><button type="button" class="chip danger" data-held="end">End</button>`;
+    }
+    $('call-held').addEventListener('click', e => {
+        const b = e.target.closest('[data-held]');
+        if (!b) return;
+        if (b.dataset.held === 'switch') switchCalls();
+        else if (held) leave(true, held);
+    });
+
+    // ---------- Recording ----------
+    // Mixes everyone's audio (and the main video, if any) and saves it privately to your account.
+    // Everyone in the call sees that it's being recorded, for as long as it is.
+    async function startRecording() {
+        if (!call || call.recorder || !window.MediaRecorder) return app.showToast('Recording isn’t supported on this device');
+        const ok = await app.ask({
+            title: 'Record this call?',
+            text: 'Everyone in the call will see that you’re recording. Only record with their agreement and where the law allows. The recording is saved privately to your account.',
+            ok: 'Start recording'
+        });
+        if (!ok || !call) return;
+        const c = call;
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const dest = ctx.createMediaStreamDestination();
+            const add = stream => { try { ctx.createMediaStreamSource(stream).connect(dest); } catch (e) {} };
+            add(c.local);
+            c.peers.forEach(p => { if (p.audio && p.audio.srcObject) add(p.audio.srcObject); });
+            const v = featuredVideo() || (c.cam ? localVideo('cam') : null);
+            const vt = v && v.srcObject ? v.srcObject.getVideoTracks()[0] : null;
+            const tracks = [...dest.stream.getAudioTracks(), ...(vt ? [vt] : [])];
+            const types = vt ? ['video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'] : ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+            const mime = types.find(t => MediaRecorder.isTypeSupported(t)) || '';
+            const rec = new MediaRecorder(new MediaStream(tracks), mime ? { mimeType: mime } : undefined);
+            const chunks = [];
+            rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+            c.recorder = { rec, ctx, dest, chunks, started: Date.now(), mime: rec.mimeType || mime || (vt ? 'video/webm' : 'audio/webm'), addStream: add };
+            rec.start(1000);
+            publish();
+            syncPeers();
+            app.showToast('Recording — everyone in the call can see it');
+        } catch (e) {
+            app.showToast('Couldn’t start recording');
+        }
+    }
+
+    function stopRecording(c = call) {
+        if (!c || !c.recorder) return;
+        const r = c.recorder;
+        c.recorder = null;
+        r.rec.onstop = async () => {
+            try { r.ctx.close(); } catch (e) {}
+            const blob = new Blob(r.chunks, { type: r.mime.split(';')[0] });
+            const secs = Math.round((Date.now() - r.started) / 1000);
+            if (!blob.size) return;
+            const ext = blob.type.includes('mp4') ? '.mp4' : '.webm';
+            const path = `${me()}/${I.randomId()}${ext}`;
+            app.showToast('Saving the recording…');
+            const { error } = await client.storage.from('diary-recordings').upload(path, blob, { contentType: blob.type, upsert: false });
+            if (error) {
+                // Couldn't upload: at least keep it on this device
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = `call-recording${ext}`;
+                a.click();
+                return app.showToast('Couldn’t save it online — it was downloaded instead');
+            }
+            await client.from('diary_call_recordings').insert({ title: `${c.title} · ${new Date().toLocaleDateString()}`, path, mime: blob.type, duration: secs, size: blob.size });
+            history.list = null;
+            app.showToast('Recording saved — find it under Chats → Calls');
+        };
+        try { r.rec.stop(); } catch (e) {}
+        if (c === call) { publish(); syncPeers(); }
+    }
 
     // ---------- Camera, screen share, speaker ----------
     async function toggleCamera() {
@@ -1005,6 +1221,7 @@ document.addEventListener('DOMContentLoaded', () => {
         app.openPopover(anchor, [
             { label: call.hand ? 'Lower hand' : 'Raise hand', icon: 'i-hand', onClick: () => toggleHand() },
             { label: 'React', icon: 'i-smile', onClick: () => { $('call-reactions').hidden = false; } },
+            call.recorder ? { label: 'Stop recording', icon: 'i-record', onClick: () => stopRecording() } : { label: 'Record call', icon: 'i-record', onClick: startRecording },
             ...(HTMLMediaElement.prototype.setSinkId ? [{ label: 'Audio output', icon: 'i-speaker', onClick: () => pickOutput(anchor) }] : []),
             ...(canPip && featuredVideo() ? [{ label: 'Pop out video', icon: 'i-expand', onClick: popOut }] : []),
             { label: 'Add people', icon: 'i-user-plus', onClick: () => addPeople(anchor) }
@@ -1041,6 +1258,42 @@ document.addEventListener('DOMContentLoaded', () => {
         if (tile && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); personMenu(tile, tile.dataset.person); }
     });
     $('call-leave').addEventListener('click', () => leave(true));
+
+    Object.assign(app.actions, {
+        'call-back': el => {
+            const person = (history.people && history.people.get(el.dataset.id)) || s.friends.find(f => f.id === el.dataset.id);
+            if (!person) return app.showToast('You can only call friends');
+            startDirect(person, { video: el.dataset.video === '1' });
+        },
+        'call-group': el => join(`diary_call:c:${el.dataset.id}`, { title: el.dataset.name || 'Group call', subtitle: 'Group call', communityId: el.dataset.id }),
+        'rec-play': async el => {
+            const { data } = await client.storage.from('diary-recordings').createSignedUrl(el.dataset.path, 3600);
+            if (!data) return app.showToast('Couldn’t open the recording');
+            const box = el.closest('.call-row');
+            let player = box.nextElementSibling && box.nextElementSibling.classList.contains('rec-player') ? box.nextElementSibling : null;
+            if (!player) {
+                player = document.createElement(/.(mp4|webm)$/.test(el.dataset.path) && !/audio/.test(el.dataset.path) ? 'video' : 'audio');
+                player.className = 'rec-player';
+                player.controls = true;
+                player.setAttribute('playsinline', '');
+                box.after(player);
+            }
+            player.src = data.signedUrl;
+            player.play().catch(() => {});
+        },
+        'rec-download': async el => {
+            if (window.diaryChatTools) window.diaryChatTools.download('diary-recordings', el.dataset.path, el.dataset.name);
+        },
+        'rec-delete': async el => {
+            const ok = await app.ask({ title: 'Delete this recording?', text: 'It’s removed from your account for good.', ok: 'Delete', danger: true });
+            if (!ok) return;
+            await client.storage.from('diary-recordings').remove([el.dataset.path]);
+            const { error } = await client.from('diary_call_recordings').delete().eq('id', el.dataset.id);
+            if (error) return app.showToast('Couldn’t delete it');
+            history.list = null;
+            app.requestRender('messages');
+        }
+    });
     $('call-minimize').addEventListener('click', minimise);
     $('call-float-open').addEventListener('click', expand);
     $('call-float-mute').addEventListener('click', () => { if (call) setMuted(!call.muted); });

@@ -78,7 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
         entry_repost: ['group', 'i-repost'], reel_like: ['like', 'i-heart-fill'], reel_comment: ['comment', 'i-chat'], library_like: ['like', 'i-heart-fill'],
         live_started: ['call', 'i-live'], new_follower: ['group', 'i-user-plus'],
         entry_reaction: ['like', 'i-smile'], story_reaction: ['like', 'i-smile'],
-        mention: ['comment', 'i-chat'], reply: ['comment', 'i-reply'],
+        mention: ['comment', 'i-chat'], reply: ['comment', 'i-reply'], new_login: ['missed', 'i-shield'],
         book_request: ['group', 'i-store'], book_request_update: ['group', 'i-store'], book_message: ['comment', 'i-store']
     };
 
@@ -106,6 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'library_like': return `${who} loved your writing${quote}`;
             case 'live_started': return `${who} is live now${quote}`;
             case 'new_follower': return `${who} started following you`;
+            case 'new_login': return `New sign-in to your account on ${plain ? (d.label || 'a new device') : `<strong>${esc(d.label || 'a new device')}</strong>`}. Not you? Change your password and sign out other devices.`;
             case 'mention': return d.everyone ? `${who} mentioned everyone in ${group}:${quote}` : `${who} mentioned you in ${group}:${quote}`;
             case 'reply': return `${who} replied to you in ${group}:${quote}`;
             case 'entry_reaction': return `${who} reacted ${d.emoji || ''} to your post`;
@@ -142,6 +143,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 break;
             case 'new_follower':
                 I.loadFollows().then(() => app.render());
+                app.setView('settings');
+                break;
+            case 'new_login':
                 app.setView('settings');
                 break;
             case 'mention':
@@ -486,7 +490,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Push (alerts while Cordial is closed) ----------
-    const PUSH_TYPES = new Set(['friend_request', 'friend_accepted', 'new_follower', 'live_started', 'mention', 'reply']);
+    const PUSH_TYPES = new Set(['friend_request', 'friend_accepted', 'new_follower', 'live_started', 'mention', 'reply', 'new_login']);
     const pushKey = () => (window.DIARY_CONFIG || {}).pushPublicKey;
     const pushSupported = () => canAlert && 'serviceWorker' in navigator && 'PushManager' in window && !!pushKey();
     const swReady = () => ('serviceWorker' in navigator && navigator.serviceWorker.controller !== undefined)
@@ -534,6 +538,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function deviceAlert(item, text) {
         if (alertStatus() !== 'on') return;
+        // Message previews off: the alert only says who it's from
+        let previews = '1';
+        try { previews = localStorage.getItem('diaryPreviews') || '1'; } catch (e) {}
+        if (previews === '0') text = `New notification from ${(item.actor_profile && item.actor_profile.display_name) || 'someone'}`;
         if (PUSH_TYPES.has(item.type) && pushSupported()) return; // the push alert covers this one
         if (document.visibilityState === 'visible' && document.hasFocus()) return; // already on screen as a toast
         const actor = item.actor_profile;

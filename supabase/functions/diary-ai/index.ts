@@ -61,6 +61,25 @@ const TASKS: Record<string, { instruction: string; needsText: boolean }> = {
       "Suggest three to five specific, practical ways the writer could improve or build on this note - for example what is unclear, what detail or feeling is missing, a better structure, a next step, or a question worth answering. Be encouraging and concrete; quote the part of the note you mean where it helps. Use exactly this format and nothing else:\n<suggestions>\n- one suggestion per line\n</suggestions>",
     needsText: true,
   },
+  chat_summary: {
+    instruction:
+      "This is a chat conversation (one line per message: 'Name: message'). Summarise it for the writer in three to six short bullet points: what was discussed, any decisions or plans (with dates/times), and anything waiting for an answer. If the title says to focus on unread messages, summarise only the most recent part. Plain bullet points, no heading.",
+    needsText: true,
+  },
+  chat_replies: {
+    instruction:
+      "This is the end of a chat conversation (one line per message: 'Name: message'). The title says who the writer is. Suggest three short, natural replies the writer could send next — varied in tone, in the conversation's language, each under 20 words. Use exactly this format and nothing else:\n<replies>\n- reply one\n- reply two\n- reply three\n</replies>",
+    needsText: true,
+  },
+  translate: {
+    instruction: "Translate this chat message into the language named in the title. Keep names, emoji and tone. Output only the translation.",
+    needsText: true,
+  },
+  grammar: {
+    instruction:
+      "Fix the spelling, grammar and punctuation of this chat message and make it read clearly, keeping the writer's meaning, language, tone and emoji. Output only the improved message, with no quotation marks.",
+    needsText: true,
+  },
   voice: {
     instruction:
       "This is a raw speech-to-text transcript of a voice recording (it may be the writer thinking aloud, a meeting or a conversation). Turn it into a well-organised note. Fix obvious mis-heard words, punctuation and filler (um, uh, you know), but keep the meaning and the speaker's own words and voice; never invent facts. If several people clearly speak, mark turns as 'Speaker 1:', 'Speaker 2:' only when it is obvious.\n\nUse exactly this format and nothing else:\n<title>a short title, at most 8 words</title>\n<summary>two to four sentences summarising it</summary>\n<points>\n- the key points, one per line\n</points>\n<actions>\n- any tasks, decisions or follow-ups mentioned, one per line (leave empty if none)\n</actions>\n<note>\nthe cleaned-up note in paragraphs\n</note>\n<suggestions>\n- three to five specific suggestions to improve or build on this note, one per line\n</suggestions>",

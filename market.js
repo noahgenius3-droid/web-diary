@@ -407,7 +407,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${l.author_name ? `<p class="mk-dauthor">by ${esc(l.author_name)}</p>` : ''}
                     <dl class="mk-facts">${facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>
                     ${l.description ? `<p class="mk-desc">${esc(l.description)}</p>` : ''}
-                    <div class="mk-seller-row">${avatar(seller, 'md')}<span><strong>${mine ? 'You' : esc(seller.display_name)}</strong><small>@${esc(seller.username)} · listed ${timeAgo(l.created_at)}</small></span></div>
+                    <div class="mk-seller-row">${avatar(seller, 'md')}<span><strong>${mine ? 'You' : esc(seller.display_name)}</strong><small>@${esc(seller.username)} · listed ${timeAgo(l.created_at)}</small></span>${!mine && window.diarySafety ? `<button type="button" class="link-btn mk-report" data-action="mk-report" data-id="${esc(l.id)}"><svg class="i"><use href="#i-flag"/></svg>Report</button>` : ''}</div>
                     ${cta}
                     ${mine ? '' : safetyNote()}
                 </div>
@@ -708,6 +708,7 @@ document.addEventListener('DOMContentLoaded', () => {
             loadRequests();
         },
         'mk-deal': el => openDeal(el.dataset.id),
+        'mk-report': el => window.diarySafety && window.diarySafety.report('listing', el.dataset.id),
         'mk-req': el => actOnRequest(el.dataset.id, el.dataset.act),
         'mk-photo': el => window.Media && Media.lightbox ? Media.lightbox(el.dataset.src, '') : window.open(el.dataset.src, '_blank', 'noopener'),
         'mk-photo-add': async () => {
