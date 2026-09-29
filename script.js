@@ -1974,6 +1974,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 onClick: () => {
                     const next = isDark() ? 'light' : 'dark';
                     document.documentElement.dataset.theme = next;
+                    document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute('content', next === 'dark' ? '#09090b' : '#ffffff'));
                     try { localStorage.setItem('diaryTheme', next); } catch (e) {}
                 }
             },

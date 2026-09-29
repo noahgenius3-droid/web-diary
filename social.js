@@ -2514,7 +2514,18 @@ document.addEventListener('DOMContentLoaded', () => {
             if (s.addOpen) $('add-friend-input').focus();
         },
         'open-chat': el => openChat(el.dataset.id),
-        'close-chat': () => { s.activeFriend = null; app.render(); },
+        'close-chat': () => {
+            const pane = content.querySelector('.chat-pane');
+            const animated = pane && document.body.classList.contains('chat-open')
+                && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            if (!animated) {
+                s.activeFriend = null;
+                app.render();
+                return;
+            }
+            pane.classList.add('leaving');
+            setTimeout(() => { s.activeFriend = null; app.render(); }, 220);
+        },
         'react': el => react(el.dataset.id, el.dataset.emoji),
         'msg-menu': el => {
             const open = el.closest('.msg').classList.contains('menu-open');

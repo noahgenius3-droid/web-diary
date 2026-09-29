@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
+    <meta name="color-scheme" content="light dark">
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
     <meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)">
     <title>Cordial</title>
@@ -14,7 +15,10 @@
         // Apply saved theme before paint to avoid a flash
         try {
             const t = localStorage.getItem('diaryTheme');
-            if (t) document.documentElement.dataset.theme = t;
+            if (t) {
+                document.documentElement.dataset.theme = t;
+                document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute('content', t === 'dark' ? '#09090b' : '#ffffff'));
+            }
         } catch (e) {}
     </script>
 </head>

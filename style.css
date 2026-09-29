@@ -7783,3 +7783,153 @@ h1 {
     .social-main .block-head .reels-chip { margin-left: 0; }
     .social-main .block-head .feed-sort { margin-left: auto; }
 }
+
+/* =========================================================
+   NATIVE FEEL — mobile-native + apple-design skills
+   ========================================================= */
+
+:root {
+    /* Sheet/drawer curve (critically damped feel, no overshoot) and press timing */
+    --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+    --press: 100ms;
+}
+
+/* ---------- Platform baseline ---------- */
+html {
+    -webkit-tap-highlight-color: transparent;   /* no grey flash on tap */
+    -webkit-text-size-adjust: 100%;              /* no font inflation in landscape */
+}
+
+/* Taps fire immediately (no double-tap-zoom wait) */
+button, a, [role="button"], [data-action], label, summary {
+    touch-action: manipulation;
+}
+
+/* Controls aren't text: a long-press shouldn't select their label */
+button, [role="button"], .tab, .tab-item, .chip, .pill, .nav-item, .story, .reel-act, .act, .quick-reply, .template-card {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+}
+
+/* iPhone zooms into any field under 16px — keep every field at 16px on touch screens */
+@media (pointer: coarse) {
+    input, textarea, select, .chat-input, [contenteditable="true"] { font-size: max(16px, 1em); }
+    .search input { font-size: 16px; }
+}
+
+/* ---------- Touch: no sticky hover, feedback on press ---------- */
+@media (hover: none) {
+    /* Hover lifts and fills would stick after a tap */
+    .template-card:hover, .mcard:hover, .cm-card:hover, .hl-card:hover, .fab:hover,
+    .compose-btn:hover, .quick-reply:hover, .cover-opt:hover {
+        transform: none;
+        box-shadow: var(--shadow);
+    }
+
+    .topbar .icon-btn:hover, .nav-item:hover:not(.active), .tab:hover, .convo:hover:not(.active),
+    .quick-reply:hover, .inbox-tab:hover:not([aria-selected="true"]) { background: transparent; }
+    .convo:hover:not(.active) { background: none; }
+
+    /* Press = a quick, small scale, felt the instant the finger lands */
+    .chip, .primary-btn, .pc-post, .create-post, .fab, .quick-reply, .composer-plus, .send-btn,
+    .compose-btn, .template-card, .mcard, .cm-card, .convo, .inbox-tab, .tab-item, .story,
+    .active-friend, .reel-act, .pc-tool, .hl-chip, .pour button, .feed-sort button, .info-q {
+        transition: transform var(--press) ease-out, opacity var(--press) ease-out, background-color var(--press) ease-out;
+    }
+
+    .chip:active, .primary-btn:active, .pc-post:active, .create-post:active, .quick-reply:active,
+    .composer-plus:active, .send-btn:active, .compose-btn:active, .inbox-tab:active, .pc-tool:active,
+    .hl-chip:active, .pour button:active, .feed-sort button:active, .info-q:active, .active-friend:active {
+        transform: scale(0.96);
+        opacity: 1;
+    }
+
+    .template-card:active, .mcard:active, .cm-card:active { transform: scale(0.98); opacity: 1; }
+    .convo:active { transform: scale(0.99); background: var(--panel); opacity: 1; }
+    .fab:active { transform: scale(0.92); opacity: 1; }
+    .tab-item:active .i, .reel-act:active .i, .story:active .story-ring { transform: scale(0.9); }
+    .tab-item .i, .reel-act .i, .story .story-ring { transition: transform var(--press) ease-out; }
+}
+
+/* ---------- Phones ---------- */
+@media (max-width: 760px) {
+    /* Inner scrollers keep their own bounce but never drag the page behind them */
+    .chat-thread, .convo-list, .companion-thread, .reels, .notif-list, .sv-list, .tr-live, .reel-sheet-body {
+        overscroll-behavior: contain;
+    }
+
+    /* Materials: frosted bars with a bright top edge instead of a hard divider */
+    .tabbar {
+        border-top: none;
+        box-shadow: 0 -0.5px 0 color-mix(in srgb, var(--text) 12%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+    }
+
+    :root[data-theme="dark"] .tabbar { box-shadow: 0 -0.5px 0 rgba(255, 255, 255, 0.08); }
+    @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tabbar { box-shadow: 0 -0.5px 0 rgba(255, 255, 255, 0.08); } }
+
+    /* Active tab: a soft pill behind the icon, like iOS 26 / Material 3 */
+    .tab-item { gap: 2px; padding-top: 4px; }
+    .tab-item .i { box-sizing: content-box; padding: 4px 16px; border-radius: 999px; transition: background-color 0.2s var(--ease-out), transform var(--press) ease-out; }
+    .tab-item.active .i { background: var(--accent-soft); }
+
+    /* Large title that settles into a compact bar as you scroll (iOS large titles) */
+    @supports (animation-timeline: scroll()) {
+        .topbar h1 {
+            transform-origin: left center;
+            animation: title-collapse linear both;
+            animation-timeline: scroll(nearest block);
+            animation-range: 0 90px;
+        }
+
+        .topbar {
+            animation: bar-edge linear both;
+            animation-timeline: scroll(nearest block);
+            animation-range: 0 60px;
+        }
+    }
+
+    /* Opening a chat pushes in from the right; leaving slides it back out the same way */
+    body.chat-open .inbox .chat-pane { animation: push-in 0.34s var(--ease-sheet) both; }
+    body.chat-open .inbox .chat-pane.leaving { animation: push-out 0.22s var(--ease-sheet) both; }
+
+    /* Sheets rise on the sheet curve and carry a grab handle */
+    .share-sheet[open], .reel-sheet[open], .media-compose[open] { animation: sheet-rise 0.36s var(--ease-sheet) both; }
+    .companion { animation: sheet-rise 0.36s var(--ease-sheet) both; }
+
+    /* Type: large titles tighten, tiny caps labels open up */
+    .active-label, .share-label, .notif-group, .info-label, .pair-label { letter-spacing: 0.06em; }
+}
+
+@keyframes title-collapse { to { transform: scale(0.72); } }
+@keyframes bar-edge { to { box-shadow: 0 0.5px 0 color-mix(in srgb, var(--text) 12%, transparent); } }
+@keyframes push-in { from { transform: translateX(100%); } }
+@keyframes push-out { to { transform: translateX(100%); } }
+@keyframes sheet-rise { from { transform: translateY(100%); } }
+
+/* ---------- Accessibility settings ---------- */
+@media (prefers-reduced-motion: reduce) {
+    .topbar h1, .topbar { animation: none !important; }
+    body.chat-open .inbox .chat-pane, .share-sheet[open], .reel-sheet[open], .media-compose[open], .companion {
+        animation: fade-in 0.2s ease both !important;
+    }
+
+    .chip:active, .primary-btn:active, .fab:active, .mcard:active, .convo:active, .template-card:active { transform: none; }
+}
+
+@keyframes fade-in { from { opacity: 0; } }
+
+/* Frosted surfaces go solid for people who reduce transparency */
+@media (prefers-reduced-transparency: reduce) {
+    .topbar, .tabbar, .chat-head, .reels-head {
+        background: var(--bg) !important;
+        -webkit-backdrop-filter: none !important;
+        backdrop-filter: none !important;
+    }
+}
+
+/* Stronger edges for people who ask for more contrast */
+@media (prefers-contrast: more) {
+    .tabbar, .topbar { background: var(--bg); border-color: var(--text); }
+    .mcard, .post, .cm-card, .template-card { border-color: var(--text-muted); }
+}
