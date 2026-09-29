@@ -32,6 +32,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.diaryLibrary = {
         latest: n => (L.items || []).filter(x => x.visibility === 'public').slice(0, n),
+        popular: n => (L.items || []).filter(x => x.visibility === 'public')
+            .sort((a, b) => (b.likes || []).length - (a.likes || []).length || Date.parse(b.created_at) - Date.parse(a.created_at))
+            .slice(0, n),
         open: id => openItem(id),
         publishNote: note => openCompose({ note }),
         cover: item => coverHTML(item)

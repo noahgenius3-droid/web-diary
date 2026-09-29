@@ -44,6 +44,21 @@ const TASKS: Record<string, { instruction: string; needsText: boolean }> = {
       "Give the writer one fresh, specific journaling prompt to start today's entry. If there is draft text, make the prompt build on it. Output only the prompt.",
     needsText: false,
   },
+  summary: {
+    instruction:
+      "Summarise this note in two to four sentences, then list its key points. Use exactly this format and nothing else:\n<summary>the short summary</summary>\n<points>\n- one key point per line\n</points>",
+    needsText: true,
+  },
+  suggest: {
+    instruction:
+      "Suggest three to five specific, practical ways the writer could improve or build on this note - for example what is unclear, what detail or feeling is missing, a better structure, a next step, or a question worth answering. Be encouraging and concrete; quote the part of the note you mean where it helps. Use exactly this format and nothing else:\n<suggestions>\n- one suggestion per line\n</suggestions>",
+    needsText: true,
+  },
+  voice: {
+    instruction:
+      "This is a raw speech-to-text transcript of a voice recording (it may be the writer thinking aloud, a meeting or a conversation). Turn it into a well-organised note. Fix obvious mis-heard words, punctuation and filler (um, uh, you know), but keep the meaning and the speaker's own words and voice; never invent facts. If several people clearly speak, mark turns as 'Speaker 1:', 'Speaker 2:' only when it is obvious.\n\nUse exactly this format and nothing else:\n<title>a short title, at most 8 words</title>\n<summary>two to four sentences summarising it</summary>\n<points>\n- the key points, one per line\n</points>\n<actions>\n- any tasks, decisions or follow-ups mentioned, one per line (leave empty if none)\n</actions>\n<note>\nthe cleaned-up note in paragraphs\n</note>\n<suggestions>\n- three to five specific suggestions to improve or build on this note, one per line\n</suggestions>",
+    needsText: true,
+  },
 };
 
 const MAX_TEXT = 20000;

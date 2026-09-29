@@ -41,7 +41,13 @@ document.addEventListener('DOMContentLoaded', () => {
             if (c.list === null) await loadCommunities();
             return (c.list || []).filter(x => c.memberships.has(x.id));
         },
-        postNoteTo: (cm, note) => postNoteTo(cm, note)
+        postNoteTo: (cm, note) => postNoteTo(cm, note),
+        // For Explore: every community you can see, biggest first, with whether you're in it
+        async all() {
+            if (c.list === null) await loadCommunities();
+            return (c.list || []).map(x => ({ ...x, joined: c.memberships.has(x.id), size: (x.members && x.members[0] && x.members[0].count) || 0 }))
+                .sort((a, b) => b.size - a.size);
+        }
     };
 
     function reset() {

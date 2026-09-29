@@ -1,0 +1,272 @@
+// Explore: what's trending in your circle — hot posts, #tags, reels, who's live, the Library and communities —
+// with one search box across all of it. Everything comes from data the other pages already load (so it
+// respects the same privacy rules); posts are ranked by likes, comments and reposts, fading with age.
+document.addEventListener('DOMContentLoaded', () => {
+    const app = window.diaryApp;
+    const social = window.diarySocial;
+    if (!app || !social || !social.available) return;
+    const I = social.internals;
+    const { esc, avatar, timeAgo } = I;
+    const s = I.state;
+    const content = document.getElementById('content');
+    const FEED_BUCKET = 'diary-feed';
+    const TABS = [['all', 'For you'], ['posts', 'Posts'], ['reels', 'Reels'], ['live', 'Live'], ['library', 'Library'], ['groups', 'Communities'], ['people', 'People']];
+    const TILE_TINTS = [['#4f46e5', '#a855f7'], ['#0f766e', '#22c55e'], ['#be123c', '#f97316'], ['#1d4ed8', '#06b6d4'], ['#7c2d12', '#eab308'], ['#6d28d9', '#ec4899']];
+
+    const E = { tab: 'all', query: '', groups: null, groupsLoading: false };
+
+    // ---------- Ranking ----------
+    function score(p) {
+        const likes = (p.likes || []).length;
+        const comments = I.commentCount(p);
+        const reposts = (p.reposts || []).length;
+        const photos = (p.photos || []).length ? 1 : 0;
+        const hours = Math.max(0, (Date.now() - (p.sortAt || Date.parse(p.shared_at))) / 3600000);
+        return (1 + likes * 2 + comments * 3 + reposts * 4 + photos) / Math.pow(hours + 2, 1.15);
+    }
+
+    function trendingPosts() {
+        const feed = s.feed || [];
+        const recent = feed.filter(p => Date.now() - Date.parse(p.shared_at) < 14 * 86400000);
+        return (recent.length >= 3 ? recent : feed).slice().sort((a, b) => score(b) - score(a));
+    }
+
+    function trendingTags() {
+        const counts = new Map();
+        (s.feed || []).forEach(p => I.hashtags(p).forEach(t => {
+            const cur = counts.get(t) || { n: 0, heat: 0 };
+            counts.set(t, { n: cur.n + 1, heat: cur.heat + score(p) });
+        }));
+        return [...counts.entries()].sort((a, b) => b[1].heat - a[1].heat).slice(0, 10);
+    }
+
+    function trendingReels() {
+        const reels = window.diaryStories ? window.diaryStories.feedReels({}) : [];
+        return reels.slice().sort((a, b) => ((b.likes || []).length * 2 + ((b.comments && b.comments[0] && b.comments[0].count) || 0) * 3)
+            - ((a.likes || []).length * 2 + ((a.comments && a.comments[0] && a.comments[0].count) || 0) * 3)
+            || Date.parse(b.created_at) - Date.parse(a.created_at));
+    }
+
+    async function loadGroups() {
+        if (E.groupsLoading || !window.diaryCommunities || !window.diaryCommunities.all) return;
+        E.groupsLoading = true;
+        try { E.groups = await window.diaryCommunities.all(); } catch (e) { E.groups = []; }
+        E.groupsLoading = false;
+        if (app.state.view === 'explore') app.render();
+    }
+
+    // ---------- Pieces ----------
+    const head = (icon, title, sub, more = '') => `
+        <header class="ex-head">
+            <h3><span class="ex-ic"><svg class="i"><use href="#${icon}"/></svg></span>${title}</h3>
+            ${sub ? `<p>${sub}</p>` : ''}
+            ${more}
+        </header>`;
+
+    function postTile(p, rank) {
+        const photo = (p.photos || []).find(ph => ph && typeof ph.path === 'string');
+        const tint = TILE_TINTS[Math.abs([...p.id].reduce((h, c) => h * 31 + c.charCodeAt(0), 7)) % TILE_TINTS.length];
+        const name = p.author === s.profile.id ? 'You' : ((p.author_profile && p.author_profile.display_name) || 'A friend');
+        const text = (p.title || p.body || '').trim();
+        return `
+            <button type="button" class="ex-tile${photo ? ' photo' : ' text'}${rank < 3 ? ' hot' : ''}" data-action="ex-post" data-id="${esc(p.id)}"
+                style="--t1:${tint[0]};--t2:${tint[1]}" aria-label="${esc(`${name}: ${text.slice(0, 80)}`)}">
+                ${photo ? `<img data-path="${esc(photo.path)}" data-bucket="${FEED_BUCKET}" alt="" loading="lazy">`
+                    : `<span class="ex-tile-text">${p.title ? `<strong>${esc(p.title)}</strong>` : ''}${esc((p.body || '').slice(0, 160))}</span>`}
+                ${rank < 3 ? `<span class="ex-rank">🔥 #${rank + 1}</span>` : ''}
+                <span class="ex-tile-foot">
+                    <span class="ex-who">${avatar({ id: p.author, ...(p.author_profile || {}) }, 'xs')}${esc(name)}</span>
+                    <span class="ex-stats"><svg class="i"><use href="#i-heart-fill"/></svg>${(p.likes || []).length}<svg class="i"><use href="#i-chat"/></svg>${I.commentCount(p)}</span>
+                </span>
+            </button>`;
+    }
+
+    function reelTile(r) {
+        const p = r.author_profile || { display_name: 'Someone' };
+        return `
+            <button type="button" class="ex-reel" data-action="reel-open" data-id="${esc(r.id)}" aria-label="Reel by ${esc(p.display_name)}">
+                ${r.poster_path ? `<img data-path="${esc(r.poster_path)}" data-bucket="diary-reels" alt="" loading="lazy">` : ''}
+                <span class="ex-reel-play" aria-hidden="true"><svg class="i"><use href="#i-play"/></svg></span>
+                <span class="ex-reel-foot"><strong>${esc(p.display_name)}</strong><small><svg class="i"><use href="#i-heart-fill"/></svg>${(r.likes || []).length}</small></span>
+            </button>`;
+    }
+
+    function liveCards() {
+        const list = window.diaryLive ? window.diaryLive.list() : [];
+        const cards = list.map(x => {
+            const p = x.host_profile || { display_name: 'A friend' };
+            const mine = x.host === s.profile.id;
+            return `
+                <button type="button" class="ex-live" data-action="live-watch" data-id="${esc(x.id)}">
+                    <span class="ex-live-av">${avatar({ id: x.host, ...p }, 'lg')}<span class="live-badge">LIVE</span></span>
+                    <strong>${mine ? 'You' : esc(p.display_name)}</strong>
+                    <small>${esc(x.title || 'Live now')}</small>
+                    <small class="muted">started ${timeAgo(x.started_at)}</small>
+                </button>`;
+        }).join('');
+        return `${cards}
+            <button type="button" class="ex-live go" data-action="live-start">
+                <span class="ex-live-av go"><svg class="i"><use href="#i-live"/></svg></span>
+                <strong>Go live</strong>
+                <small>Share what you’re up to — friends get a heads-up</small>
+            </button>`;
+    }
+
+    function bookTile(x) {
+        return `
+            <button type="button" class="ex-book" data-action="lib-open" data-id="${esc(x.id)}">
+                ${window.diaryLibrary.cover(x)}
+                <strong>${esc(x.title)}</strong>
+                <small>${esc((x.author_profile && x.author_profile.display_name) || 'Someone')} · <svg class="i"><use href="#i-heart-fill"/></svg>${(x.likes || []).length}</small>
+            </button>`;
+    }
+
+    function groupCard(g) {
+        return `
+            <div class="ex-group" style="--g:${esc(g.color || '#4f46e5')}">
+                <span class="ex-group-emoji" aria-hidden="true">${esc(g.emoji || '👥')}</span>
+                <span class="ex-group-text"><strong>${esc(g.name)}</strong><small>${g.size} ${g.size === 1 ? 'member' : 'members'}${g.description ? ` · ${esc(g.description.slice(0, 60))}` : ''}</small></span>
+                <button type="button" class="${g.joined ? 'chip' : 'primary-btn small'}" data-action="cm-open" data-id="${esc(g.id)}">${g.joined ? 'Open' : 'View'}</button>
+            </div>`;
+    }
+
+    function personRow(p) {
+        return `
+            <div class="ex-person">
+                ${avatar(p, 'md')}
+                <span class="ex-person-text"><strong>${esc(p.display_name)}</strong><small>${p.mutual ? `${p.mutual} mutual friend${p.mutual === 1 ? '' : 's'}` : `@${esc(p.username)}`}</small></span>
+                <button type="button" class="primary-btn small" data-action="suggest-add" data-username="${esc(p.username)}"><svg class="i"><use href="#i-user-plus"/></svg>Add</button>
+            </div>`;
+    }
+
+    // ---------- Search across everything ----------
+    function searchResults(q) {
+        const has = t => (t || '').toLowerCase().includes(q);
+        const posts = (s.feed || []).filter(p => has(p.title) || has(p.body) || has(p.author_profile && p.author_profile.display_name) || I.hashtags(p).some(t => t.includes(q.replace(/^#/, '')))).slice(0, 12);
+        const tags = trendingTags().filter(([t]) => t.includes(q.replace(/^#/, ''))).slice(0, 8);
+        const people = [...s.friends, ...s.suggestions].filter(p => has(p.display_name) || has(p.username)).slice(0, 8);
+        const groups = (E.groups || []).filter(g => has(g.name) || has(g.description)).slice(0, 6);
+        const books = window.diaryLibrary ? window.diaryLibrary.popular(100).filter(x => has(x.title) || has(x.genre) || has(x.description)).slice(0, 8) : [];
+        const total = posts.length + tags.length + people.length + groups.length + books.length;
+        if (!total) return `<div class="ex-empty"><svg class="i"><use href="#i-search"/></svg><strong>Nothing found for “${esc(q)}”</strong><span>Try a name, a #tag or a word from a post.</span></div>`;
+        return `
+            ${tags.length ? `<section class="ex-sec">${head('i-tag', 'Tags')}<div class="ex-tags">${tags.map(([t, v]) => `<button type="button" class="ex-tag" data-action="ex-tag" data-tag="${esc(t)}">#${esc(t)}<small>${v.n}</small></button>`).join('')}</div></section>` : ''}
+            ${people.length ? `<section class="ex-sec">${head('i-users', 'People')}<div class="ex-people">${people.map(p => s.friends.includes(p)
+                ? `<div class="ex-person">${avatar(p, 'md')}<span class="ex-person-text"><strong>${esc(p.display_name)}</strong><small>@${esc(p.username)} · friend</small></span><button type="button" class="chip" data-action="message-friend" data-id="${esc(p.id)}">Message</button></div>`
+                : personRow(p)).join('')}</div></section>` : ''}
+            ${posts.length ? `<section class="ex-sec">${head('i-feed', 'Posts')}<div class="ex-grid">${posts.map((p, i) => postTile(p, 99 + i)).join('')}</div></section>` : ''}
+            ${books.length ? `<section class="ex-sec">${head('i-book', 'Library')}<div class="ex-row">${books.map(bookTile).join('')}</div></section>` : ''}
+            ${groups.length ? `<section class="ex-sec">${head('i-users', 'Communities')}<div class="ex-groups">${groups.map(groupCard).join('')}</div></section>` : ''}`;
+    }
+
+    // ---------- Page ----------
+    app.views.explore = () => {
+        app.setTitle('Explore');
+        const blocked = I.gate('See what’s trending with your friends — posts, reels, live videos, stories from the Library and communities.');
+        if (blocked) return blocked;
+        I.loadFeed();
+        if (E.groups === null) loadGroups();
+        if (window.diaryLive) window.diaryLive.ensure();
+
+        const loading = s.feed === null;
+        const tab = E.tab;
+        const show = k => tab === 'all' || tab === k;
+        const posts = trendingPosts();
+        const tags = trendingTags();
+        const reels = trendingReels();
+        const books = window.diaryLibrary ? window.diaryLibrary.popular(10) : [];
+        const groups = (E.groups || []).filter(g => !g.joined).slice(0, 6);
+        const allGroups = E.groups || [];
+        const people = s.suggestions || [];
+        const q = E.query;
+
+        const sections = [];
+        if (show('live')) {
+            sections.push(`<section class="ex-sec">${head('i-live', 'Live now', 'Friends broadcasting right now')}<div class="ex-row ex-lives">${liveCards()}</div></section>`);
+        }
+        if (show('posts') && tags.length) {
+            sections.push(`<section class="ex-sec">${head('i-trend', 'Trending tags', 'What your circle is talking about')}
+                <div class="ex-tags">${tags.map(([t, v], i) => `<button type="button" class="ex-tag${i < 3 ? ' top' : ''}" data-action="ex-tag" data-tag="${esc(t)}"><span class="ex-tag-rank">${i + 1}</span>#${esc(t)}<small>${v.n} ${v.n === 1 ? 'post' : 'posts'}</small></button>`).join('')}</div></section>`);
+        }
+        if (show('posts')) {
+            const list = tab === 'posts' ? posts : posts.slice(0, 9);
+            sections.push(`<section class="ex-sec">${head('i-sparkle', 'Trending posts', 'Most loved and talked about this week',
+                tab === 'all' && posts.length > 9 ? '<button type="button" class="link-btn accent ex-more" data-action="ex-tab" data-tab="posts">See all</button>' : '')}
+                ${loading ? `<div class="ex-grid">${'<span class="ex-tile skel"></span>'.repeat(6)}</div>`
+                    : list.length ? `<div class="ex-grid">${list.map((p, i) => postTile(p, i)).join('')}</div>`
+                    : '<div class="ex-empty small"><strong>No posts yet</strong><span>When friends share entries, the most loved ones show up here.</span></div>'}</section>`);
+        }
+        if (show('reels') && (reels.length || tab === 'reels')) {
+            sections.push(`<section class="ex-sec">${head('i-reel', 'Popular reels', 'Short videos your friends are watching',
+                '<button type="button" class="link-btn accent ex-more" data-action="go-reels">Open Reels</button>')}
+                ${reels.length ? `<div class="ex-row">${reels.slice(0, tab === 'reels' ? 30 : 10).map(reelTile).join('')}</div>` : '<div class="ex-empty small"><strong>No reels yet</strong><span>Post one from the Feed with the Video button.</span></div>'}</section>`);
+        }
+        if (show('library') && window.diaryLibrary && (books.length || tab === 'library')) {
+            sections.push(`<section class="ex-sec">${head('i-book', 'Top in the Library', 'Stories, poems and books people love',
+                '<button type="button" class="link-btn accent ex-more" data-action="go-library">Browse</button>')}
+                ${books.length ? `<div class="ex-row">${books.map(bookTile).join('')}</div>` : '<div class="ex-empty small"><strong>The Library is quiet</strong><span>Publish a story or poem to get it started.</span></div>'}</section>`);
+        }
+        if (show('groups')) {
+            const list = tab === 'groups' ? allGroups : groups;
+            if (list.length || tab === 'groups') {
+                sections.push(`<section class="ex-sec">${head('i-users', tab === 'groups' ? 'Communities' : 'Communities to join', 'The biggest groups on Cordial')}
+                    ${E.groups === null ? '<p class="muted">Loading communities…</p>' : list.length ? `<div class="ex-groups">${list.map(groupCard).join('')}</div>` : '<div class="ex-empty small"><strong>You’re in every community</strong><span>Start a new one from the Groups tab.</span></div>'}</section>`);
+            }
+        }
+        if (show('people') && (people.length || tab === 'people')) {
+            sections.push(`<section class="ex-sec">${head('i-user-plus', 'People you may know', 'Friends of your friends')}
+                ${people.length ? `<div class="ex-people">${people.map(personRow).join('')}</div>` : '<div class="ex-empty small"><strong>No suggestions right now</strong><span>Add friends by username from Chats.</span></div>'}</section>`);
+        }
+
+        return `
+            <div class="explore">
+                <section class="ex-hero">
+                    <div class="ex-hero-text">
+                        <p class="ex-kicker"><svg class="i"><use href="#i-trend"/></svg>Trending in your circle</p>
+                        <h2>Discover what your friends love</h2>
+                    </div>
+                    <label class="search ex-search">
+                        <svg class="i"><use href="#i-search"/></svg>
+                        <input type="search" id="ex-search" placeholder="Search posts, #tags, people, books and communities" aria-label="Search Explore" value="${esc(q)}" enterkeyhint="search" autocomplete="off">
+                    </label>
+                </section>
+                <nav class="ex-tabs" role="tablist" aria-label="Show">
+                    ${TABS.map(([k, l]) => `<button type="button" class="cm-filter" role="tab" aria-selected="${tab === k}" data-action="ex-tab" data-tab="${k}">${l}</button>`).join('')}
+                </nav>
+                <div id="ex-body">${q ? searchResults(q) : sections.join('')}</div>
+            </div>`;
+    };
+
+    // Search re-draws only the results, so typing keeps its focus
+    content.addEventListener('input', e => {
+        if (e.target.id !== 'ex-search') return;
+        E.query = e.target.value.trim().toLowerCase();
+        const body = document.getElementById('ex-body');
+        if (!body) return;
+        if (E.query) body.innerHTML = searchResults(E.query);
+        else app.render();
+        I.hydrateStorage(body);
+    });
+
+    Object.assign(app.actions, {
+        'ex-tab': el => {
+            E.tab = el.dataset.tab;
+            E.query = '';
+            app.render();
+        },
+        'ex-post': el => {
+            if (!I.openEntry(el.dataset.id)) app.showToast('That post isn’t available any more');
+        },
+        'ex-tag': el => {
+            s.feedAuthor = null;
+            s.feedFilter = `tag:${el.dataset.tag}`;
+            app.setView('feed');
+        }
+    });
+
+    const previousAfter = app.hooks.afterRender;
+    app.hooks.afterRender = view => {
+        if (previousAfter) previousAfter(view);
+        if (view === 'explore') I.hydrateStorage(content);
+    };
+});

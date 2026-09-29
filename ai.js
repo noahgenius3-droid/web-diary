@@ -49,9 +49,43 @@ document.addEventListener('DOMContentLoaded', () => {
         prompt: { label: 'Give me a writing prompt', icon: 'i-bulb', working: 'Finding a prompt…' },
         continue: { label: 'Continue writing', icon: 'i-pencil', working: 'Continuing your entry…' },
         improve: { label: 'Polish my wording', icon: 'i-sparkle', working: 'Polishing…' },
+        summary: { label: 'Summarise this note', icon: 'i-list', working: 'Summarising…', tagged: true },
+        suggest: { label: 'How can I improve it?', icon: 'i-bulb', working: 'Looking for ideas…', tagged: true },
         title: { label: 'Suggest a title', icon: 'i-tag', working: 'Thinking of a title…' },
         reflect: { label: 'Reflect on this entry', icon: 'i-heart', working: 'Reflecting…' }
     };
+
+    // Some tasks answer in simple tags (<summary>…</summary>, <points>- a\n- b</points>); these read them,
+    // even half-way through the stream
+    function tagged(text, tag) {
+        const m = text.match(new RegExp(`<${tag}>([\\s\\S]*?)(?:</${tag}>|$)`));
+        return m ? m[1].trim() : '';
+    }
+    const listOf = s => s.split('\n').map(l => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim()).filter(Boolean);
+
+    function taggedHTML(text) {
+        const parts = [];
+        const summary = tagged(text, 'summary');
+        const points = listOf(tagged(text, 'points'));
+        const tips = listOf(tagged(text, 'suggestions'));
+        if (summary) parts.push(`<p class="ai-sec">Summary</p><p>${esc(summary)}</p>`);
+        if (points.length) parts.push(`<p class="ai-sec">Key points</p><ul>${points.map(p => `<li>${esc(p)}</li>`).join('')}</ul>`);
+        if (tips.length) parts.push(`<p class="ai-sec">Ideas to improve it</p><ul class="ai-tips">${tips.map(p => `<li>${esc(p)}</li>`).join('')}</ul>`);
+        return parts.join('') || `<p>${esc(text.replace(/<[^>]*>/g, ''))}</p>`;
+    }
+
+    function taggedText(text) {
+        const out = [];
+        const summary = tagged(text, 'summary');
+        const points = listOf(tagged(text, 'points'));
+        const tips = listOf(tagged(text, 'suggestions'));
+        if (summary) out.push(`Summary\n${summary}`);
+        if (points.length) out.push(`Key points\n${points.map(p => `• ${p}`).join('\n')}`);
+        if (tips.length) out.push(`Ideas to improve this note\n${tips.map(p => `☐ ${p}`).join('\n')}`);
+        return out.join('\n\n');
+    }
+
+    window.diaryAI = { stream: streamAI, tagged, listOf };
 
     $('editor-ai').addEventListener('click', e => {
         if ($('editor-private').checked) {
@@ -81,7 +115,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         let result = '';
         try {
-            result = await streamAI({ mode: 'assist', task, title, text }, t => { output.textContent = t; }, current.signal);
+            result = await streamAI({ mode: 'assist', task, title, text }, t => {
+                if (TASKS[task].tagged) output.innerHTML = taggedHTML(t);
+                else output.textContent = t;
+            }, current.signal);
         } catch (err) {
             if (err.name !== 'AbortError') {
                 output.classList.remove('streaming');
@@ -106,6 +143,8 @@ document.addEventListener('DOMContentLoaded', () => {
             improve: ['Replace my entry', () => entry.setText(result)],
             title: ['Use this title', () => entry.setTitle(result.replace(/^["'“]+|["'”]+$/g, '').slice(0, 120))],
             prompt: ['Start with this', () => entry.appendText(result)],
+            summary: ['Add summary to note', () => entry.appendText(taggedText(result))],
+            suggest: ['Add as a checklist', () => entry.appendText(taggedText(result))],
             reflect: null
         }[task];
 

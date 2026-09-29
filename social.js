@@ -74,6 +74,8 @@ document.addEventListener('DOMContentLoaded', () => {
         presence: null
     };
     const FEED_BUCKET = 'diary-feed';
+    const COMMENT_AUDIO = 'diary-comment-audio';
+    const MAX_VOICE_COMMENT = 180; // seconds
     const FEED_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 
     const signedIn = () => !!(s.session && s.profile);
@@ -620,13 +622,37 @@ document.addEventListener('DOMContentLoaded', () => {
         await client.rpc('diary_mark_read', { friend: friendId });
     }
 
-    function openChat(friendId) {
+    function openChat(friendId, opts = {}) {
         s.activeFriend = friendId;
         if (!s.threads[friendId]) loadThread(friendId);
         markRead(friendId);
         s.chatFocused = window.matchMedia('(hover: hover)').matches;
         app.render();
+        // Each open chat is its own history entry, so Back returns to the list
+        if (!opts.fromHistory && app.state.view === 'messages') app.pushRoute({ chat: friendId }, !!(history.state && history.state.chat));
     }
+
+    // Back / Forward between the chat list and a chat
+    app.onRoute(r => {
+        if (r.view !== 'messages' || !s.profile) return;
+        const want = r.chat || null;
+        if (want === s.activeFriend) return;
+        if (want && s.friends.some(f => f.id === want)) {
+            if (app.state.view === 'messages') openChat(want, { fromHistory: true });
+            else s.activeFriend = want; // setView renders it
+        } else if (!want) {
+            const done = () => {
+                s.activeFriend = null;
+                if (app.state.view === 'messages') app.render();
+            };
+            const pane = content.querySelector('.chat-pane');
+            const animated = pane && app.state.view === 'messages' && document.body.classList.contains('chat-open')
+                && !(document.documentElement.dataset.motion === 'reduce' || window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+            if (!animated) return done();
+            pane.classList.add('leaving');
+            setTimeout(done, 220);
+        }
+    });
 
     function saveDraft() {
         const input = $('chat-input');
@@ -864,7 +890,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // ---------- Voice note player ----------
-    function voiceHTML(a) {
+    function voiceHTML(a, bucket = null) {
         const wave = (Array.isArray(a.waveform) && a.waveform.length ? a.waveform : pseudoWave(a.path))
             .slice(0, 60)
             .map(v => Math.max(0.1, Math.min(1, Number(v) || 0.1)));
@@ -879,7 +905,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                 </div>
                 <span class="vn-mic" aria-hidden="true"><svg class="i"><use href="#i-mic"/></svg></span>
-                <audio preload="none" data-path="${esc(a.path)}"></audio>
+                <audio preload="none" data-path="${esc(a.path)}"${bucket ? ` data-bucket="${bucket}"` : ''}></audio>
             </div>`;
     }
 
@@ -1346,7 +1372,7 @@ document.addEventListener('DOMContentLoaded', () => {
         s.feed = feed;
         s.suggestions = suggestRes.error ? [] : suggestRes.data;
         await loadSavedExtra();
-        if (app.state.view === 'feed') app.render();
+        if (app.state.view === 'feed' || app.state.view === 'explore') app.render();
         loadPreviews(feed);
     }
 
@@ -1355,7 +1381,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const ids = feed.filter(p => commentCount(p) > 0).map(p => p.id).slice(0, 60);
         if (!ids.length) return;
         const { data, error } = await client.from('diary_comments')
-            .select('id, body, created_at, author, entry_id, author_profile:diary_profiles!diary_comments_author_fkey(username, display_name, avatar_path)')
+            .select('id, body, audio_path, audio_duration, created_at, author, entry_id, author_profile:diary_profiles!diary_comments_author_fkey(username, display_name, avatar_path)')
             .in('entry_id', ids)
             .order('created_at', { ascending: false })
             .limit(240);
@@ -1699,6 +1725,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 <section class="social-main">
                     ${window.diaryStories ? window.diaryStories.strip() : ''}
+                    ${window.diaryLive ? window.diaryLive.strip() : ''}
                     <button class="new-posts" data-action="feed-refresh"${s.feedStale ? '' : ' hidden'}><svg class="i"><use href="#i-refresh"/></svg>New posts</button>
                     <div class="feed-bar">
                         <div class="feed-tabs" role="tablist" aria-label="Show">
@@ -1719,6 +1746,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="pc-row">
                             ${avatar(s.profile, 'md')}
                             <textarea id="feed-text" rows="1" maxlength="5000" placeholder="What’s new, ${esc(s.profile.display_name.split(' ')[0])}?" aria-label="Write a post"></textarea>
+                            <button type="button" class="pc-quick live" data-action="live-start" aria-label="Go live"><svg class="i"><use href="#i-live"/></svg></button>
                             <button type="button" class="pc-quick" data-action="feed-add-photos" aria-label="Add photos"><svg class="i"><use href="#i-image"/></svg></button>
                         </div>
                         <div class="pc-photos" id="feed-photos" hidden></div>
@@ -1726,6 +1754,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <button type="button" class="pc-tool" data-action="feed-add-photos"><svg class="i"><use href="#i-image"/></svg>Photo</button>
                             <button type="button" class="pc-tool camera" data-action="feed-camera"><svg class="i"><use href="#i-camera"/></svg>Camera</button>
                             <button type="button" class="pc-tool video" data-action="feed-video"><svg class="i"><use href="#i-reel"/></svg>Video</button>
+                            <button type="button" class="pc-tool live" data-action="live-start"><svg class="i"><use href="#i-live"/></svg>Live</button>
                             <button type="button" class="pc-tool story-toggle" data-action="feed-story-toggle" aria-pressed="${s.feedStory}" title="Also add this post to your story"><span class="pc-story-ring" aria-hidden="true"></span>Story</button>
                             <span class="pc-note"><svg class="i"><use href="#i-lock"/></svg>Friends only · also saved to your diary</span>
                             <button type="submit" class="pc-post" id="feed-post-btn">${s.posting ? 'Posting…' : 'Post'}</button>
@@ -2071,7 +2100,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="comment full" data-comment="${esc(c.id)}">
                             ${avatar({ id: c.author, display_name: author.display_name, avatar_path: author.avatar_path }, 'sm')}
                             <div class="c-main">
-                                <p class="c-bubble"><strong>${who(c)}</strong> ${esc(c.body)}</p>
+                                <div class="c-bubble${c.audio_path ? ' has-voice' : ''}"><strong>${who(c)}</strong> ${c.body ? esc(c.body) : ''}
+                                    ${c.audio_path ? voiceHTML({ path: c.audio_path, duration: c.audio_duration }, COMMENT_AUDIO) : ''}</div>
                                 <span class="comment-meta">
                                     <time datetime="${esc(c.created_at)}" title="${esc(fullDate(c.created_at))}">${timeAgo(c.created_at)}</time>
                                     ${mode === 'full' && canComment && c.author !== me && author.username ? ` · <button type="button" class="link-btn" data-pv="reply" data-name="${esc(author.username)}">Reply</button>` : ''}
@@ -2087,6 +2117,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${mode === 'sheet' && canComment ? `
                         <form class="comment-form" data-form="comment" data-key="${key}">
                             <input name="body" maxlength="2000" placeholder="Add a comment…" autocomplete="off" enterkeyhint="send" aria-label="Add a comment">
+                            ${micButton()}
                             <button class="link-btn accent">Post</button>
                         </form>` : ''}
                 </section>`;
@@ -2097,10 +2128,11 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="comments" data-comments="${key}" data-mode="card">
                 ${total ? `<button type="button" class="link-btn muted-link" data-action="post-open" data-key="${key}">View ${total === 1 ? '1 comment' : `all ${total} comments`}</button>` : ''}
                 ${recent.length ? `<div class="comment-preview">${recent.map(c => `
-                    <p class="cp-line" data-action="post-open" data-key="${key}"><strong>${who(c)}</strong> ${esc(c.body)}</p>`).join('')}</div>` : ''}
+                    <p class="cp-line" data-action="post-open" data-key="${key}"><strong>${who(c)}</strong> ${esc(c.body)}${c.audio_path ? `<span class="cp-voice"><svg class="i"><use href="#i-mic"/></svg>Voice comment · ${Media.formatDuration(c.audio_duration || 0)}</span>` : ''}</p>`).join('')}</div>` : ''}
                 ${canComment ? `
                     <form class="comment-form" data-form="comment" data-key="${key}">
                         <input name="body" maxlength="2000" placeholder="Add a comment…" autocomplete="off" enterkeyhint="send" aria-label="Add a comment">
+                        ${micButton()}
                         <button class="link-btn accent">Post</button>
                     </form>` : ''}
             </div>`;
@@ -2130,7 +2162,7 @@ document.addEventListener('DOMContentLoaded', () => {
         repaintComments(key);
         const target = commentTarget(key);
         const { data } = await client.from('diary_comments')
-            .select('id, body, created_at, author, author_profile:diary_profiles!diary_comments_author_fkey(username, display_name, avatar_path)')
+            .select('id, body, audio_path, audio_duration, created_at, author, author_profile:diary_profiles!diary_comments_author_fkey(username, display_name, avatar_path)')
             .eq(target.column, target.id)
             .order('created_at')
             .limit(200);
@@ -2139,11 +2171,11 @@ document.addEventListener('DOMContentLoaded', () => {
         repaintComments(key);
     }
 
-    async function addComment(key, body) {
+    async function addComment(key, body, extra = {}) {
         const target = commentTarget(key);
         const { data, error } = await client.from('diary_comments')
-            .insert({ [target.column]: target.id, body: body.slice(0, 2000) })
-            .select('id, body, created_at, author, author_profile:diary_profiles!diary_comments_author_fkey(username, display_name, avatar_path)')
+            .insert({ [target.column]: target.id, body: body.slice(0, 2000), ...extra })
+            .select('id, body, audio_path, audio_duration, created_at, author, author_profile:diary_profiles!diary_comments_author_fkey(username, display_name, avatar_path)')
             .single();
         if (error) {
             app.showToast(key.startsWith('post:') ? 'Join the community to comment' : 'Couldn’t post your comment');
@@ -2160,9 +2192,97 @@ document.addEventListener('DOMContentLoaded', () => {
         return true;
     }
 
+    // ---------- Voice comments ----------
+    // Tap the mic in any comment box to record; tap Send (or wait for the 3-minute limit) to post it, ✕ to throw it away
+    let vc = null; // the recording in progress: { key, form, recorder, chunks, stream, started, timer }
+
+    function micButton() {
+        if (!navigator.mediaDevices || !window.MediaRecorder) return '';
+        return '<button type="button" class="vc-mic" data-action="comment-mic" aria-label="Record a voice comment" title="Voice comment"><svg class="i"><use href="#i-mic"/></svg></button>';
+    }
+
+    async function startVoiceComment(form) {
+        if (vc) return;
+        let stream;
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+        } catch (e) {
+            return app.showToast('Allow microphone access to record a voice comment');
+        }
+        const type = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg'].find(t => MediaRecorder.isTypeSupported(t));
+        const recorder = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
+        const chunks = [];
+        recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+        recorder.start(250);
+        vc = { key: form.dataset.key, form, recorder, chunks, stream, started: Date.now() };
+        form.classList.add('recording');
+        form.insertAdjacentHTML('beforeend', `
+            <div class="vc-bar" role="status" aria-live="polite">
+                <button type="button" class="vc-cancel" data-action="vc-cancel" aria-label="Discard recording"><svg class="i"><use href="#i-trash"/></svg></button>
+                <span class="vc-dot" aria-hidden="true"></span>
+                <span class="vc-time">0:00</span>
+                <span class="vc-wave" aria-hidden="true">${'<i></i>'.repeat(14)}</span>
+                <button type="button" class="vc-send" data-action="vc-send" aria-label="Send voice comment"><svg class="i"><use href="#i-send"/></svg></button>
+            </div>`);
+        const tick = () => {
+            if (!vc) return;
+            const secs = Math.floor((Date.now() - vc.started) / 1000);
+            const t = vc.form.querySelector('.vc-time');
+            if (t) t.textContent = Media.formatDuration(secs);
+            if (secs >= MAX_VOICE_COMMENT) finishVoiceComment(true);
+        };
+        vc.timer = setInterval(tick, 250);
+        if (navigator.vibrate) navigator.vibrate(12);
+    }
+
+    async function finishVoiceComment(send) {
+        if (!vc) return;
+        const { key, form, recorder, chunks, stream, started, timer } = vc;
+        vc = null;
+        clearInterval(timer);
+        form.classList.remove('recording');
+        form.querySelector('.vc-bar')?.remove();
+        await new Promise(resolve => {
+            recorder.onstop = resolve;
+            if (recorder.state !== 'inactive') recorder.stop();
+            else resolve();
+        });
+        stream.getTracks().forEach(t => t.stop());
+        if (!send) return app.showToast('Voice comment discarded');
+        const duration = Math.min(MAX_VOICE_COMMENT, Math.max(1, Math.round((Date.now() - started) / 1000)));
+        const type = (recorder.mimeType || 'audio/webm').split(';')[0];
+        const blob = new Blob(chunks, { type });
+        if (!blob.size) return app.showToast('Nothing was recorded');
+        const ext = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm';
+        const path = `${s.profile.id}/${randomId()}.${ext}`;
+        form.classList.add('sending');
+        const up = await client.storage.from(COMMENT_AUDIO).upload(path, blob, { contentType: type, upsert: false });
+        if (up.error) {
+            form.classList.remove('sending');
+            return app.showToast('Couldn’t upload your voice comment');
+        }
+        const text = form.querySelector('input[name="body"]');
+        const body = text ? text.value.trim() : '';
+        const ok = await addComment(key, body, { audio_path: path, audio_duration: duration });
+        form.classList.remove('sending');
+        if (!ok) {
+            client.storage.from(COMMENT_AUDIO).remove([path]);
+            return;
+        }
+        if (text) text.value = '';
+        if (form.closest('#post-view')) scrollDetailToEnd();
+        app.showToast('Voice comment posted 🎙️');
+    }
+
+    // Leaving the page or closing the post mid-recording throws the clip away
+    document.addEventListener('visibilitychange', () => { if (document.hidden && vc) finishVoiceComment(false); });
+
     async function deleteComment(key, id) {
+        const found = (s.comments.get(key) || { items: [] }).items.find(c => c.id === id);
         const { error } = await client.from('diary_comments').delete().eq('id', id);
         if (error) return app.showToast('Couldn’t delete that comment');
+        // Your own voice clip goes with it (other people's clips are theirs to keep or delete)
+        if (found && found.audio_path && found.author === s.profile.id) client.storage.from(COMMENT_AUDIO).remove([found.audio_path]);
         const thread = s.comments.get(key);
         if (thread) thread.items = thread.items.filter(c => c.id !== id);
         bumpCommentCount(key, -1);
@@ -2312,6 +2432,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <form class="pv-compose" data-form="comment" data-key="${key}">
                         ${avatar(s.profile, 'sm')}
                         <input name="body" id="pv-input" maxlength="2000" placeholder="${first ? `Reply to ${first}…` : 'Add a comment…'}" autocomplete="off" enterkeyhint="send" aria-label="Add a comment">
+                        ${micButton()}
                         <button class="pv-send" disabled>Post</button>
                     </form>` : `<p class="pv-locked">${o.kind === 'post' ? 'Join the community to comment.' : 'Comments are off for this post.'}</p>`}
             </footer>`;
@@ -2351,9 +2472,8 @@ document.addEventListener('DOMContentLoaded', () => {
             detailReturn = document.activeElement;
             detailClosing = false;
             pv.classList.remove('closing');
-            pv.showModal();
+            pv.showModal(); // the phone's back gesture closes it (see Navigation in script.js)
             document.documentElement.classList.add('pv-lock');
-            if (!(history.state && history.state.postView)) history.pushState({ postView: true }, '');
         }
         paintDetailNav();
         if (opts.focus === 'input') setTimeout(() => $('pv-input')?.focus(), 280);
@@ -2364,6 +2484,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const pv = postView();
         if (!pv || !pv.open || detailClosing) return;
         detailClosing = true;
+        if (vc && pv.contains(vc.form)) finishVoiceComment(false);
         const finish = () => {
             pv.close();
             pv.classList.remove('closing');
@@ -2379,7 +2500,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if (target) target.focus({ preventScroll: true });
             detailReturn = null;
         };
-        if (!fromHistory && history.state && history.state.postView) history.back();
         const reduced = document.documentElement.dataset.motion === 'reduce' || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
         if (reduced) return finish();
         pv.classList.add('closing');
@@ -2498,8 +2618,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const counter = media.querySelector('.slide-count');
             if (counter) counter.textContent = `${index + 1}/${track.children.length}`;
         }, true);
-        // The phone's back button / gesture closes the post instead of leaving the app
-        window.addEventListener('popstate', () => { if (pv.open) closePost(true); });
     })();
 
     // A tap anywhere on a card that isn't a control opens the post (long text still expands in place)
@@ -2536,7 +2654,16 @@ document.addEventListener('DOMContentLoaded', () => {
         client, state: s, esc, avatar, avatarUrl, timeAgo, gate, extFor, randomId, uploadImage, hydrateStorage,
         renderPost, commentCount, openComments, repaintComments, MOOD_EMOJI: () => MOOD_EMOJI,
         respond, openChat, focusPost, commentsBlock, addComment, deleteComment, toggleSaved, postsFor,
-        changeAvatar, removeAvatar, signOut, openAuth,
+        changeAvatar, removeAvatar, signOut, openAuth, hashtags, commentCount,
+        loadFeed: () => { if (s.feed === null) loadFeed(); },
+        // Open a feed post in the post view from anywhere (Explore, notifications), even if its card isn't on screen
+        openEntry(id, opts) {
+            const p = postsFor('entry').find(x => x.id === id);
+            if (!p) return false;
+            postCard(p); // records what the post view needs
+            openPost(`entry:${id}`, opts);
+            return true;
+        },
         setInboxTab(tab) { s.inboxTab = tab; app.render(); }
     };
 
@@ -3002,6 +3129,12 @@ document.addEventListener('DOMContentLoaded', () => {
         'comments-open': el => openPost(el.dataset.key),
         'comments-focus': el => openPost(el.dataset.key, { focus: 'input' }),
         'post-open': el => openPost(el.dataset.key, { focus: el.dataset.focus }),
+        'comment-mic': el => {
+            const form = el.closest('form[data-form="comment"]');
+            if (form) startVoiceComment(form);
+        },
+        'vc-send': () => finishVoiceComment(true),
+        'vc-cancel': () => finishVoiceComment(false),
         'comment-delete': el => deleteComment(el.dataset.key, el.dataset.id),
         // In the post view a photo opens full screen; on a card one tap opens the post (a double tap likes it instead)
         'post-photo': el => {
@@ -3037,6 +3170,8 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         'open-chat': el => openChat(el.dataset.id),
         'close-chat': () => {
+            // Going back through history keeps Back / Forward in step with what's on screen
+            if (history.state && history.state.chat) return history.back();
             const pane = content.querySelector('.chat-pane');
             const animated = pane && document.body.classList.contains('chat-open')
                 && !(document.documentElement.dataset.motion === 'reduce' || window.matchMedia('(prefers-reduced-motion: reduce)').matches);

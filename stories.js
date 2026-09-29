@@ -766,7 +766,7 @@ document.addEventListener('DOMContentLoaded', () => {
         st.reelsLoading = false;
         st.reels = error ? [] : data;
         st.reelsError = !!error;
-        if (app.state.view === 'reels' || app.state.view === 'feed') app.render();
+        if (['reels', 'feed', 'explore'].includes(app.state.view)) app.render();
     }
 
     // ---------- Reels in the feed ----------
@@ -1203,6 +1203,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (del) I.deleteComment(del.dataset.key, del.dataset.id);
         const more = e.target.closest('[data-action="comments-open"]');
         if (more) I.openComments(more.dataset.key);
+        // Voice comments and their players work here too
+        const act = e.target.closest('[data-action]');
+        if (act && !del && !more && app.actions[act.dataset.action]) app.actions[act.dataset.action](act, e);
     });
     sheet.addEventListener('submit', async e => {
         const form = e.target.closest('[data-form="comment"]');

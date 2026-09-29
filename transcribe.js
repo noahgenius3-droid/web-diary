@@ -58,6 +58,8 @@ document.addEventListener('DOMContentLoaded', () => {
         $('tr-title').textContent = mode === 'insert' ? 'Dictate into this note' : 'Record a conversation';
         $('tr-save').textContent = mode === 'insert' ? 'Add to note' : 'Save as note';
         $('tr-keep-row').hidden = mode === 'insert';
+        $('tr-smart').hidden = mode === 'insert';
+        showReview(false);
         // iPhones can't record audio and transcribe at the same time reliably, so audio is opt-in there
         $('tr-keep').checked = !isIOS && mode !== 'insert';
         paint();
@@ -198,8 +200,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function paint() {
+        if (review.active) return;
         const words = t.paragraphs.join(' ').split(/\s+/).filter(Boolean).length;
         $('tr-save').disabled = !t.paragraphs.length && !t.interim;
+        $('tr-smart').disabled = words < 5; // a few words at least, so there's something to summarise
         $('tr-count').textContent = words ? `${words} ${words === 1 ? 'word' : 'words'}` : '';
         if (!t.paragraphs.length && !t.interim) {
             live.innerHTML = `<p class="tr-hint">${t.listening ? 'Listening… start talking.' : 'Tap the mic to start.'}</p>`;
@@ -240,7 +244,137 @@ document.addEventListener('DOMContentLoaded', () => {
         app.openNote(note.id);
     });
 
+    // ---------- Smart note ----------
+    // Claude turns the transcript into a titled note with a summary, key points, action items,
+    // a tidied-up version of what was said, and ideas to improve it. You review it before saving.
+    const esc = app.escapeHTML;
+    const review = { active: false, text: '', done: false, error: '', controller: null, title: null };
+
+    function showReview(on) {
+        review.active = on;
+        if (!on && review.controller) review.controller.abort();
+        if (!on) review.controller = null;
+        dialog.classList.toggle('reviewing', on);
+        $('tr-review-foot').hidden = !on;
+        dialog.querySelector('.tr-foot').hidden = on;
+        dialog.querySelector('.tr-note').hidden = on;
+        $('tr-keep-row').hidden = on || t.mode === 'insert';
+        $('tr-lang').hidden = on;
+        $('tr-title').textContent = on ? 'Smart note' : (t.mode === 'insert' ? 'Dictate into this note' : 'Record a conversation');
+    }
+
+    function transcript() {
+        return t.paragraphs.map(p => p.trim()).filter(Boolean).join('\n\n');
+    }
+
+    $('tr-smart').addEventListener('click', async () => {
+        if (!window.diaryAI || !window.diarySocial) return;
+        if (!window.diarySocial.requireSignIn('Sign in to turn recordings into smart notes.')) return;
+        pause();
+        const text = transcript();
+        if (!text) return;
+        Object.assign(review, { text: '', done: false, error: '', title: null });
+        showReview(true);
+        const controller = review.controller = new AbortController();
+        paintReview();
+        try {
+            await window.diaryAI.stream({ mode: 'assist', task: 'voice', text }, out => {
+                if (review.controller !== controller) return;
+                review.text = out;
+                paintReview();
+            }, controller.signal);
+            if (review.controller !== controller) return;
+            review.done = true;
+        } catch (err) {
+            if (err.name === 'AbortError' || review.controller !== controller) return;
+            review.error = err.message || 'The assistant is unavailable right now.';
+        }
+        paintReview();
+    });
+
+    function reviewParts() {
+        const A = window.diaryAI;
+        const x = review.text;
+        return {
+            title: A.tagged(x, 'title').replace(/^["'“]+|["'”]+$/g, ''),
+            summary: A.tagged(x, 'summary'),
+            points: A.listOf(A.tagged(x, 'points')),
+            actions: A.listOf(A.tagged(x, 'actions')).filter(a => !/^\(?none|^n\/a/i.test(a)),
+            note: A.tagged(x, 'note'),
+            tips: A.listOf(A.tagged(x, 'suggestions'))
+        };
+    }
+
+    function paintReview() {
+        const p = reviewParts();
+        const x = review.text;
+        const stage = review.error ? '' : review.done ? '' :
+            x.includes('<suggestions>') ? 'Thinking of ways to improve it…' :
+            x.includes('<note>') ? 'Tidying up what was said…' :
+            x.includes('<actions>') ? 'Finding action items…' :
+            x.includes('<points>') ? 'Pulling out the key points…' :
+            x.includes('<summary>') ? 'Writing a summary…' : 'Listening back to your recording…';
+        const titleInput = $('trr-title');
+        if (titleInput && review.title === null && titleInput.dataset.edited) review.title = titleInput.value;
+        const list = (items, cls = '') => `<ul class="${cls}">${items.map(i => `<li>${esc(i)}</li>`).join('')}</ul>`;
+        const card = (label, icon, body, cls = '') => `
+            <section class="trr-card ${cls}">
+                <h4><svg class="i"><use href="#${icon}"/></svg>${label}</h4>
+                ${body}
+            </section>`;
+        live.innerHTML = `
+            <div class="trr">
+                ${review.error ? `<p class="trr-error">${esc(review.error)} <button type="button" class="link-btn accent" id="trr-retry">Try again</button></p>` : ''}
+                ${stage ? `<p class="trr-status"><span class="trr-spark" aria-hidden="true"></span>${stage}</p>` : ''}
+                <input class="trr-title" id="trr-title" maxlength="120" placeholder="${review.done ? 'Add a title' : 'Title coming…'}" aria-label="Title"
+                    value="${esc(review.title ?? p.title)}"${review.done ? '' : ' readonly'}>
+                ${p.summary ? card('Summary', 'i-sparkle', `<p>${esc(p.summary)}</p>`, 'trr-summary') : (!review.error ? '<div class="trr-skel"><i></i><i></i><i></i></div>' : '')}
+                ${p.points.length ? card('Key points', 'i-list', list(p.points)) : ''}
+                ${p.actions.length ? card('Action items', 'i-check', list(p.actions, 'trr-checks')) : ''}
+                ${p.note ? card('Note', 'i-notes', p.note.split(/\n+/).filter(Boolean).map(l => `<p>${esc(l)}</p>`).join(''), 'trr-note') : ''}
+                ${p.tips.length ? card('Ideas to improve it', 'i-bulb', list(p.tips), 'trr-tips') : ''}
+            </div>`;
+        $('tr-save-smart').disabled = !review.done || !(p.note || p.summary);
+        if (!review.done) live.scrollTop = live.scrollHeight;
+    }
+
+    live.addEventListener('input', e => {
+        if (e.target.id === 'trr-title') {
+            e.target.dataset.edited = '1';
+            review.title = e.target.value;
+        }
+    });
+    live.addEventListener('click', e => {
+        if (e.target.id === 'trr-retry') $('tr-smart').click();
+    });
+
+    $('tr-back-edit').addEventListener('click', () => {
+        showReview(false);
+        paint();
+    });
+
+    $('tr-save-smart').addEventListener('click', async () => {
+        const p = reviewParts();
+        const title = (review.title ?? p.title).trim() || 'Voice note';
+        const paras = s => s.split(/\n+/).filter(Boolean).map(l => `<p>${esc(l)}</p>`).join('');
+        const ul = (items, box) => `<ul>${items.map(i => `<li>${box ? '☐ ' : ''}${esc(i)}</li>`).join('')}</ul>`;
+        const html = [
+            p.summary ? `<blockquote><strong>Summary</strong><br>${esc(p.summary)}</blockquote>` : '',
+            p.points.length ? `<p><strong>Key points</strong></p>${ul(p.points)}` : '',
+            p.actions.length ? `<p><strong>Action items</strong></p>${ul(p.actions, true)}` : '',
+            p.note ? `<p><strong>Note</strong></p>${paras(p.note)}` : '',
+            $('tr-ideas').checked && p.tips.length ? `<p><strong>Ideas to improve this note</strong></p>${ul(p.tips, true)}` : '',
+            `<p><strong>Original transcript</strong></p>${paras(transcript())}`
+        ].join('');
+        const audio = await stopAudio();
+        finish();
+        const note = await app.createEntry({ title, html }, audio ? [audio] : []);
+        app.showToast('Smart note saved ✨');
+        app.openNote(note.id);
+    });
+
     async function discard() {
+        if (review.active && review.controller) review.controller.abort();
         const hasText = t.paragraphs.length || t.interim;
         if (hasText) {
             if (t.listening) pause();
@@ -252,6 +386,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function finish() {
+        showReview(false);
         t.listening = false;
         clearInterval(t.timer);
         stopRecognition();

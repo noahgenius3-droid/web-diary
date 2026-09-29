@@ -246,12 +246,139 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Navigation ----------
-    function setView(view, extra = {}) {
+    // Every page is a browser history entry (#/feed, #/community/<id> …), so Back / Forward and the phone's
+    // back gesture move between pages. Open sheets and dialogs share one extra entry on top: Back closes the
+    // top one instead of leaving the page.
+    const ROUTE_KEYS = { community: 'communityId', folder: 'folderId' };
+    const ROOT_VIEWS = ['home', 'feed', 'explore', 'communities', 'messages'];
+    const routeListeners = [];
+    let ignorePops = 0;
+
+    function routeFor(view, extra = {}) {
+        const key = ROUTE_KEYS[view];
+        const r = { app: true, view };
+        if (key && (extra[key] ?? state[key])) r[key] = extra[key] ?? state[key];
+        if (extra.chat) r.chat = extra.chat;
+        return r;
+    }
+
+    function hashFor(r) {
+        const key = ROUTE_KEYS[r.view];
+        return `#/${r.view}${key && r[key] ? `/${encodeURIComponent(r[key])}` : ''}${r.chat ? `/chat/${encodeURIComponent(r.chat)}` : ''}`;
+    }
+
+    function parseHash() {
+        const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
+        if (!parts.length || !views[parts[0]] && !['home', 'folder', 'calendar', 'insights', 'photos', 'archive', 'trash', 'highlights'].includes(parts[0])) return null;
+        const r = { app: true, view: parts[0] };
+        const key = ROUTE_KEYS[r.view];
+        if (key) {
+            if (!parts[1]) return null;
+            r[key] = parts[1];
+        }
+        const c = parts.indexOf('chat');
+        if (c > -1 && parts[c + 1]) r.chat = parts[c + 1];
+        return r;
+    }
+
+    // Adds (or replaces) the history entry for where you are now
+    function pushRoute(extra = {}, replace = false) {
+        const r = routeFor(state.view, extra);
+        const url = hashFor(r);
+        const current = history.state;
+        if (!replace && current && current.app && !current.overlay && location.hash === url) return;
+        r.depth = replace ? (current && current.depth) || 0 : ((current && current.depth) || 0) + 1;
+        if (current && current.overlay) replace = true; // never stack a page on top of a closed sheet's entry
+        history[replace ? 'replaceState' : 'pushState'](r, '', url);
+        paintBack();
+    }
+
+    function setView(view, extra = {}, opts = {}) {
         Object.assign(state, { view }, extra);
         render();
         window.scrollTo({ top: 0 });
         document.querySelector('.main-col').scrollTo({ top: 0 });
+        if (!opts.fromHistory) pushRoute({}, opts.replace);
+        else paintBack();
     }
+
+    // Phones: a back arrow in the top bar on pages you reach from somewhere else
+    function paintBack() {
+        const btn = $('top-back');
+        if (!btn) return;
+        const depth = (history.state && history.state.depth) || 0;
+        btn.hidden = ROOT_VIEWS.includes(state.view) || depth < 1;
+        document.body.classList.toggle('has-back', !btn.hidden);
+    }
+    $('top-back').addEventListener('click', () => history.back());
+
+    function topModal() {
+        const open = [...document.querySelectorAll('dialog[open]')].filter(d => {
+            try { return d.matches(':modal'); } catch (e) { return true; }
+        });
+        return open.pop() || null;
+    }
+
+    // Any sheet or dialog that opens gets the one shared history entry…
+    const nativeShowModal = HTMLDialogElement.prototype.showModal;
+    HTMLDialogElement.prototype.showModal = function () {
+        nativeShowModal.call(this);
+        if (!this.dataset.navWatch) {
+            this.dataset.navWatch = '1';
+            this.addEventListener('close', onModalClosed);
+        }
+        if (!(history.state && history.state.overlay)) {
+            history.pushState({ ...(history.state || routeFor(state.view)), overlay: true }, '', location.hash);
+        }
+    };
+    // …and gives it back when the last one closes from inside the app
+    function onModalClosed() {
+        setTimeout(() => {
+            if (topModal()) return; // another sheet is still (or now) open
+            if (history.state && history.state.overlay) {
+                ignorePops++;
+                history.back();
+            }
+        }, 0);
+    }
+
+    window.addEventListener('popstate', e => {
+        if (ignorePops) {
+            ignorePops--;
+            return;
+        }
+        const top = topModal();
+        if (top) {
+            // Back closes the top sheet the same way Esc would (so its own cleanup and "discard?" checks run)
+            const ev = new Event('cancel', { cancelable: true });
+            if (top.dispatchEvent(ev)) top.close();
+            setTimeout(() => {
+                if (topModal() && !(history.state && history.state.overlay)) {
+                    history.pushState({ ...(history.state || routeFor(state.view)), overlay: true }, '', location.hash);
+                }
+            }, 0);
+            return;
+        }
+        closePopover();
+        const r = e.state && e.state.app ? e.state : parseHash();
+        if (!r) return;
+        routeListeners.forEach(fn => fn(r));
+        const key = ROUTE_KEYS[r.view];
+        const same = r.view === state.view && (!key || String(state[key]) === String(r[key]));
+        if (!same) setView(r.view, key ? { [key]: r[key] } : {}, { fromHistory: true });
+        else paintBack();
+    });
+
+    // Open the page in the address bar (after every script has added its pages)
+    setTimeout(() => {
+        const r = parseHash();
+        if (r && r.view !== state.view) {
+            const key = ROUTE_KEYS[r.view];
+            setView(r.view, key ? { [key]: r[key] } : {}, { replace: true });
+        } else {
+            pushRoute({}, true);
+        }
+    }, 0);
 
     // Phones: search lives behind an icon so every screen keeps its space
     $('search-toggle').addEventListener('click', () => {
@@ -1972,7 +2099,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function openMainMenu(anchor) {
         const nav = [['home', 'Notes', 'i-notes'], ['calendar', 'Calendar', 'i-calendar'], ['insights', 'Insights', 'i-chart'],
-            ['photos', 'Photos', 'i-image'], ['highlights', 'Highlights', 'i-marker'], ['feed', 'Feed', 'i-feed'], ['reels', 'Reels', 'i-reel'], ['library', 'Library', 'i-book'], ['communities', 'Communities', 'i-users'], ['messages', 'Messages', 'i-chat'],
+            ['photos', 'Photos', 'i-image'], ['highlights', 'Highlights', 'i-marker'], ['feed', 'Feed', 'i-feed'], ['explore', 'Explore', 'i-compass'], ['reels', 'Reels', 'i-reel'], ['library', 'Library', 'i-book'], ['communities', 'Communities', 'i-users'], ['messages', 'Messages', 'i-chat'],
             ['archive', 'Archive', 'i-archive'], ['trash', 'Trash', 'i-trash']]
             .map(([view, label, icon]) => ({ label, icon, cls: 'mobile-only', onClick: () => setView(view) }));
         openPopover(anchor, [
@@ -2152,7 +2279,7 @@ document.addEventListener('DOMContentLoaded', () => {
         getNotes: () => notes,
         newEntry: defaults => openEditor(null, defaults),
         // Used by the feed composer: stores the files on this device and saves the entry in one go
-        async createEntry({ title = '', text = '', shared = false, color = null }, files = []) {
+        async createEntry({ title = '', text = '', html = null, shared = false, color = null }, files = []) {
             const attachments = [];
             for (const file of files) {
                 const att = { id: uid(), kind: Media.kindOf(file.type || ''), name: file.name || 'photo', type: file.type, size: file.size, ...(file.duration ? { duration: file.duration } : {}) };
@@ -2160,7 +2287,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 attachments.push(att);
             }
             const n = migrateNote({
-                id: uid(), title, text, html: Rich.textToHTML(text), shared, attachments,
+                id: uid(), title,
+                text: html ? Rich.toText(Rich.sanitize(html)) : text,
+                html: html ? Rich.sanitize(html) : Rich.textToHTML(text), shared, attachments,
                 color: color || COLORS[notes.length % COLORS.length], createdAt: Date.now()
             }, notes.length);
             n.dilute = Dilute.analyse(n);
@@ -2181,6 +2310,7 @@ document.addEventListener('DOMContentLoaded', () => {
             render();
         },
         render, setView, setTitle, showToast, ask, askLink, openPopover, closePopover, setPin, exportData, isDark,
+        pushRoute, onRoute: fn => routeListeners.push(fn),
         escapeHTML, initials, shortDate, dayLabel, dayKey, renameUser, fullText,
         // The AI assistant reads and writes the open entry through this
         editorApi: {
