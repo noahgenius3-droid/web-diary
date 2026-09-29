@@ -298,7 +298,16 @@ document.addEventListener('DOMContentLoaded', () => {
         if (view !== 'messages' || !signedIn()) return;
         const thread = $('chat-thread');
         if (thread) {
-            if (!how.repaint) thread.scrollTop = thread.scrollHeight;
+            if (!how.repaint) {
+                const sep = $('unread-sep');
+                if (sep) sep.scrollIntoView({ block: 'start' });
+                else thread.scrollTop = thread.scrollHeight;
+            }
+            if (s.pendingJump && s.pendingJump.friendId === s.activeFriend && s.threads[s.activeFriend]) {
+                const j = s.pendingJump;
+                s.pendingJump = null;
+                setTimeout(() => jumpToMessage(j.friendId, j.id), 50);
+            }
             hydrateStorage(thread);
         }
         const info = content.querySelector('.chat-info');
@@ -501,6 +510,9 @@ document.addEventListener('DOMContentLoaded', () => {
         await Promise.all([loadFriends(), loadRecent(), loadRemoteIds(), loadSaved(), loadFollows(), loadIncognito()]);
         subscribe();
         emptyIncognitoTrash();
+        loadPrefs().then(() => app.requestRender('messages'));
+        setTimeout(flushOutbox, 1500);
+        if (s.pendingRoute) { const r = s.pendingRoute; s.pendingRoute = null; setTimeout(() => routeTo(r), 300); }
         syncAllShared();
         app.render();
         if (event === 'PASSWORD_RECOVERY') chooseNewPassword();
@@ -571,6 +583,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 payload => onMessageUpdate(payload.new))
             .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'diary_messages', filter: `recipient=eq.${me}` },
                 payload => onMessageUpdate(payload.new))
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_chat_prefs' },
+                payload => onPrefChange(payload))
             .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_incognito' },
                 payload => onIncognitoChange(payload.new))
             .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_friendships' },
@@ -622,6 +636,7 @@ document.addEventListener('DOMContentLoaded', () => {
         (data || []).forEach(r => {
             if (r.online) online.add(r.id);
             if (r.last_seen) s.lastSeen.set(r.id, r.last_seen); else s.lastSeen.delete(r.id);
+            s.receipts.set(r.id, r.receipts !== false);
         });
         s.online = online;
         paintPresence();
@@ -714,7 +729,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------- Messages ----------
     async function loadRecent() {
         const { data, error } = await client.from('diary_messages')
-            .select('id, sender, recipient, body, attachments, created_at, read_at')
+            .select('id, sender, recipient, body, attachments, created_at, read_at, delivered_at, vanish, deleted_at, edited_at')
             .order('created_at', { ascending: false })
             .limit(400);
         if (error) return;
@@ -726,6 +741,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!s.last[other]) s.last[other] = m;
             if (m.recipient === me && !m.read_at) s.unread[m.sender] = (s.unread[m.sender] || 0) + 1;
         });
+        queueDelivered(data.filter(m => m.recipient === me && !m.delivered_at).map(m => m.id));
         updateBadge();
     }
 
@@ -746,6 +762,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const before = sig(s.threads[friendId]);
         if (error && s.threads[friendId]) return; // keep what's on screen if the network hiccups
         s.threads[friendId] = error ? [] : data.reverse();
+        mergeOutbox(friendId);
+        queueDelivered(s.threads[friendId].filter(m => m.recipient === me && !m.delivered_at).map(m => m.id));
         pruneVanished(friendId);
         if (before === sig(s.threads[friendId])) return;
         if (app.state.view === 'messages' && s.activeFriend === friendId) app.requestRender('messages');
@@ -758,7 +776,8 @@ document.addEventListener('DOMContentLoaded', () => {
         s.chatRefreshing = true;
         document.querySelectorAll('[data-action="chat-refresh"]').forEach(b => b.classList.add('spinning'));
         try {
-            await Promise.all([loadFriends(), loadRecent(), loadFollows(), loadIncognito()]);
+            await Promise.all([loadFriends(), loadRecent(), loadFollows(), loadIncognito(), loadPrefs()]);
+            flushOutbox();
             if (s.activeFriend) {
                 await loadThread(s.activeFriend);
                 markRead(s.activeFriend);
@@ -813,6 +832,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function openChat(friendId, opts = {}) {
         if (s.activeFriend && s.activeFriend !== friendId) pruneVanished(s.activeFriend, true);
+        s.unreadMark = { friendId, count: s.unread[friendId] || 0 };
+        if (prefOf('dm', friendId).marked_unread) setPref('dm', friendId, { marked_unread: false });
         s.activeFriend = friendId;
         s.editing = null;
         s.chatOpenedAt[friendId] = Date.now();
@@ -826,9 +847,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Back / Forward between the chat list and a chat
-    app.onRoute(r => {
-        if (r.view !== 'messages' || !s.profile) return;
+    app.onRoute(r => routeTo(r));
+    function routeTo(r) {
+        if (r.view !== 'messages') return;
+        if (!s.profile) { s.pendingRoute = r; return; }
+        if (r.chat && r.msg) s.pendingJump = { friendId: r.chat, id: r.msg };
         const want = r.chat || null;
+        if (want && want === s.activeFriend && s.pendingJump) { const j = s.pendingJump; s.pendingJump = null; jumpToMessage(j.friendId, j.id); return; }
         if (want === s.activeFriend) return;
         if (want && s.friends.some(f => f.id === want)) {
             if (app.state.view === 'messages') openChat(want, { fromHistory: true });
@@ -846,7 +871,7 @@ document.addEventListener('DOMContentLoaded', () => {
             pane.classList.add('leaving');
             setTimeout(done, 220);
         }
-    });
+    }
 
     function saveDraft() {
         const input = $('chat-input');
@@ -945,6 +970,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Upload attachments, then insert the message. Returns false (after telling the user) on failure.
     async function deliver(friendId, html, items, replyTo = null) {
+        if (!items.length && html) return deliverText(friendId, html, replyTo);
         s.sending = true;
         content.querySelector('.composer')?.classList.add('busy');
         const me = s.profile.id;
@@ -962,7 +988,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             }
             const { data, error } = await client.from('diary_messages')
-                .insert({ recipient: friendId, body: html.slice(0, 20000), attachments: uploaded, ...(replyTo ? { reply_to: replyTo } : {}) })
+                .insert({ recipient: friendId, body: html.slice(0, 20000), attachments: uploaded, client_id: randomId(), ...(replyTo ? { reply_to: replyTo } : {}) })
                 .select().single();
             if (error) throw error;
             items.forEach(p => p.preview && URL.revokeObjectURL(p.preview));
@@ -1178,8 +1204,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         s.unread[m.sender] = (s.unread[m.sender] || 0) + 1;
         updateBadge();
+        queueDelivered([m.id]);
         const friend = s.friends.find(f => f.id === m.sender);
-        if (!s.muted.has(m.sender)) app.showToast(m.vanish ? 'New incognito message' : `New message from ${friend ? friend.display_name : 'a friend'}`);
+        if (!isMuted('dm', m.sender)) {
+            app.showToast(m.vanish ? 'New incognito message' : `New message from ${friend ? friend.display_name : 'a friend'}`);
+            const sound = prefOf('dm', m.sender).sound || 'chime';
+            if (sound !== 'none' && window.diaryChatTools) window.diaryChatTools.playSound(sound);
+        }
         if (app.state.view === 'messages') updateConvoRow(m.sender);
     }
 
@@ -1191,14 +1222,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (local) {
             const changed = local.deleted_at !== m.deleted_at || local.body !== m.body || local.edited_at !== m.edited_at || local.restored_at !== m.restored_at
                 || JSON.stringify(local.reactions || {}) !== JSON.stringify(m.reactions || {});
-            Object.assign(local, { read_at: m.read_at, reactions: m.reactions || {}, deleted_at: m.deleted_at, body: m.body, attachments: m.attachments, expires_at: m.expires_at, vanish: m.vanish, edited_at: m.edited_at, restored_at: m.restored_at });
+            Object.assign(local, { read_at: m.read_at, delivered_at: m.delivered_at, reactions: m.reactions || {}, deleted_at: m.deleted_at, body: m.body, attachments: m.attachments, expires_at: m.expires_at, vanish: m.vanish, edited_at: m.edited_at, restored_at: m.restored_at });
             if (changed) repaintMessage(m.id);
             else {
                 const tick = content.querySelector(`[data-msg="${m.id}"] .ticks`);
-                if (tick && m.read_at) {
-                    tick.classList.add('read');
-                    tick.title = 'Read';
-                }
+                if (tick) tick.outerHTML = ticksHTML(local);
             }
         }
         if (s.last[other] && s.last[other].id === m.id) {
@@ -1532,6 +1560,8 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="react-emojis">${REACTIONS.map(e => `<button type="button" data-action="react" data-id="${esc(String(id))}" data-emoji="${e}" aria-label="React ${e}">${e}</button>`).join('')}</div>
             <div class="react-actions">
                 <button type="button" data-action="msg-reply" data-id="${esc(String(id))}"><svg class="i"><use href="#i-reply"/></svg>Reply</button>
+                ${m.vanish ? '' : `<button type="button" data-action="msg-forward" data-id="${esc(String(id))}"><svg class="i"><use href="#i-forward"/></svg>Forward</button>`}
+                ${m.vanish || String(id).startsWith('tmp-') ? '' : `<button type="button" data-action="msg-link" data-id="${esc(String(id))}"><svg class="i"><use href="#i-link"/></svg>Copy link</button>`}
                 ${Rich.toText(m.body || '') && !m.vanish ? `<button type="button" data-action="msg-copy" data-id="${esc(String(id))}"><svg class="i"><use href="#i-notes"/></svg>Copy</button>` : ''}
                 ${mine && canEdit(m) && Rich.toText(m.body || '') ? `<button type="button" data-action="msg-edit" data-id="${esc(String(id))}"><svg class="i"><use href="#i-edit"/></svg>Edit</button>` : ''}
                 <button type="button" class="danger" data-action="msg-delete" data-id="${esc(String(id))}"><svg class="i"><use href="#i-trash"/></svg>Delete</button>
@@ -1624,9 +1654,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const VANISH_MODES = [
         ['seen', 'Vanish after seen'],
         ['1h', 'Vanish after 1 hour'],
-        ['24h', 'Vanish after 24 hours']
+        ['24h', 'Vanish after 24 hours'],
+        ['7d', 'Vanish after 7 days'],
+        ['30d', 'Vanish after 30 days']
     ];
-    const VANISH_TEXT = { seen: 'vanish after they’re seen', '1h': 'vanish an hour after sending', '24h': 'vanish 24 hours after sending' };
+    const VANISH_TEXT = { seen: 'vanish after they’re seen', '1h': 'vanish an hour after sending', '24h': 'vanish 24 hours after sending', '7d': 'vanish 7 days after sending', '30d': 'vanish 30 days after sending' };
 
     function incognitoOf(friendId) {
         const row = s.incognito[friendId];
@@ -1697,7 +1729,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const left = Date.parse(m.expires_at) - Date.now();
         if (!(left > 0)) return 'Vanishing';
         const mins = Math.ceil(left / 60000);
-        return mins > 90 ? `Vanishes in ${Math.round(mins / 60)} h` : `Vanishes in ${mins} min`;
+        return mins > 2880 ? `Vanishes in ${Math.round(mins / 1440)} days` : mins > 90 ? `Vanishes in ${Math.round(mins / 60)} h` : `Vanishes in ${mins} min`;
     }
 
     // Drop vanished messages from a thread. leaving = true also removes seen-and-vanish messages read during
@@ -1760,6 +1792,259 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('focus', () => shield(false));
     document.addEventListener('visibilitychange', () => shield(document.visibilityState !== 'visible'));
 
+
+    // ---------- Chat organisation: pin, archive, mark unread, mute & sound (synced across devices) ----------
+    const FOREVER = '2999-01-01T00:00:00.000Z';
+    s.prefs = new Map();     // "dm:<friend id>" | "gc:<community id>" -> settings row
+    s.receipts = new Map();  // friend id -> false when read receipts are off (theirs or yours)
+    const prefOf = (kind, peer) => s.prefs.get(`${kind}:${peer}`) || {};
+    const isMuted = (kind, peer) => { const u = prefOf(kind, peer).muted_until; return !!u && Date.parse(u) > Date.now(); };
+
+    async function loadPrefs() {
+        const { data, error } = await client.from('diary_chat_prefs').select('*');
+        if (error) return;
+        s.prefs = new Map((data || []).map(r => [`${r.kind}:${r.peer}`, r]));
+        // Chats muted on this device before settings synced: carry them over once
+        if (s.muted && s.muted.size) {
+            for (const id of s.muted) if (!isMuted('dm', id)) await setPref('dm', id, { muted_until: FOREVER });
+            s.muted.clear();
+            try { localStorage.removeItem('diaryMuted'); } catch (e) {}
+        }
+    }
+
+    async function setPref(kind, peer, patch) {
+        const key = `${kind}:${peer}`;
+        const before = s.prefs.get(key);
+        const row = { kind, peer, pinned_at: null, archived: false, marked_unread: false, muted_until: null, sound: null, ...(before || {}), ...patch, updated_at: new Date().toISOString() };
+        s.prefs.set(key, row);
+        if (app.state.view === 'messages') app.requestRender('messages');
+        const { error } = await client.from('diary_chat_prefs').upsert({
+            kind, peer, pinned_at: row.pinned_at, archived: !!row.archived, marked_unread: !!row.marked_unread,
+            muted_until: row.muted_until, sound: row.sound, updated_at: row.updated_at
+        }, { onConflict: 'user_id,kind,peer' });
+        if (error) {
+            if (before) s.prefs.set(key, before); else s.prefs.delete(key);
+            app.requestRender('messages');
+            app.showToast('Couldn’t save that — check your connection');
+            return false;
+        }
+        return true;
+    }
+
+    function onPrefChange(payload) {
+        const row = payload.new && payload.new.kind ? payload.new : null;
+        if (!row) return;
+        s.prefs.set(`${row.kind}:${row.peer}`, row);
+        if (app.state.view === 'messages') app.requestRender('messages');
+    }
+
+    const MUTES = [['1 hour', 3600e3], ['8 hours', 8 * 3600e3], ['1 week', 7 * 86400e3], ['Always', 0]];
+    function dmConv(friend) {
+        return {
+            kind: 'dm', friendId: friend.id,
+            people: () => [{ id: s.profile.id, name: 'You' }, { id: friend.id, name: friend.display_name }],
+            nameOf: id => (id === s.profile.id ? 'You' : friend.display_name),
+            jump: (id, at) => jumpToMessage(friend.id, id, at)
+        };
+    }
+
+    function convoMenu(anchor, friendId) {
+        const p = prefOf('dm', friendId);
+        const friend = s.friends.find(f => f.id === friendId);
+        const muted = isMuted('dm', friendId);
+        const unread = s.unread[friendId] || p.marked_unread;
+        app.openPopover(anchor, [
+            { label: p.pinned_at ? 'Unpin chat' : 'Pin chat', icon: 'i-pin-note', onClick: () => {
+                const pinned = [...s.prefs.values()].filter(r => r.kind === 'dm' && r.pinned_at).length;
+                if (!p.pinned_at && pinned >= 5) return app.showToast('You can pin up to 5 chats');
+                setPref('dm', friendId, { pinned_at: p.pinned_at ? null : new Date().toISOString() });
+            } },
+            { label: unread ? 'Mark as read' : 'Mark as unread', icon: 'i-chat', onClick: () => {
+                if (unread) { setPref('dm', friendId, { marked_unread: false }); markRead(friendId); }
+                else setPref('dm', friendId, { marked_unread: true });
+            } },
+            { label: p.archived ? 'Unarchive' : 'Archive chat', icon: 'i-archive', onClick: () => {
+                setPref('dm', friendId, { archived: !p.archived });
+                app.showToast(p.archived ? 'Moved back to your chats' : `${friend ? friend.display_name.split(' ')[0] : 'Chat'} archived`, p.archived ? null : () => setPref('dm', friendId, { archived: false }));
+            } },
+            muted
+                ? { label: 'Unmute', icon: 'i-bell', onClick: () => setPref('dm', friendId, { muted_until: null }) }
+                : { label: 'Mute…', icon: 'i-bell-off', onClick: () => muteMenu(anchor, 'dm', friendId) },
+            { label: 'Notification sound…', icon: 'i-volume', onClick: () => soundMenu(anchor, 'dm', friendId) }
+        ]);
+    }
+
+    function muteMenu(anchor, kind, peer) {
+        setTimeout(() => app.openPopover(anchor, MUTES.map(([label, ms]) => ({
+            label: `For ${label === 'Always' ? 'ever (until you unmute)' : label}`,
+            icon: 'i-bell-off',
+            onClick: () => {
+                setPref(kind, peer, { muted_until: ms ? new Date(Date.now() + ms).toISOString() : FOREVER });
+                app.showToast(ms ? `Muted for ${label}` : 'Muted');
+            }
+        }))), 0);
+    }
+
+    function soundMenu(anchor, kind, peer) {
+        const current = prefOf(kind, peer).sound || 'chime';
+        const tools = window.diaryChatTools;
+        const names = { chime: 'Chime (default)', pop: 'Pop', bell: 'Bell', soft: 'Soft', none: 'No sound' };
+        setTimeout(() => app.openPopover(anchor, Object.entries(names).map(([k, label]) => ({
+            label: `${current === k ? '✓ ' : ''}${label}`,
+            icon: k === 'none' ? 'i-volume-off' : 'i-volume',
+            onClick: () => {
+                if (tools && k !== 'none') tools.playSound(k);
+                setPref(kind, peer, { sound: k === 'chime' ? null : k });
+            }
+        }))), 0);
+    }
+
+    // ---------- Delivery: sending → sent → delivered → read, and an outbox for when you're offline ----------
+    const outboxKey = () => `diaryOutbox:${s.profile.id}`;
+    const readOutbox = () => load(outboxKey(), []);
+    const writeOutbox = list => { try { localStorage.setItem(outboxKey(), JSON.stringify(list.slice(-100))); } catch (e) {} };
+
+    function ticksHTML(m) {
+        if (m.pending) return '<span class="ticks pending" title="Sending…"><svg class="i"><use href="#i-clock"/></svg></span>';
+        if (m.failed) return `<button type="button" class="ticks failed" data-action="msg-retry" data-id="${esc(String(m.id))}" title="Not sent — tap to try again" aria-label="Not sent. Tap to try again"><svg class="i"><use href="#i-alert"/></svg></button>`;
+        const receipts = s.receipts.get(m.recipient) !== false;
+        if (m.read_at && receipts) return '<span class="ticks read" title="Read"><svg class="i"><use href="#i-checks"/></svg></span>';
+        if (m.delivered_at || m.read_at) return '<span class="ticks delivered" title="Delivered"><svg class="i"><use href="#i-checks"/></svg></span>';
+        return '<span class="ticks sent" title="Sent"><svg class="i"><use href="#i-check"/></svg></span>';
+    }
+
+    // Tell senders their messages reached this device (batched)
+    const deliverQueue = new Set();
+    let deliverTimer = null;
+    function queueDelivered(ids) {
+        ids.forEach(id => { if (typeof id === 'number') deliverQueue.add(id); });
+        clearTimeout(deliverTimer);
+        deliverTimer = setTimeout(() => {
+            const batch = [...deliverQueue];
+            deliverQueue.clear();
+            if (batch.length && signedIn()) client.rpc('diary_mark_delivered', { ids: batch }).then(() => {}, () => {});
+        }, 400);
+    }
+
+    // Text messages show straight away; if the network drops they wait in the outbox and go when it's back
+    async function deliverText(friendId, html, replyTo) {
+        const me = s.profile.id;
+        const temp = { id: `tmp-${randomId()}`, client_id: randomId(), sender: me, recipient: friendId, body: html.slice(0, 20000), attachments: [], reply_to: replyTo, reactions: {}, created_at: new Date().toISOString(), pending: true };
+        (s.threads[friendId] = s.threads[friendId] || []).push(temp);
+        s.last[friendId] = temp;
+        s.unreadMark = null;
+        appendMessage(temp);
+        updateConvoRow(friendId);
+        const ok = await sendQueued(temp);
+        if (!ok) {
+            const list = readOutbox().filter(x => x.client_id !== temp.client_id);
+            list.push({ id: temp.id, client_id: temp.client_id, recipient: friendId, body: temp.body, reply_to: replyTo, created_at: temp.created_at });
+            writeOutbox(list);
+            app.showToast(navigator.onLine ? 'Message not sent — tap the red mark to retry' : 'You’re offline — it’ll send when you’re back online');
+        }
+        return true;
+    }
+
+    async function sendQueued(temp) {
+        temp.pending = true;
+        temp.failed = false;
+        repaintMessage(temp.id);
+        let { data, error } = await client.from('diary_messages')
+            .insert({ recipient: temp.recipient, body: temp.body, attachments: [], client_id: temp.client_id, ...(temp.reply_to ? { reply_to: temp.reply_to } : {}) })
+            .select().single();
+        if (error && error.code === '23505') {
+            // It already went through on an earlier try: use that copy (never a duplicate)
+            ({ data, error } = await client.from('diary_messages').select('*').eq('sender', s.profile.id).eq('client_id', temp.client_id).maybeSingle());
+        }
+        if (error || !data) {
+            temp.pending = false;
+            temp.failed = true;
+            repaintMessage(temp.id);
+            updateConvoRow(temp.recipient);
+            return false;
+        }
+        writeOutbox(readOutbox().filter(x => x.client_id !== temp.client_id));
+        const list = s.threads[temp.recipient] || [];
+        const i = list.findIndex(x => x.id === temp.id || x.client_id === temp.client_id);
+        if (i > -1) list[i] = data;
+        if (s.last[temp.recipient] && (s.last[temp.recipient].id === temp.id)) s.last[temp.recipient] = data;
+        const el = content.querySelector(`[data-msg="${temp.id}"]`);
+        if (el) {
+            el.outerHTML = messageHTML(data, list[i - 1] || null, true);
+            hydrateStorage($('chat-thread'));
+        }
+        updateConvoRow(temp.recipient);
+        return true;
+    }
+
+    // Anything left in the outbox (from a reload or a network drop) is shown and sent again
+    function mergeOutbox(friendId) {
+        const list = s.threads[friendId];
+        if (!list) return;
+        readOutbox().filter(x => x.recipient === friendId && !list.some(m => m.client_id === x.client_id))
+            .forEach(x => list.push({ ...x, sender: s.profile.id, attachments: [], reactions: {}, failed: !navigator.onLine, pending: navigator.onLine }));
+    }
+    let flushing = false;
+    async function flushOutbox() {
+        if (flushing || !signedIn() || !navigator.onLine) return;
+        flushing = true;
+        try {
+            for (const x of readOutbox()) {
+                const thread = s.threads[x.recipient];
+                const temp = (thread && thread.find(m => m.client_id === x.client_id)) || { ...x, sender: s.profile.id, attachments: [], reactions: {} };
+                await sendQueued(temp);
+            }
+        } finally {
+            flushing = false;
+        }
+    }
+    window.addEventListener('online', () => setTimeout(flushOutbox, 800));
+
+    // ---------- Unread divider ----------
+    // Opening a chat with unread messages starts at the first one, under an "unread" line
+    function unreadDividerBefore(thread) {
+        const mark = s.unreadMark;
+        if (!mark || mark.friendId !== s.activeFriend || !mark.count) return null;
+        let left = mark.count;
+        for (let i = thread.length - 1; i >= 0; i--) {
+            if (thread[i].sender !== s.profile.id) {
+                left--;
+                if (left === 0) return thread[i].id;
+            }
+        }
+        return thread.length ? thread.find(m => m.sender !== s.profile.id)?.id : null;
+    }
+
+    // ---------- Message links ----------
+    function messageLink(friendId, id) {
+        return `${location.origin}${location.pathname}#/messages/chat/${encodeURIComponent(friendId)}/m/${encodeURIComponent(id)}`;
+    }
+
+    // Show a specific message: from a link, search or the media gallery — loading older messages if needed
+    async function jumpToMessage(friendId, id, at) {
+        if (s.activeFriend !== friendId) {
+            if (app.state.view !== 'messages') app.setView('messages');
+            openChat(friendId);
+        }
+        const find = () => (s.threads[friendId] || []).some(m => String(m.id) === String(id));
+        for (let tries = 0; tries < 20 && !s.threads[friendId]; tries++) await new Promise(r => setTimeout(r, 150));
+        if (!find()) {
+            const me = s.profile.id;
+            let q = client.from('diary_messages').select('*')
+                .or(`and(sender.eq.${me},recipient.eq.${friendId}),and(sender.eq.${friendId},recipient.eq.${me})`);
+            q = at ? q.gte('created_at', at) : q.gte('id', Number(id));
+            const { data } = await q.order('created_at', { ascending: true }).limit(600);
+            if (data && data.length) {
+                const known = new Set(data.map(m => m.id));
+                s.threads[friendId] = [...data, ...(s.threads[friendId] || []).filter(m => !known.has(m.id) && Date.parse(m.created_at) > Date.parse(data[data.length - 1].created_at))];
+                app.render();
+            }
+        }
+        setTimeout(() => {
+            if (find()) jumpTo(id);
+            else app.showToast('That message isn’t available any more');
+        }, 120);
+    }
 
     // ---------- Typing indicator (a private channel just for the two of you) ----------
     function ensureTyping() {
@@ -3650,7 +3935,7 @@ document.addEventListener('DOMContentLoaded', () => {
         changeAvatar, removeAvatar, signOut, openAuth, hashtags, commentCount, followButton, toggleFollow, loadFollows,
         pickAudio, uploadAudio, voiceHTML, POST_AUDIO, linkTags, emojiPicker, POST_REACTIONS, peopleResults,
         presenceText, refreshPresence, paintPresence, heartbeat,
-        chooseDelete, openRecentlyDeleted, editedTag, showHistory,
+        chooseDelete, openRecentlyDeleted, editedTag, showHistory, prefOf, setPref, isMuted, muteMenu, soundMenu, FOREVER,
         loadFeed: () => { if (s.feed === null) loadFeed(); },
         // Open a feed post in the post view from anywhere (Explore, notifications), even if its card isn't on screen
         openEntry(id, opts) {
@@ -3696,9 +3981,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>`)
             ].join('') || '<p class="inbox-empty">No pending requests.</p>';
         } else {
-            const list = sortedFriends().filter(f => s.inboxTab !== 'unread' || s.unread[f.id]);
+            const archived = f => !!prefOf('dm', f.id).archived;
+            const list = sortedFriends().filter(f => s.inboxTab === 'archived' ? archived(f)
+                : s.inboxTab === 'unread' ? (s.unread[f.id] || prefOf('dm', f.id).marked_unread)
+                : !archived(f));
             rows = list.map(convoRow).join('') ||
-                `<p class="inbox-empty">${s.inboxTab === 'unread' ? 'You’re all caught up.' : 'No friends yet. Tap + to add someone by username.'}</p>`;
+                `<p class="inbox-empty">${s.inboxTab === 'unread' ? 'You’re all caught up.' : s.inboxTab === 'archived' ? 'No archived chats. Archive one from its menu (⋯) to tidy your inbox.' : 'No friends yet. Tap + to add someone by username.'}</p>`;
         }
 
         return `
@@ -3722,7 +4010,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     </label>
                     ${activeNow()}
                     <div class="inbox-tabs" role="tablist">
-                        ${tab('all', 'All', 0)}${tab('unread', 'Unread', unreadCount)}${tab('requests', 'Requests', s.incoming.length)}
+                        ${tab('all', 'All', 0)}${tab('unread', 'Unread', unreadCount)}${tab('requests', 'Requests', s.incoming.length)}${[...s.prefs.values()].some(r => r.kind === 'dm' && r.archived) ? tab('archived', 'Archived', 0) : ''}
                     </div>
                     <div class="convo-list">${rows}</div>
                     <p class="muted small inbox-foot">You’re <strong>@${esc(s.profile.username)}</strong> — share it so friends can add you.</p>
@@ -3762,6 +4050,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function sortedFriends() {
         return [...s.friends].sort((a, b) => {
+            const pa = prefOf('dm', a.id).pinned_at, pb = prefOf('dm', b.id).pinned_at;
+            if (!!pa !== !!pb) return pa ? -1 : 1;
+            if (pa && pb) return Date.parse(pb) - Date.parse(pa);
             const ta = s.last[a.id] ? Date.parse(s.last[a.id].created_at) : 0;
             const tb = s.last[b.id] ? Date.parse(s.last[b.id].created_at) : 0;
             return tb - ta || a.display_name.localeCompare(b.display_name);
@@ -3790,7 +4081,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function convoRow(f) {
         const m = s.last[f.id];
-        const unread = s.unread[f.id];
+        const pref = prefOf('dm', f.id);
+        const unread = s.unread[f.id] || (pref.marked_unread ? '•' : 0);
+        const muted = isMuted('dm', f.id);
         const mine = m && m.sender === s.profile.id;
         const preview = m ? `${mine ? 'You: ' : ''}${previewOf(m)}` : 'Say hello 👋';
         // The row opens the chat; the phone beside it starts a voice call straight from the inbox
@@ -3799,10 +4092,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 <button class="convo${f.id === s.activeFriend ? ' active' : ''}${unread ? ' unread' : ''}" data-action="open-chat" data-id="${esc(f.id)}">
                     ${avatar(f, 'md')}
                     <span class="convo-main">
-                        <span class="convo-top"><strong>${esc(f.display_name)}${incognitoOf(f.id) ? '<svg class="i convo-incognito" aria-label="Incognito on"><use href="#i-incognito"/></svg>' : ''}</strong>${m ? `<time>${shortTime(m.created_at)}</time>` : ''}</span>
-                        <span class="convo-bottom">${mine && !m.deleted_at && !m.vanish ? `<span class="convo-ticks${m.read_at ? ' read' : ''}" aria-label="${m.read_at ? 'Read' : 'Sent'}"><svg class="i"><use href="#i-checks"/></svg></span>` : ''}<span class="convo-preview">${esc(preview)}</span>${unread ? `<span class="badge">${unread}</span>` : ''}</span>
+                        <span class="convo-top"><strong>${esc(f.display_name)}${pref.pinned_at ? '<svg class="i convo-flag" aria-label="Pinned"><use href="#i-pin-note"/></svg>' : ''}${muted ? '<svg class="i convo-flag" aria-label="Muted"><use href="#i-bell-off"/></svg>' : ''}${incognitoOf(f.id) ? '<svg class="i convo-incognito" aria-label="Incognito on"><use href="#i-incognito"/></svg>' : ''}</strong>${m ? `<time>${shortTime(m.created_at)}</time>` : ''}</span>
+                        <span class="convo-bottom">${mine && !m.deleted_at && !m.vanish ? ticksHTML(m).replace('class="ticks', 'class="convo-ticks ticks') : ''}<span class="convo-preview">${esc(preview)}</span>${unread ? `<span class="badge${muted ? ' muted' : ''}">${unread}</span>` : ''}</span>
                     </span>
                 </button>
+                <button type="button" class="convo-more" data-action="convo-menu" data-id="${esc(f.id)}" aria-label="Chat options for ${esc(f.display_name)}" aria-haspopup="menu"><svg class="i"><use href="#i-more"/></svg></button>
                 ${window.diaryCalls ? `<button type="button" class="convo-call" data-action="call-friend" data-id="${esc(f.id)}" aria-label="Voice call ${esc(f.display_name)}" title="Voice call"><svg class="i"><use href="#i-phone"/></svg></button>` : ''}
             </div>`;
     }
@@ -3826,7 +4120,10 @@ document.addEventListener('DOMContentLoaded', () => {
         let body;
         if (!thread) body = '<p class="chat-empty">Loading…</p>';
         else if (!thread.length) body = `<p class="chat-empty">This is the start of your chat with ${esc(friend.display_name)}. Say hi 👋</p>`;
-        else body = thread.map((m, i) => messageHTML(m, thread[i - 1] || null)).join('');
+        else {
+            const firstUnread = unreadDividerBefore(thread);
+            body = thread.map((m, i) => `${m.id === firstUnread ? `<div class="unread-sep" id="unread-sep"><span>${s.unreadMark.count} unread ${s.unreadMark.count === 1 ? 'message' : 'messages'}</span></div>` : ''}${messageHTML(m, thread[i - 1] || null)}`).join('');
+        }
 
         return `
             <header class="chat-head">
@@ -3834,6 +4131,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <button type="button" class="chat-who" data-profile="${esc(friend.id)}" aria-label="View ${esc(friend.display_name)}’s profile">${avatar(friend, 'sm')}</button>
                 <div class="friend-name"><button type="button" class="chat-who-name" data-profile="${esc(friend.id)}">${esc(friend.display_name)}</button><small data-status="${esc(friend.id)}" data-away="@${esc(friend.username)}">${esc(presenceText(friend.id) || `@${friend.username}`)}</small></div>
                 ${window.diaryCalls ? `<button class="icon-btn accent" data-action="call-friend" data-id="${esc(friend.id)}" aria-label="Voice call ${esc(friend.display_name)}" title="Voice call"><svg class="i"><use href="#i-phone"/></svg></button><button class="icon-btn accent" data-action="call-friend" data-video="1" data-id="${esc(friend.id)}" aria-label="Video call ${esc(friend.display_name)}" title="Video call"><svg class="i"><use href="#i-video"/></svg></button>` : ''}
+                <button class="icon-btn" data-action="chat-search" aria-label="Search this chat" title="Search"><svg class="i"><use href="#i-search"/></svg></button>
                 <button class="icon-btn incognito-btn" data-action="chat-incognito" aria-pressed="${!!inc}" aria-label="Incognito chat${inc ? ' (on)' : ''}" title="Incognito chat"><svg class="i"><use href="#i-incognito"/></svg></button>
                 <button class="icon-btn refresh-btn" data-action="chat-refresh" aria-label="Refresh this chat" title="Refresh"><svg class="i"><use href="#i-refresh"/></svg></button>
                 <button class="icon-btn" data-action="chat-wallpaper" aria-label="Chat wallpaper" title="Wallpaper"><svg class="i"><use href="#i-palette"/></svg></button>
@@ -3924,11 +4222,12 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="msg ${mine ? 'out' : 'in'}${grouped ? ' grouped' : ''}${onlyEmoji ? ' jumbo' : ''}${reactions.length ? ' has-reacts' : ''}${m.vanish ? ' vanish' : ''}" data-msg="${id}">
                 ${mine || !friend ? '' : avatar(friend, 'xs')}
                 <div class="msg-card" title="${date.toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' })}">
+                    ${m.forwarded ? '<span class="msg-forwarded"><svg class="i"><use href="#i-forward"/></svg>Forwarded</span>' : ''}
                     ${quote}
                     ${body}
                     ${atts ? `<div class="msg-atts">${atts}</div>` : ''}
-                    <span class="msg-meta">${editedTag('dm', m)}${m.vanish ? `<span class="vanish-mark" title="${esc(vanishTitle(m))}"><svg class="i"><use href="#i-timer"/></svg></span>` : ''}<time>${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</time>${mine && !m.vanish ? `<span class="ticks${m.read_at ? ' read' : ''}" title="${m.read_at ? 'Read' : 'Sent'}"><svg class="i"><use href="#i-checks"/></svg></span>` : ''}</span>
-                    ${reactions.length ? `<div class="msg-reacts">${reactions.map(([e, users]) => `<button type="button" class="react-chip${users.includes(me) ? ' mine' : ''}" data-action="react" data-id="${id}" data-emoji="${esc(e)}" aria-label="${esc(e)} ${users.length}">${esc(e)}${users.length > 1 ? `<span>${users.length}</span>` : ''}</button>`).join('')}</div>` : ''}
+                    <span class="msg-meta">${editedTag('dm', m)}${m.vanish ? `<span class="vanish-mark" title="${esc(vanishTitle(m))}"><svg class="i"><use href="#i-timer"/></svg></span>` : ''}<time>${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</time>${mine && !m.vanish ? ticksHTML(m) : ''}</span>
+                    ${reactions.length ? `<div class="msg-reacts">${reactions.map(([e, users]) => `<button type="button" class="react-chip${users.includes(me) ? ' mine' : ''}" data-action="react" data-id="${id}" data-emoji="${esc(e)}" data-who="${esc(users.map(u => (u === me ? 'You' : (friend && friend.id === u ? friend.display_name : 'Someone'))).join(', '))}" title="${esc(users.map(u => (u === me ? 'You' : (friend && friend.id === u ? friend.display_name : 'Someone'))).join(', '))}" aria-label="${esc(e)} ${users.length}">${esc(e)}${users.length > 1 ? `<span>${users.length}</span>` : ''}</button>`).join('')}</div>` : ''}
                 </div>
                 <div class="msg-tools">
                     <button type="button" data-action="msg-menu" data-id="${id}" aria-label="React or reply"><svg class="i"><use href="#i-smile"/></svg></button>
@@ -3955,7 +4254,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const media = atts.filter(a => a.kind === 'image' || a.kind === 'drawing').slice(-6).reverse();
         const files = atts.filter(a => a.kind === 'file').slice(-5).reverse();
         const voice = atts.filter(a => a.kind === 'audio').length;
-        const muted = s.muted.has(friend.id);
+        const muted = isMuted('dm', friend.id);
         const row = (icon, tone, label, value) => `
             <div class="info-row"><span class="info-ic ${tone}"><svg class="i"><use href="#${icon}"/></svg></span>
             <span>${label}</span><b>${value}</b></div>`;
@@ -3978,6 +4277,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${row('i-heart', 'pink', 'Friends since', new Date(friend.since).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }))}
                     ${row('i-mic', 'yellow', 'Voice notes', voice)}
                 </div>
+                <button class="info-row" data-action="chat-gallery">
+                    <span class="info-ic green"><svg class="i"><use href="#i-image"/></svg></span><span>Media, voice, files &amp; links</span><b>See all</b>
+                </button>
                 <h4 class="info-label">Shared media</h4>
                 ${media.length ? `<div class="info-media">${media.map(a => `<button type="button" class="msg-img" data-action="chat-view-image" data-img="${esc(a.path)}"><img data-path="${esc(a.path)}" alt="${esc(a.name || '')}"></button>`).join('')}</div>` : '<p class="muted small">Photos you share appear here.</p>'}
                 <h4 class="info-label">Files</h4>
@@ -4224,6 +4526,34 @@ document.addEventListener('DOMContentLoaded', () => {
             if (s.addOpen) $('add-friend-input').focus();
         },
         'open-chat': el => openChat(el.dataset.id),
+        'convo-menu': el => convoMenu(el, el.dataset.id),
+        'msg-retry': el => {
+            const m = findMessage(el.dataset.id);
+            if (m) sendQueued(m);
+        },
+        'msg-forward': el => {
+            const m = findMessage(el.dataset.id);
+            closeReactBar();
+            if (m && window.diaryChatTools) window.diaryChatTools.openForward({ kind: 'dm', body: m.body, attachments: m.attachments, bucket: BUCKET });
+        },
+        'msg-link': async el => {
+            closeReactBar();
+            try {
+                await navigator.clipboard.writeText(messageLink(s.activeFriend, el.dataset.id));
+                app.showToast('Link copied — it opens this message for people in this chat');
+            } catch (e) {
+                app.showToast('Couldn’t copy the link');
+            }
+        },
+        'chat-search': () => {
+            const friend = s.friends.find(f => f.id === s.activeFriend);
+            if (!friend || !window.diaryChatTools) return;
+            window.diaryChatTools.openSearch(dmConv(friend));
+        },
+        'chat-gallery': () => {
+            const friend = s.friends.find(f => f.id === s.activeFriend);
+            if (friend && window.diaryChatTools) window.diaryChatTools.openGallery(dmConv(friend));
+        },
         'entry-react-menu': el => emojiPicker(el, emoji => toggleEntryReaction(el.dataset.id, emoji), { chosen: myEntryReactions(el.dataset.id) }),
         'entry-react': el => toggleEntryReaction(el.dataset.id, el.dataset.emoji),
         'chat-incognito': el => incognitoMenu(el),
@@ -4290,11 +4620,9 @@ document.addEventListener('DOMContentLoaded', () => {
         'toggle-info': () => { s.showInfo = !s.showInfo; app.render(); },
         'toggle-mute': () => {
             const id = s.activeFriend;
-            if (s.muted.has(id)) s.muted.delete(id);
-            else s.muted.add(id);
-            try { localStorage.setItem('diaryMuted', JSON.stringify([...s.muted])); } catch (e) {}
-            app.showToast(s.muted.has(id) ? 'Notifications muted' : 'Notifications on');
-            app.render();
+            const on = isMuted('dm', id);
+            setPref('dm', id, { muted_until: on ? null : FOREVER });
+            app.showToast(on ? 'Notifications on' : 'Notifications muted');
         },
         'friend-remove': el => {
             const friend = s.friends.find(f => f.id === el.dataset.id);

@@ -42,6 +42,11 @@ document.addEventListener('DOMContentLoaded', () => {
         presenceChannel: () => (c.presence ? c.presence.channel : null),
         joinCall: (opts = {}) => { if (window.diaryCalls && c.current) window.diaryCalls.joinCommunity(c.current, opts); },
         canInteract: () => !!(c.current && c.memberships.has(c.current.id)),
+        // Open a community straight on its chat (message links, mentions)
+        showChat(id) {
+            if (c.current && c.current.id === id) { c.tab = 'chat'; app.render(); }
+            else c.wantTab = 'chat';
+        },
         toggleLike, postMenu, onRemoteChange, reset,
         // For the note share sheet
         async myGroups() {
@@ -135,7 +140,8 @@ document.addEventListener('DOMContentLoaded', () => {
             app.setView('communities');
             return;
         }
-        Object.assign(c, { current: cm, tab: 'posts', posts: [], members: [], draft: { text: '', photos: [], poll: null }, reactOpen: null });
+        Object.assign(c, { current: cm, tab: c.wantTab || 'posts', posts: [], members: [], draft: { text: '', photos: [], poll: null }, reactOpen: null });
+        c.wantTab = null;
         loadPosts();
         loadMembers();
         app.render();

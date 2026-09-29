@@ -19,7 +19,8 @@ async function getConfig() {
 }
 
 // What each notification says on the lock screen, and where tapping it goes
-function message(type: string, name: string) {
+// deno-lint-ignore no-explicit-any
+function message(type: string, name: string, d: any = {}) {
   switch (type) {
     case "friend_request":
       return { title: "New friend request", body: `${name} wants to be friends on Cordial`, url: "/#/messages", tag: "friend-request" };
@@ -27,6 +28,10 @@ function message(type: string, name: string) {
       return { title: "You're now friends", body: `${name} accepted your friend request — say hi!`, url: "/#/messages", tag: "friend-accepted" };
     case "new_follower":
       return { title: "New follower", body: `${name} started following you`, url: "/#/settings", tag: "new-follower" };
+    case "mention":
+      return { title: `${name} mentioned you`, body: `${d.community_name ? `In ${d.community_name}: ` : ''}${d.snippet || ''}`.slice(0, 180), url: `/#/community/${d.community_id}/m/${d.message_id}`, tag: `gc-${d.community_id}` };
+    case "reply":
+      return { title: `${name} replied to you`, body: `${d.community_name ? `In ${d.community_name}: ` : ''}${d.snippet || ''}`.slice(0, 180), url: `/#/community/${d.community_id}/m/${d.message_id}`, tag: `gc-${d.community_id}` };
     case "live_started":
       return { title: `🔴 ${name} is live`, body: "Tap to watch now", url: "/#/explore", tag: "live" };
     default:
@@ -52,11 +57,11 @@ Deno.serve(async (req) => {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return new Response("Bad request", { status: 400 });
 
   const { data: n } = await admin.from("diary_notifications")
-    .select("id, user_id, actor, type, actor_profile:diary_profiles!diary_notifications_actor_fkey(display_name, username)")
+    .select("id, user_id, actor, type, data, actor_profile:diary_profiles!diary_notifications_actor_fkey(display_name, username)")
     .eq("id", id).maybeSingle();
   if (!n) return new Response("Gone", { status: 200 });
   const actor = (n as any).actor_profile;
-  const text = message(n.type, actor?.display_name || (actor?.username ? `@${actor.username}` : "Someone"));
+  const text = message(n.type, actor?.display_name || (actor?.username ? `@${actor.username}` : "Someone"), (n as any).data || {});
   if (!text) return new Response("Skipped", { status: 200 });
 
   const { data: subs } = await admin.from("diary_push_subscriptions").select("id, endpoint, p256dh, auth").eq("user_id", n.user_id);

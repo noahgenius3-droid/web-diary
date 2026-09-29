@@ -274,12 +274,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const r = { app: true, view };
         if (key && (extra[key] ?? state[key])) r[key] = extra[key] ?? state[key];
         if (extra.chat) r.chat = extra.chat;
+        if (extra.msg) r.msg = extra.msg;
         return r;
     }
 
     function hashFor(r) {
         const key = ROUTE_KEYS[r.view];
-        return `#/${r.view}${key && r[key] ? `/${encodeURIComponent(r[key])}` : ''}${r.chat ? `/chat/${encodeURIComponent(r.chat)}` : ''}`;
+        return `#/${r.view}${key && r[key] ? `/${encodeURIComponent(r[key])}` : ''}${r.chat ? `/chat/${encodeURIComponent(r.chat)}` : ''}${r.msg ? `/m/${encodeURIComponent(r.msg)}` : ''}`;
     }
 
     function parseHash() {
@@ -293,6 +294,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         const c = parts.indexOf('chat');
         if (c > -1 && parts[c + 1]) r.chat = parts[c + 1];
+        const mi = parts.lastIndexOf('m');
+        if (mi > 0 && parts[mi + 1]) r.msg = parts[mi + 1];
         return r;
     }
 
@@ -574,6 +577,11 @@ document.addEventListener('DOMContentLoaded', () => {
             setView(r.view, key ? { [key]: r[key] } : {}, { replace: true });
         } else {
             pushRoute({}, true);
+        }
+        // A link to a chat or a message: keep it in the address bar and let the page open it
+        if (r && (r.chat || r.msg)) {
+            pushRoute({ ...(r.chat ? { chat: r.chat } : {}), ...(r.msg ? { msg: r.msg } : {}) }, true);
+            routeListeners.forEach(fn => fn(r));
         }
     }, 0);
 

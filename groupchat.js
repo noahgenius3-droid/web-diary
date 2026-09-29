@@ -12,6 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const content = $('content');
     const BUCKET = 'diary-community';
     const ROLE = { owner: 'Owner', admin: 'Admin', moderator: 'Mod' };
+    const GC_COLS = 'id, community_id, author, body, attachments, reply_to, created_at, deleted_at, deleted_by, edited_at, restored_at, forwarded, client_id';
 
     const g = {
         cid: null,
@@ -27,10 +28,20 @@ document.addEventListener('DOMContentLoaded', () => {
         sending: false,
         unseen: 0,
         editing: null,       // message being edited
+        reacts: new Map(),   // message id -> { emoji: [user ids] }
+        pendingJump: null,   // { cid, id } from a message link or a mention
         rec: null            // voice note being recorded
     };
 
-    window.diaryGroupChat = { html, refreshMutes };
+    window.diaryGroupChat = {
+        html, refreshMutes,
+        // Open a community's chat at one message (from a mention or reply notification)
+        jump(cid, id) {
+            if (g.cid === cid && !g.loading) return jumpTo(Number(id));
+            g.pendingJump = { cid, id: Number(id) };
+            C.showChat(cid);
+        }
+    };
 
     const me = () => s.profile.id;
     const cm = () => C.current();
@@ -47,7 +58,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function ensure(community) {
         if (g.cid === community.id) return;
         teardown();
-        Object.assign(g, { cid: community.id, messages: [], loading: true, error: false, reply: null, unseen: 0 });
+        Object.assign(g, { cid: community.id, messages: [], loading: true, error: false, reply: null, unseen: 0, reacts: new Map() });
         load();
         subscribe();
         refreshMutes();
@@ -57,7 +68,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function load() {
         const cid = g.cid;
         const { data, error } = await client.from('diary_community_messages')
-            .select('id, community_id, author, body, attachments, reply_to, created_at, deleted_at, deleted_by, edited_at, restored_at')
+            .select(GC_COLS)
             .eq('community_id', cid)
             .order('id', { ascending: false })
             .limit(150);
@@ -66,6 +77,12 @@ document.addEventListener('DOMContentLoaded', () => {
         g.error = !!error;
         g.messages = (data || []).reverse();
         paint({ stick: true });
+        loadReactions(g.messages.map(m => m.id));
+        if (g.pendingJump && g.pendingJump.cid === cid) {
+            const j = g.pendingJump;
+            g.pendingJump = null;
+            jumpTo(j.id);
+        }
     }
 
     async function refreshMutes() {
@@ -98,6 +115,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 paintStatus();
             })
             .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_community_mutes', filter: `community_id=eq.${cid}` }, () => refreshMutes())
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'diary_community_message_reactions' }, ({ new: r }) => {
+                if (g.cid !== cid || !g.messages.some(m => m.id === r.message_id)) return;
+                addReact(r);
+                paint();
+            })
+            .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'diary_community_message_reactions' }, ({ old: r }) => {
+                if (g.cid !== cid || !r || !r.message_id) return;
+                dropReact(r);
+                paint();
+            })
             .subscribe();
     }
 
@@ -160,6 +187,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                     ${window.diaryCalls ? '<button type="button" class="gc-call" data-action="gc-call" aria-label="Start or join the group call" aria-haspopup="menu"><svg class="i"><use href="#i-phone"/></svg><span>Call</span></button>' : ''}
                     ${window.ChatWallpaper ? '<button type="button" class="icon-btn" data-action="gc-wallpaper" aria-label="Chat wallpaper" title="Wallpaper"><svg class="i"><use href="#i-palette"/></svg></button>' : ''}
+                    <button type="button" class="icon-btn" data-action="gc-search" aria-label="Search this group chat" title="Search"><svg class="i"><use href="#i-search"/></svg></button>
+                    <button type="button" class="icon-btn" data-action="gc-gallery" aria-label="Shared media, voice, files and links" title="Media & links"><svg class="i"><use href="#i-image"/></svg></button>
                     <button type="button" class="icon-btn" data-action="gc-recent-deleted" aria-label="Recently deleted messages" title="Recently deleted"><svg class="i"><use href="#i-history"/></svg></button>
                     ${admin ? '<button type="button" class="icon-btn" data-action="cm-chat-settings" aria-label="Chat settings" aria-haspopup="menu"><svg class="i"><use href="#i-settings"/></svg></button>' : ''}
                 </header>
@@ -211,18 +240,20 @@ document.addEventListener('DOMContentLoaded', () => {
         const locations = atts.filter(a => a.kind === 'location' && a.id);
         const voices = atts.filter(a => a.kind === 'audio' && a.path);
         return `
-            <div class="gc-msg${mine ? ' mine' : ''}${grouped ? ' grouped' : ''}${pinned ? ' is-pinned' : ''}" data-mid="${m.id}">
+            <div class="gc-msg${mine ? ' mine' : ''}${grouped ? ' grouped' : ''}${pinned ? ' is-pinned' : ''}${!mine && m.body && s.profile && new RegExp(`@(${s.profile.username}|everyone|all)\\b`, 'i').test(m.body) ? ' mentions-me' : ''}" data-mid="${m.id}">
                 ${!mine ? `<span class="gc-av">${grouped ? '' : `<button type="button" class="gc-who" data-profile="${esc(m.author)}" aria-label="View ${esc(p.display_name)}’s profile">${avatar(p, 'sm')}</button>`}</span>` : ''}
                 <div class="gc-col">
                     ${!mine && !grouped ? `<span class="gc-name"><button type="button" class="gc-who-name" data-profile="${esc(m.author)}">${esc(p.display_name)}</button>${ROLE[role] ? `<span class="gc-role role-${role}">${ROLE[role]}</span>` : ''}</span>` : ''}
                     <div class="gc-bubble">
+                        ${m.forwarded ? '<span class="msg-forwarded"><svg class="i"><use href="#i-forward"/></svg>Forwarded</span>' : ''}
                         ${reply ? `<button type="button" class="gc-quote" data-action="gc-goto" data-id="${reply.id}"><strong>${esc(personOf(reply.author).display_name)}</strong><span>${esc(reply.deleted_at ? 'Message deleted' : (reply.body || (reply.attachments || []).length ? (reply.body || '📎 Attachment') : '')).slice(0, 120)}</span></button>` : ''}
                         ${photos.length ? `<div class="gc-photos n${Math.min(photos.length, 4)}">${photos.slice(0, 4).map(ph => `<button type="button" class="gc-photo" data-action="gc-view-photo" data-path="${esc(ph.path)}"><img data-path="${esc(ph.path)}" data-bucket="${BUCKET}" alt=""></button>`).join('')}</div>` : ''}
                         ${voices.map(a => I.voiceHTML(a, BUCKET)).join('')}
                         ${locations.map(a => window.LiveLocation ? window.LiveLocation.cardHTML(a, { mine, person: p }) : '<p>📍 Live location</p>').join('')}
-                        ${m.body ? `<p class="gc-text">${I.linkTags ? I.linkTags(esc(m.body)) : esc(m.body)}</p>` : ''}
+                        ${m.body ? `<p class="gc-text">${withMentions(I.linkTags ? I.linkTags(esc(m.body)) : esc(m.body))}</p>` : ''}
                         <span class="gc-meta">${I.editedTag ? I.editedTag('gc', m) : ''}${pinned ? '<svg class="i"><use href="#i-pin-note"/></svg>' : ''}${time}</span>
                     </div>
+                    ${reactsHTML(m)}
                 </div>
                 <button type="button" class="gc-more" data-action="gc-menu" data-id="${m.id}" aria-label="Message options"><svg class="i"><use href="#i-more"/></svg></button>
             </div>`;
@@ -343,9 +374,9 @@ document.addEventListener('DOMContentLoaded', () => {
     async function send(body, attachments = []) {
         if (!g.cid || g.sending) return false;
         g.sending = true;
-        const row = { community_id: g.cid, body: body.slice(0, 4000), attachments, reply_to: g.reply ? g.reply.id : null };
+        const row = { community_id: g.cid, body: body.slice(0, 4000), attachments, reply_to: g.reply ? g.reply.id : null, client_id: randomId() };
         const { data, error } = await client.from('diary_community_messages').insert(row)
-            .select('id, community_id, author, body, attachments, reply_to, created_at, deleted_at, deleted_by, edited_at, restored_at').single();
+            .select(GC_COLS).single();
         g.sending = false;
         if (error) {
             const c = cm();
@@ -389,6 +420,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target.id !== 'gc-input') return;
         g.draft = e.target.value;
         autosize(e.target);
+        paintMentions();
         if (e.target.value.trim()) sendTyping();
     });
 
@@ -414,6 +446,141 @@ document.addEventListener('DOMContentLoaded', () => {
         el.classList.add('flash');
         setTimeout(() => el.classList.remove('flash'), 1600);
     }
+
+    // ---------- Reactions ----------
+    // g.reacts: message id -> { emoji: [user ids] }
+    async function loadReactions(ids) {
+        if (!ids.length) return;
+        const { data } = await client.from('diary_community_message_reactions').select('message_id, user_id, emoji').in('message_id', ids.slice(-300));
+        (data || []).forEach(r => addReact(r, false));
+        paint();
+    }
+    function addReact(r, on = true) {
+        const byEmoji = g.reacts.get(r.message_id) || {};
+        const list = byEmoji[r.emoji] || [];
+        if (on === false && list.includes(r.user_id)) return;
+        if (!list.includes(r.user_id)) list.push(r.user_id);
+        byEmoji[r.emoji] = list;
+        g.reacts.set(r.message_id, byEmoji);
+    }
+    function dropReact(r) {
+        const byEmoji = g.reacts.get(r.message_id);
+        if (!byEmoji || !byEmoji[r.emoji]) return;
+        byEmoji[r.emoji] = byEmoji[r.emoji].filter(u => u !== r.user_id);
+        if (!byEmoji[r.emoji].length) delete byEmoji[r.emoji];
+    }
+    async function toggleReact(mid, emoji) {
+        const mine = ((g.reacts.get(mid) || {})[emoji] || []).includes(me());
+        const r = { message_id: mid, user_id: me(), emoji };
+        if (mine) dropReact(r); else addReact(r);
+        paint();
+        const { error } = mine
+            ? await client.from('diary_community_message_reactions').delete().eq('message_id', mid).eq('user_id', me()).eq('emoji', emoji)
+            : await client.from('diary_community_message_reactions').insert({ message_id: mid, emoji });
+        if (error && error.code !== '23505') {
+            if (mine) addReact(r); else dropReact(r);
+            paint();
+            app.showToast('Couldn’t react to that');
+        }
+    }
+    function reactsHTML(m) {
+        const byEmoji = g.reacts.get(m.id);
+        const entries = byEmoji ? Object.entries(byEmoji).filter(([, ids]) => ids.length) : [];
+        if (!entries.length) return '';
+        return `<div class="gc-reacts">${entries.map(([e, ids]) => {
+            const names = ids.map(id => (id === me() ? 'You' : personOf(id).display_name)).join(', ');
+            return `<button type="button" class="react-chip${ids.includes(me()) ? ' mine' : ''}" data-action="gc-react" data-id="${m.id}" data-emoji="${esc(e)}" title="${esc(names)}" aria-label="${esc(e)} ${ids.length}: ${esc(names)}">${esc(e)}${ids.length > 1 ? `<span>${ids.length}</span>` : ''}</button>`;
+        }).join('')}<button type="button" class="react-who" data-action="gc-react-who" data-id="${m.id}" aria-label="See who reacted"><svg class="i"><use href="#i-users"/></svg></button></div>`;
+    }
+
+    // ---------- @mentions ----------
+    function withMentions(html) {
+        return html.replace(/(^|[\s(])@([A-Za-z0-9_]{3,20})\b/g, (all, pre, name) => {
+            const lower = name.toLowerCase();
+            if (lower === 'everyone' || lower === 'all') return `${pre}<span class="mention everyone">@${name}</span>`;
+            if (s.profile && lower === String(s.profile.username || '').toLowerCase()) return `${pre}<span class="mention me">@${esc(name)}</span>`;
+            const m = C.members().find(x => x.profile && (x.profile.username || '').toLowerCase() === lower);
+            if (!m) return all;
+            return `${pre}<button type="button" class="mention${m.user_id === me() ? ' me' : ''}" data-profile="${esc(m.user_id)}">@${esc(name)}</button>`;
+        });
+    }
+
+    function mentionQuery(input) {
+        const before = input.value.slice(0, input.selectionStart || 0);
+        const m = before.match(/(?:^|\s)@([A-Za-z0-9_]{0,20})$/);
+        return m ? m[1].toLowerCase() : null;
+    }
+    function paintMentions() {
+        const input = $('gc-input');
+        let box = $('gc-mentions');
+        const q = input ? mentionQuery(input) : null;
+        if (q === null) { if (box) box.hidden = true; return; }
+        const options = C.members()
+            .filter(x => x.user_id !== me() && x.profile && (`${x.profile.username} ${x.profile.display_name}`.toLowerCase().includes(q)))
+            .slice(0, 6)
+            .map(x => ({ name: x.profile.username, label: x.profile.display_name, person: { id: x.user_id, ...x.profile } }));
+        if (isStaff() && 'everyone'.startsWith(q)) options.unshift({ name: 'everyone', label: 'Everyone in the group' });
+        if (!box) {
+            box = document.createElement('div');
+            box.id = 'gc-mentions';
+            box.className = 'gc-mentions';
+            box.setAttribute('role', 'listbox');
+            $('gc-compose').prepend(box);
+        }
+        box.hidden = !options.length;
+        box.innerHTML = options.map(o => `<button type="button" role="option" data-mention="${esc(o.name)}">${o.person ? avatar(o.person, 'xs') : '<span class="mention-all">@</span>'}<span><strong>${esc(o.label)}</strong><small>@${esc(o.name)}</small></span></button>`).join('');
+    }
+    content.addEventListener('click', e => {
+        const b = e.target.closest('#gc-mentions [data-mention]');
+        if (!b) return;
+        const input = $('gc-input');
+        const pos = input.selectionStart || input.value.length;
+        const before = input.value.slice(0, pos).replace(/@([A-Za-z0-9_]{0,20})$/, `@${b.dataset.mention} `);
+        input.value = before + input.value.slice(pos);
+        input.focus();
+        input.setSelectionRange(before.length, before.length);
+        g.draft = input.value;
+        paintMentions();
+    });
+
+    // ---------- Search, media, links, forwarding ----------
+    function gcConv() {
+        const c = cm();
+        return {
+            kind: 'gc', communityId: g.cid,
+            people: () => [{ id: me(), name: 'You' }, ...C.members().filter(x => x.user_id !== me() && x.profile).map(x => ({ id: x.user_id, name: x.profile.display_name }))],
+            nameOf: id => (id === me() ? 'You' : personOf(id).display_name),
+            jump: (id, at) => jumpTo(id, at),
+            title: c ? c.name : 'Group'
+        };
+    }
+
+    // Show one message — loading older messages when it's further back
+    async function jumpTo(id, at) {
+        if (!g.messages.some(x => x.id === id)) {
+            const cid = g.cid;
+            let q = client.from('diary_community_messages').select(GC_COLS).eq('community_id', cid);
+            q = at ? q.gte('created_at', at) : q.gte('id', id);
+            const { data } = await q.order('id', { ascending: true }).limit(600);
+            if (g.cid !== cid) return;
+            if (data && data.length) {
+                const known = new Set(data.map(m => m.id));
+                g.messages = [...data, ...g.messages.filter(m => !known.has(m.id) && m.id > data[data.length - 1].id)];
+                paint();
+                loadReactions(data.map(m => m.id));
+            }
+        }
+        setTimeout(() => flash(id), 60);
+    }
+
+    const messageLink = id => `${location.origin}${location.pathname}#/community/${encodeURIComponent(g.cid)}/m/${id}`;
+
+    // Links to a group message open that community on its chat and show the message
+    app.onRoute(r => {
+        if (r.view !== 'community' || !r.msg || !r.communityId) return;
+        g.pendingJump = { cid: r.communityId, id: Number(r.msg) };
+        C.showChat(r.communityId);
+    });
 
     // ---------- Editing & deleting ----------
     function startEdit(m) {
@@ -561,6 +728,13 @@ document.addEventListener('DOMContentLoaded', () => {
         'gc-goto': el => flash(Number(el.dataset.id)),
         'gc-cancel-reply': () => { g.reply = null; paintReply(); },
         'gc-cancel-edit': () => cancelEdit(),
+        'gc-react': el => toggleReact(Number(el.dataset.id), el.dataset.emoji),
+        'gc-react-who': el => {
+            const byEmoji = g.reacts.get(Number(el.dataset.id)) || {};
+            if (window.diaryChatTools) window.diaryChatTools.whoReacted(byEmoji, id => (id === me() ? 'You' : personOf(id).display_name), personOf);
+        },
+        'gc-search': () => window.diaryChatTools && window.diaryChatTools.openSearch(gcConv()),
+        'gc-gallery': () => window.diaryChatTools && window.diaryChatTools.openGallery(gcConv()),
         'gc-mic': () => (g.rec ? finishRecording(true) : startRecording()),
         'gc-rec-cancel': () => finishRecording(false),
         'gc-recent-deleted': () => I.openRecentlyDeleted && I.openRecentlyDeleted('gc', g.cid, {
@@ -617,9 +791,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const authorRole = (member(m.author) || {}).role || 'member';
             const rank = { owner: 3, admin: 2, moderator: 1, member: 0 };
             const canRemove = mine || (isStaff() && rank[myRole()] > rank[authorRole]);
-            const pinned = cm().pinned_message === m.id;
+            const pinned = !!cm() && cm().pinned_message === m.id;
             const items = [
-                { label: 'Reply', icon: 'i-reply', onClick: () => { g.reply = m; paintReply(); $('gc-input') && $('gc-input').focus(); } }
+                { label: 'React', icon: 'i-smile', onClick: () => setTimeout(() => I.emojiPicker && I.emojiPicker(el, emoji => toggleReact(m.id, emoji), { chosen: new Set(Object.entries(g.reacts.get(m.id) || {}).filter(([, ids]) => ids.includes(me())).map(([e]) => e)) }), 0) },
+                { label: 'Reply', icon: 'i-reply', onClick: () => { g.reply = m; paintReply(); $('gc-input') && $('gc-input').focus(); } },
+                { label: 'Forward', icon: 'i-forward', onClick: () => window.diaryChatTools && window.diaryChatTools.openForward({ kind: 'gc', body: m.body, attachments: m.attachments, bucket: BUCKET }) },
+                { label: 'Copy link', icon: 'i-link', onClick: () => navigator.clipboard.writeText(messageLink(m.id)).then(() => app.showToast('Link copied — it opens this message for group members'), () => app.showToast('Couldn’t copy the link')) }
             ];
             if (mine && m.body && Date.now() - Date.parse(m.created_at) < 24 * 3600 * 1000) items.push({ label: 'Edit', icon: 'i-edit', onClick: () => startEdit(m) });
             if (m.body) items.push({ label: 'Copy text', icon: 'i-file', onClick: () => navigator.clipboard.writeText(m.body).then(() => app.showToast('Copied'), () => {}) });

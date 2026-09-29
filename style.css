@@ -11552,3 +11552,128 @@ button.msg-flag:hover { text-decoration: underline; }
 .live-watch { display: inline-flex; align-items: center; gap: 6px; background: #ef4444; border-color: #ef4444; }
 .live-watch .i { width: 15px; height: 15px; }
 @media (prefers-reduced-motion: reduce) { .live-pop { animation: none; } }
+
+/* ==========================================================================
+   Chat phase 2: ticks, unread divider, inbox organisation, tools, group reactions & mentions
+   ========================================================================== */
+/* Ticks: sending (clock) · sent (one) · delivered (two, grey) · read (two, blue) · failed (red, tap to retry) */
+.ticks { display: inline-grid; place-items: center; margin-left: 3px; vertical-align: -2px; }
+.ticks .i { width: 15px; height: 15px; }
+.msg.out .msg-meta .ticks.sent, .msg.out .msg-meta .ticks.delivered, .msg.out .msg-meta .ticks.pending { color: var(--bubble-out-meta); }
+.msg.out .msg-meta .ticks.read { color: #7ee0a1; }
+.ticks.pending .i { width: 13px; height: 13px; }
+button.ticks.failed { padding: 0; border: 0; background: #fee2e2; color: #dc2626; border-radius: 50%; cursor: pointer; }
+.convo-ticks.ticks { margin: 0 2px 0 0; color: var(--text-faint, var(--text-muted)); }
+.convo-ticks.ticks.read { color: var(--online, #16a34a); }
+.msg-forwarded { display: flex; align-items: center; gap: 4px; margin-bottom: 2px; font-size: 0.72rem; font-style: italic; opacity: 0.75; }
+.msg-forwarded .i { width: 13px; height: 13px; }
+
+/* "3 unread messages" */
+.unread-sep { display: flex; justify-content: center; margin: 12px 0 6px; }
+.unread-sep span { padding: 4px 12px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 16%, var(--surface)); color: var(--accent); font-size: 0.74rem; font-weight: 800; }
+
+/* Inbox: pinned / muted marks and the ⋯ menu */
+.convo-flag { width: 13px; height: 13px; margin-left: 5px; vertical-align: -1px; color: var(--text-muted); }
+.convo-wrap .badge.muted { background: var(--text-muted); }
+.convo-more {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    margin-right: 2px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+.convo-more .i { width: 18px; height: 18px; }
+@media (hover: hover) and (pointer: fine) {
+    .convo-wrap .convo-more { opacity: 0; transition: opacity 120ms; }
+    .convo-wrap:hover .convo-more, .convo-wrap:focus-within .convo-more { opacity: 1; }
+}
+
+/* ---------- Tool sheets (search, gallery, forward, who reacted) ---------- */
+.ct-sheet {
+    width: min(560px, 100%);
+    max-width: 100%;
+    max-height: min(88dvh, 820px);
+    margin: auto auto 0;
+    padding: 0;
+    border: 0;
+    border-radius: 22px 22px 0 0;
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: var(--shadow-lg);
+    overflow: hidden;
+}
+.ct-sheet[open] { display: flex; flex-direction: column; }
+.ct-sheet::backdrop { background: rgba(9, 9, 11, 0.45); }
+@media (min-width: 720px) { .ct-sheet { margin: auto; border-radius: 22px; } }
+.ct-card { display: flex; flex-direction: column; gap: 10px; min-height: 0; max-height: inherit; padding: 14px 16px calc(14px + env(safe-area-inset-bottom, 0px)); }
+.ct-head { display: flex; align-items: center; gap: 8px; }
+.ct-head strong { flex: 1; font-size: 1.05rem; }
+.ct-q { margin: 0; }
+.ct-q input { font-size: 16px; }
+.ct-chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 2px; }
+.ct-chips .cm-filter { flex: none; }
+.ct-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 6px; }
+.ct-row label { display: grid; gap: 4px; font-size: 0.74rem; font-weight: 700; color: var(--text-muted); min-width: 0; }
+.ct-row select, .ct-row input { min-height: 40px; width: 100%; min-width: 0; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--input); color: var(--text); font: inherit; font-size: 16px; }
+@media (max-width: 420px) { .ct-row { grid-template-columns: 1fr 1fr; } .ct-row label:first-child { grid-column: 1 / -1; } }
+.ct-results, .ct-gal, .ct-targets, .ct-reacts { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: grid; align-content: start; gap: 6px; }
+.ct-hit { display: grid; gap: 2px; width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--input); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.ct-hit-top { display: flex; justify-content: space-between; gap: 8px; font-size: 0.78rem; }
+.ct-hit-top time { color: var(--text-muted); white-space: nowrap; }
+.ct-hit-text { font-size: 0.9rem; line-height: 1.4; overflow-wrap: anywhere; }
+.ct-hit mark { background: color-mix(in srgb, #fbbf24 55%, transparent); color: inherit; border-radius: 3px; }
+.ct-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.ct-tile { position: relative; margin: 0; aspect-ratio: 1; border-radius: 12px; overflow: hidden; background: var(--input); }
+.ct-img { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: zoom-in; }
+.ct-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ct-tile figcaption { position: absolute; right: 4px; bottom: 4px; display: flex; gap: 4px; }
+.ct-mini { display: grid; place-items: center; flex: none; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 50%; background: rgba(0, 0, 0, 0.55); color: #fff; cursor: pointer; }
+.ct-line .ct-mini, .ct-file .ct-mini, .ct-link .ct-mini { background: var(--input); color: var(--text); }
+.ct-mini .i { width: 15px; height: 15px; }
+.ct-line { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 14px; }
+.ct-line-top { display: flex; align-items: center; justify-content: space-between; font-size: 0.78rem; color: var(--text-muted); }
+.ct-file, .ct-link { grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; }
+.ct-file > .i { width: 22px; height: 22px; color: var(--accent); }
+.ct-file-text, .ct-link a { display: grid; min-width: 0; line-height: 1.3; color: inherit; text-decoration: none; }
+.ct-file-text strong, .ct-link strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ct-file-text small, .ct-link small { font-size: 0.74rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ct-link { grid-template-columns: auto minmax(0, 1fr) auto; }
+.ct-link-ic { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-weight: 800; }
+.ct-target { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 14px; cursor: pointer; }
+.ct-target[hidden] { display: none; }
+.ct-target:has(input:checked) { background: var(--accent-soft); }
+.ct-target input { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
+.ct-target span:last-child { display: grid; min-width: 0; line-height: 1.3; }
+.ct-target small { font-size: 0.76rem; color: var(--text-muted); }
+.ct-group-emoji { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--input); font-size: 1.3rem; flex: none; }
+.ct-foot { padding-top: 4px; }
+.ct-react-row { display: flex; align-items: center; gap: 10px; padding: 6px 4px; }
+.ct-react-row span { flex: 1; font-weight: 600; }
+.ct-react-row b { font-size: 1.2rem; }
+
+/* ---------- Group chat: reactions, mentions ---------- */
+.gc-reacts { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.gc-msg.mine .gc-reacts { justify-content: flex-end; }
+.gc-reacts .react-chip { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); font-size: 0.85rem; cursor: pointer; }
+.gc-reacts .react-chip.mine { border-color: var(--accent); background: var(--accent-soft); }
+.gc-reacts .react-chip span { font-size: 0.72rem; font-weight: 700; color: var(--text-muted); }
+.react-who { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-muted); cursor: pointer; }
+.react-who .i { width: 14px; height: 14px; }
+.mention { display: inline; padding: 0 3px; border: 0; border-radius: 5px; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; }
+.mention.me, .mention.everyone { background: color-mix(in srgb, #f59e0b 22%, transparent); color: #b45309; }
+.gc-msg.mine .mention { background: rgba(255, 255, 255, 0.2); color: inherit; }
+.gc-msg.mentions-me:not(.mine) .gc-bubble { box-shadow: inset 3px 0 0 #f59e0b; }
+.gc-mentions { display: grid; gap: 2px; max-height: 220px; overflow-y: auto; margin: 0 0 6px; padding: 4px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); }
+.gc-mentions[hidden] { display: none; }
+.gc-mentions button { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 0; border-radius: 10px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.gc-mentions button:hover, .gc-mentions button:focus-visible { background: var(--input); }
+.gc-mentions span:last-child { display: grid; line-height: 1.2; }
+.gc-mentions small { font-size: 0.74rem; color: var(--text-muted); }
+.mention-all { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: #f59e0b; color: #fff; font-weight: 800; }
+.ct-card .search.ct-q { order: 0; width: auto; }

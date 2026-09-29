@@ -78,6 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
         entry_repost: ['group', 'i-repost'], reel_like: ['like', 'i-heart-fill'], reel_comment: ['comment', 'i-chat'], library_like: ['like', 'i-heart-fill'],
         live_started: ['call', 'i-live'], new_follower: ['group', 'i-user-plus'],
         entry_reaction: ['like', 'i-smile'], story_reaction: ['like', 'i-smile'],
+        mention: ['comment', 'i-chat'], reply: ['comment', 'i-reply'],
         book_request: ['group', 'i-store'], book_request_update: ['group', 'i-store'], book_message: ['comment', 'i-store']
     };
 
@@ -105,6 +106,8 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'library_like': return `${who} loved your writing${quote}`;
             case 'live_started': return `${who} is live now${quote}`;
             case 'new_follower': return `${who} started following you`;
+            case 'mention': return d.everyone ? `${who} mentioned everyone in ${group}:${quote}` : `${who} mentioned you in ${group}:${quote}`;
+            case 'reply': return `${who} replied to you in ${group}:${quote}`;
             case 'entry_reaction': return `${who} reacted ${d.emoji || ''} to your post`;
             case 'story_reaction': return `${who} reacted ${d.emoji || ''} to your story`;
             case 'book_request': {
@@ -140,6 +143,11 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'new_follower':
                 I.loadFollows().then(() => app.render());
                 app.setView('settings');
+                break;
+            case 'mention':
+            case 'reply':
+                if (window.diaryGroupChat && window.diaryGroupChat.jump) window.diaryGroupChat.jump(d.community_id, d.message_id);
+                app.setView('community', { communityId: d.community_id });
                 break;
             case 'entry_reaction':
                 app.setView('feed');
@@ -478,7 +486,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Push (alerts while Cordial is closed) ----------
-    const PUSH_TYPES = new Set(['friend_request', 'friend_accepted', 'new_follower', 'live_started']);
+    const PUSH_TYPES = new Set(['friend_request', 'friend_accepted', 'new_follower', 'live_started', 'mention', 'reply']);
     const pushKey = () => (window.DIARY_CONFIG || {}).pushPublicKey;
     const pushSupported = () => canAlert && 'serviceWorker' in navigator && 'PushManager' in window && !!pushKey();
     const swReady = () => ('serviceWorker' in navigator && navigator.serviceWorker.controller !== undefined)

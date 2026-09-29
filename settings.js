@@ -28,10 +28,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Online status & last seen privacy (kept on the server, so it applies on every device)
     const PRESENCE = [['everyone', 'Everyone'], ['friends', 'Friends'], ['nobody', 'Nobody']];
-    const P = { loaded: false, settings: { show_online: 'everyone', show_last_seen: 'everyone' } };
+    const P = { loaded: false, settings: { show_online: 'everyone', show_last_seen: 'everyone', read_receipts: true } };
     async function loadPresencePrivacy() {
         P.loaded = true;
-        const { data } = await I.client.from('diary_presence').select('show_online, show_last_seen').maybeSingle();
+        const { data } = await I.client.from('diary_presence').select('show_online, show_last_seen, read_receipts').maybeSingle();
         if (data) {
             P.settings = data;
             if (app.state.view === 'settings') app.requestRender ? app.requestRender('settings') : app.render();
@@ -181,6 +181,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${row('i-lock', 'Private notes PIN', pinSet ? 'On — private notes need your PIN' : 'Off — protect private notes on this device', go('st-pin', pinSet ? 'Change' : 'Set PIN'))}
                     ${signedIn() ? row('i-user', 'Who sees when you’re online', 'The green dot and “Active now”', seg('presence-online', PRESENCE, presence.show_online)) : ''}
                     ${signedIn() ? row('i-history', 'Who sees your last seen', presence.show_last_seen === 'nobody' ? 'Hidden — and you won’t see other people’s last seen either' : '“Last seen 5 min ago” when you’re away', seg('presence-last', PRESENCE, presence.show_last_seen)) : ''}
+                    ${signedIn() ? row('i-checks', 'Read receipts', presence.read_receipts === false ? 'Off — people won’t see when you’ve read their messages, and you won’t see theirs' : 'On — blue ticks when a message has been read', toggle('st-receipts', presence.read_receipts !== false, 'Read receipts')) : ''}
                     ${signedIn() ? row('i-lock', 'Password', 'Change the password you sign in with', go('st-password', 'Change')) : ''}
                     ${signedIn() ? row('i-logout', 'Sign out', 'Your notes stay on this device', go('st-signout', 'Sign out')) : ''}
                 </section>
@@ -345,6 +346,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const a = e.target.dataset && e.target.dataset.action;
         if (a === 'st-motion') {
             setPref('motion', 'diaryMotion', e.target.checked ? 'reduce' : 'full', 'full');
+        } else if (a === 'st-receipts') {
+            const on = e.target.checked;
+            P.settings = { ...P.settings, read_receipts: on };
+            const { error } = await I.client.rpc('diary_set_read_receipts', { p_on: on });
+            if (error) { P.settings = { ...P.settings, read_receipts: !on }; app.showToast('Couldn’t save that'); }
+            else app.showToast(on ? 'Read receipts on' : 'Read receipts off');
+            if (I.refreshPresence) I.refreshPresence();
+            app.render();
         } else if (a === 'st-alerts') {
             if (e.target.checked && window.diaryNotify && window.diaryNotify.enableAlerts) await window.diaryNotify.enableAlerts();
             else if (!e.target.checked) {
