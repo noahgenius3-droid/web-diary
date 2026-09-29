@@ -253,6 +253,27 @@ document.addEventListener('DOMContentLoaded', () => {
         document.querySelector('.main-col').scrollTo({ top: 0 });
     }
 
+    // Phones: search lives behind an icon so every screen keeps its space
+    $('search-toggle').addEventListener('click', () => {
+        const open = !document.body.classList.contains('search-open');
+        document.body.classList.toggle('search-open', open);
+        $('search-toggle').setAttribute('aria-expanded', String(open));
+        if (open) searchInput.focus();
+    });
+    searchInput.addEventListener('blur', () => {
+        if (searchInput.value.trim()) return;
+        document.body.classList.remove('search-open');
+        $('search-toggle').setAttribute('aria-expanded', 'false');
+    });
+
+    // The height you can actually see (shrinks when the phone keyboard opens), for full-screen chats
+    if (window.visualViewport) {
+        const setVisibleHeight = () =>
+            document.documentElement.style.setProperty('--vvh', `${Math.round(window.visualViewport.height)}px`);
+        window.visualViewport.addEventListener('resize', setVisibleHeight);
+        setVisibleHeight();
+    }
+
     searchInput.addEventListener('input', () => {
         state.query = searchInput.value.trim().toLowerCase();
         if (!['home', 'folder', 'archive', 'trash'].includes(state.view)) state.view = 'home';

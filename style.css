@@ -7693,3 +7693,93 @@ h1 {
 .compose-row { display: flex; width: 100%; }
 .compose-row textarea { flex: 1 1 auto; width: 100%; }
 .chat-input:empty::before { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* =========================================================
+   Mobile pass (Figma: "Phone / Chat — full screen", "Phone / Companion — full screen")
+   ========================================================= */
+
+.search-toggle { display: none; }
+
+@media (max-width: 760px) {
+    /* ---------- Top bar: search sits behind an icon ---------- */
+    .search-toggle { display: grid; }
+    .topbar .search { display: none; }
+    body.search-open .topbar .search { display: flex; }
+    body.search-open .search-toggle { background: var(--accent-soft); color: var(--accent); }
+    .topbar { gap: 4px; padding-bottom: 8px; }
+    .topbar h1 { margin-right: auto; }
+
+    /* ---------- A clean white page instead of a grey inset card ---------- */
+    .content {
+        background: var(--bg);
+        border-radius: 0;
+        padding-left: 16px;
+        padding-right: 16px;
+    }
+
+    /* The top bar already names these pages */
+    body[data-view="communities"] .notes-head .notes-title,
+    body[data-view="highlights"] .notes-head .notes-title { display: none; }
+
+    /* ---------- An open chat fills the screen, like Messages or WhatsApp ---------- */
+    body.chat-open .inbox .chat-pane {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 30;
+        height: var(--vvh, 100dvh);
+        display: flex;
+        background: var(--bg);
+    }
+
+    body.chat-open .chat-head { padding-top: max(10px, env(safe-area-inset-top)); }
+    body.chat-open .composer { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+    body.chat-open .tabbar,
+    body.chat-open .fab { display: none; }
+
+    body.chat-open .inbox.show-info .chat-info {
+        position: fixed;
+        inset: 0;
+        z-index: 31;
+        overflow-y: auto;
+        padding-top: max(16px, env(safe-area-inset-top));
+        background: var(--surface);
+    }
+
+    /* Big, thumb-friendly message box */
+    .composer { gap: 10px; }
+    .composer-box { min-height: 58px; padding: 7px 8px 7px 18px; border-radius: 29px; }
+    .chat-input { font-size: 1rem; min-height: 42px; max-height: 40vh; }
+    .composer-plus { width: 50px; height: 50px; }
+    .send-btn.dark { width: 54px; height: 54px; }
+    .composer-tools .tool-btn { width: 42px; height: 42px; }
+
+    /* ---------- Companion: full screen above the keyboard, roomy box ---------- */
+    .companion {
+        top: 0;
+        bottom: auto;
+        height: var(--vvh, 100dvh);
+        z-index: 32;
+        animation: sheet-up 0.28s var(--ease-out);
+    }
+
+    .companion-head { padding-top: max(12px, env(safe-area-inset-top)); }
+    .companion-compose { padding: 12px 14px max(14px, env(safe-area-inset-bottom)); }
+    .compose-row textarea { min-height: 72px; max-height: 45vh; padding: 16px 18px; border-radius: 24px; font-size: 1rem; }
+    .companion .compose-row .send-btn { width: 54px; height: 54px; }
+    .companion .suggestion, .companion-intro button { min-height: 44px; }
+    body.companion-open .tabbar { display: none; }
+}
+
+@keyframes sheet-up { from { transform: translateY(24px); opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+    .companion { animation: none; }
+}
+@media (max-width: 760px) {
+    .social-main .block-head { flex-wrap: wrap; row-gap: 10px; }
+    .social-main .block-head h2 { flex-basis: 100%; font-size: 1.3rem; }
+    .social-main .block-head .reels-chip { margin-left: 0; }
+    .social-main .block-head .feed-sort { margin-left: auto; }
+}

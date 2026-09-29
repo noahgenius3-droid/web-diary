@@ -193,6 +193,8 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     app.hooks.afterRender = view => {
+        // An open conversation takes the whole phone screen (see .chat-open in style.css)
+        document.body.classList.toggle('chat-open', view === 'messages' && signedIn() && !!s.activeFriend);
         if (view === 'home') paintPresence();
         if (view === 'feed') {
             hydrateStorage(content);
