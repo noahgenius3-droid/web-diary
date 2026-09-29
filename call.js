@@ -51,17 +51,36 @@ document.addEventListener('DOMContentLoaded', () => {
             w.channel = null;
             dropChannel(ch);
         }
-        const until = Date.now() + 3000;
+        const until = Date.now() + 2000;
         while (Date.now() < until) {
             if (closing.has(topic)) await Promise.race([closing.get(topic), new Promise(r => setTimeout(r, 300))]);
             else if (client.getChannels().some(c => c.topic === `realtime:${topic}`)) await new Promise(r => setTimeout(r, 100));
             else break;
         }
+        // The server never confirmed the close (a flaky connection): forget the old channel ourselves
+        client.getChannels().filter(c => c.topic === `realtime:${topic}`).forEach(forget);
+        closing.delete(topic);
+    }
+    function forget(ch) {
+        try { if (ch.teardown) ch.teardown(); } catch (e) { /* already gone */ }
+        const rt = client.realtime;
+        if (rt && typeof rt._remove === 'function') rt._remove(ch);
+        else if (rt && Array.isArray(rt.channels)) rt.channels = rt.channels.filter(c => c !== ch);
+    }
+    // A brand-new channel with our own presence key — never someone else's leftover
+    function newChannel(topic, config) {
+        let ch = client.channel(topic, { config });
+        const keyOf = c => c && c.params && c.params.config && c.params.config.presence ? c.params.config.presence.key : undefined;
+        if (config.presence && keyOf(ch) !== config.presence.key) {
+            forget(ch);
+            ch = client.channel(topic, { config });
+        }
+        return ch;
     }
     const roomOn = topic => [call, held].find(c => c && c.topic === topic) || null;
     function openWatch(topic, w) {
         if (w.channel || roomOn(topic) || closing.has(topic)) return;
-        const channel = client.channel(topic, { config: { private: true, presence: { key: `watch-${me()}-${Math.random().toString(36).slice(2, 6)}` } } });
+        const channel = newChannel(topic, { private: true, presence: { key: `watch-${me()}-${Math.random().toString(36).slice(2, 6)}` } });
         w.channel = channel;
         channel.on('presence', { event: 'sync' }, () => {
             if (w.channel !== channel) return;
@@ -390,7 +409,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // The community page may be watching this room, or we may have just left it: clear the topic first
         await freeTopic(c.topic);
         if (call !== c && held !== c) return;
-        const channel = client.channel(c.topic, { config: { private: true, presence: { key: me() }, broadcast: { self: false } } });
+        const channel = newChannel(c.topic, { private: true, presence: { key: me() }, broadcast: { self: false } });
         c.channel = channel;
         c.channelReady = false;
         channel
