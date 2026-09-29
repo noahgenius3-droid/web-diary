@@ -111,7 +111,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         <h2 class="notes-title">Library</h2>
                         <p class="muted">Stories, books, poems and essays from people on Cordial.</p>
                     </div>
-                    <button class="create-post" data-action="lib-new"><svg class="i"><use href="#i-plus"/></svg><span>Publish</span></button>
+                    <div class="lib-head-actions">
+                        <button class="chip lib-market" data-action="go-market"><svg class="i"><use href="#i-store"/></svg>Buy, rent &amp; swap books</button>
+                        <button class="create-post" data-action="lib-new"><svg class="i"><use href="#i-plus"/></svg><span>Publish</span></button>
+                    </div>
                 </header>
                 <div class="tabs" role="tablist">${tab('explore', 'Explore')}${tab('shelf', 'My shelf')}</div>
                 ${L.tab === 'shelf' ? shelfTab(me) : exploreTab()}

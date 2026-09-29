@@ -39,7 +39,13 @@ document.addEventListener('DOMContentLoaded', () => {
         feedCard,
         addStory: fileArg => addStory(fileArg),
         addReel: (fileArg, opts) => addReel(fileArg, opts),
-        shareEntry: (localId, text, post) => shareEntry(localId, text, post)
+        shareEntry: (localId, text, post) => shareEntry(localId, text, post),
+        // From a "reacted to your story" notification: your own stories, if any are still up
+        openMine: async () => {
+            if (!st.stories) await loadStories();
+            if (groups().some(g => g.author === s.profile.id)) openStories(s.profile.id);
+            else app.showToast('That story has expired');
+        }
     };
 
     // ---------- Lifecycle ----------
@@ -614,6 +620,7 @@ document.addEventListener('DOMContentLoaded', () => {
             ${mine ? `<button type="button" class="story-seen" id="story-seen" data-id="${esc(item.id)}"><svg class="i"><use href="#i-eye"/></svg><span>Seen by …</span></button>` : ''}`;
         if (mine) paintSeen(item.id);
         else recordView(item.id);
+        paintReactBar(item, mine);
         const media = card.querySelector('.story-media');
         hydrateStorage(card).then(() => {
             if (item.media_type === 'video' && current() === item) {
@@ -657,11 +664,94 @@ document.addEventListener('DOMContentLoaded', () => {
         return data || [];
     }
 
+    // ---------- Story reactions ----------
+    // Friends tap an emoji along the bottom (Instagram style); it floats up and lands with you. You see who
+    // reacted with what in "Seen by". Tap a lit emoji again to take it back.
+    const REACTS = I.POST_REACTIONS || ['❤️', '😂', '😮', '😢', '🔥', '👏', '🙏', '😍'];
+    const myStoryReacts = new Map(); // story id -> Set of emojis you sent
+
+    async function loadReactions(id, mineOnly) {
+        let q = client.from('diary_story_reactions').select('user_id, emoji, created_at').eq('story_id', id);
+        if (mineOnly) q = q.eq('user_id', s.profile.id);
+        const { data } = await q;
+        return data || [];
+    }
+
+    async function paintReactBar(item, mine) {
+        const bar = $('story-react');
+        bar.hidden = mine;
+        if (mine) return;
+        const draw = () => {
+            const sent = myStoryReacts.get(item.id) || new Set();
+            bar.innerHTML = REACTS.map((e, i) => `<button type="button" data-story-react="${e}" style="--i:${i}" class="${sent.has(e) ? 'on' : ''}" aria-pressed="${sent.has(e)}" aria-label="React ${e}">${e}</button>`).join('');
+        };
+        draw();
+        if (!myStoryReacts.has(item.id)) {
+            const rows = await loadReactions(item.id, true);
+            myStoryReacts.set(item.id, new Set(rows.map(r => r.emoji)));
+            if (current() === item) draw();
+        }
+    }
+
+    async function reactToStory(emoji, btn) {
+        const item = current();
+        if (!item || !REACTS.includes(emoji)) return;
+        const sent = myStoryReacts.get(item.id) || new Set();
+        myStoryReacts.set(item.id, sent);
+        const had = sent.has(emoji);
+        if (had) sent.delete(emoji); else sent.add(emoji);
+        btn.classList.toggle('on', !had);
+        btn.setAttribute('aria-pressed', String(!had));
+        if (!had) {
+            floatEmoji(emoji, btn);
+            if (navigator.vibrate) navigator.vibrate(10);
+        }
+        const { error } = had
+            ? await client.from('diary_story_reactions').delete().eq('story_id', item.id).eq('user_id', s.profile.id).eq('emoji', emoji)
+            : await client.from('diary_story_reactions').upsert({ story_id: item.id, emoji }, { onConflict: 'story_id,user_id,emoji', ignoreDuplicates: true });
+        if (error) {
+            if (had) sent.add(emoji); else sent.delete(emoji);
+            btn.classList.toggle('on', had);
+            btn.setAttribute('aria-pressed', String(had));
+            return app.showToast('Couldn’t send that reaction');
+        }
+        const group = view && view.groups[view.gi];
+        if (!had) app.showToast(`Sent ${emoji} to ${group ? group.person.display_name.split(' ')[0] : 'your friend'}`);
+    }
+
+    // A little burst: the emoji rises from the button and fades
+    function floatEmoji(emoji, from) {
+        if (document.documentElement.dataset.motion === 'reduce' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+        const r = from.getBoundingClientRect();
+        for (let k = 0; k < 5; k++) {
+            const el = document.createElement('span');
+            el.className = 'story-float';
+            el.textContent = emoji;
+            el.style.left = `${r.left + r.width / 2}px`;
+            el.style.top = `${r.top}px`;
+            el.style.setProperty('--dx', `${(Math.random() - 0.5) * 90}px`);
+            el.style.setProperty('--delay', `${k * 70}ms`);
+            el.style.setProperty('--s', (0.9 + Math.random() * 0.6).toFixed(2));
+            viewer.append(el);
+            setTimeout(() => el.remove(), 1400 + k * 70);
+        }
+    }
+
+    $('story-react').addEventListener('click', e => {
+        const b = e.target.closest('[data-story-react]');
+        if (!b) return;
+        e.stopPropagation();
+        reactToStory(b.dataset.storyReact, b);
+    });
+
     async function paintSeen(id) {
-        const views = await loadViews(id);
+        const [views, reacts] = await Promise.all([loadViews(id), loadReactions(id)]);
         const btn = $('story-seen');
         if (!btn || btn.dataset.id !== id) return;
-        btn.querySelector('span').textContent = views.length ? `Seen by ${views.length}` : 'No views yet';
+        const faces = [...new Set(reacts.map(r => r.emoji))].slice(0, 3).join('');
+        btn.querySelector('span').textContent = views.length
+            ? `Seen by ${views.length}${reacts.length ? ` · ${faces} ${reacts.length}` : ''}`
+            : 'No views yet';
     }
 
     async function openSeen(id) {
@@ -669,14 +759,19 @@ document.addEventListener('DOMContentLoaded', () => {
         const panel = $('story-viewers');
         panel.hidden = false;
         panel.innerHTML = '<p class="muted small">Loading…</p>';
-        const views = await loadViews(id);
+        const [views, reacts] = await Promise.all([loadViews(id), loadReactions(id)]);
+        const byUser = new Map();
+        reacts.forEach(r => byUser.set(r.user_id, (byUser.get(r.user_id) || '') + r.emoji));
+        // People who reacted come first
+        views.sort((a, b) => (byUser.has(b.viewer) ? 1 : 0) - (byUser.has(a.viewer) ? 1 : 0));
         panel.innerHTML = `
-            <header><strong>${views.length ? `Seen by ${views.length}` : 'No one has seen this yet'}</strong>
+            <header><strong>${views.length ? `Seen by ${views.length}` : 'No one has seen this yet'}${reacts.length ? ` · ${reacts.length} ${reacts.length === 1 ? 'reaction' : 'reactions'}` : ''}</strong>
                 <button type="button" class="icon-btn" data-sv="close" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button></header>
             <div class="sv-list">
                 ${views.map(v => {
                     const p = v.profile || { id: v.viewer, display_name: 'Someone', username: '' };
-                    return `<div class="sv-row">${avatar(p, 'md')}<span><strong>${esc(p.display_name)}</strong><small>${timeAgo(v.viewed_at)}</small></span></div>`;
+                    const em = byUser.get(v.viewer);
+                    return `<div class="sv-row">${avatar(p, 'md')}<span><strong>${esc(p.display_name)}</strong><small>${timeAgo(v.viewed_at)}</small></span>${em ? `<span class="sv-reacts" aria-label="Reacted ${esc(em)}">${esc(em)}</span>` : ''}</div>`;
                 }).join('') || '<p class="sv-empty">When friends watch your story, they’ll show up here.</p>'}
             </div>`;
     }
@@ -776,7 +871,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target.closest('[data-sv="close"]')) closeSeen();
     });
     viewer.addEventListener('pointerdown', e => {
-        if (e.target.closest('.story-head, #story-seen, .story-viewers')) return;
+        if (e.target.closest('.story-head, #story-seen, .story-viewers, .story-react')) return;
         held = false;
         holdTimer = setTimeout(() => { held = true; pause(); }, 220);
     });

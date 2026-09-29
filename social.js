@@ -73,6 +73,8 @@ document.addEventListener('DOMContentLoaded', () => {
         typing: null,        // { friendId, channel } for the open chat
         typingFrom: null,    // friend id currently typing to you
         feedStory: false,    // "Add to my story" in the feed composer
+        incognito: {},       // friend id -> { mode: off | seen | 1h | 24h, set_by, updated_at }
+        chatOpenedAt: {},    // friend id -> when you opened that chat (seen-and-vanish messages go when you leave)
         channel: null,
         presence: null
     };
@@ -418,8 +420,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!s.profile) return app.render();
 
         s.drafts = load(`diaryChatDrafts:${s.profile.id}`, {});
-        await Promise.all([loadFriends(), loadRecent(), loadRemoteIds(), loadSaved(), loadFollows()]);
+        await Promise.all([loadFriends(), loadRecent(), loadRemoteIds(), loadSaved(), loadFollows(), loadIncognito()]);
         subscribe();
+        emptyIncognitoTrash();
         syncAllShared();
         app.render();
         if (event === 'PASSWORD_RECOVERY') chooseNewPassword();
@@ -434,7 +437,8 @@ document.addEventListener('DOMContentLoaded', () => {
             threads: {}, activeFriend: null, drafts: {}, pending: {}, online: new Set(), urls: new Map(),
             remoteIds: new Set(), channel: null, presence: null, comments: new Map(),
             saved: new Set(), savedReels: new Set(), savedExtra: [],
-            previews: new Map(), rendered: new Map(), following: new Set(), followerCount: 0
+            previews: new Map(), rendered: new Map(), following: new Set(), followerCount: 0,
+            incognito: {}, chatOpenedAt: {}
         });
         closePost(true);
         if (window.diaryCommunities) window.diaryCommunities.reset();
@@ -489,6 +493,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 payload => onMessageUpdate(payload.new))
             .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'diary_messages', filter: `recipient=eq.${me}` },
                 payload => onMessageUpdate(payload.new))
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_incognito' },
+                payload => onIncognitoChange(payload.new))
             .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_friendships' },
                 async () => {
                     await loadFriends();
@@ -621,6 +627,7 @@ document.addEventListener('DOMContentLoaded', () => {
             .order('created_at', { ascending: false })
             .limit(200);
         s.threads[friendId] = error ? [] : data.reverse();
+        pruneVanished(friendId);
         if (app.state.view === 'messages' && s.activeFriend === friendId) app.render();
     }
 
@@ -631,7 +638,7 @@ document.addEventListener('DOMContentLoaded', () => {
         s.chatRefreshing = true;
         document.querySelectorAll('[data-action="chat-refresh"]').forEach(b => b.classList.add('spinning'));
         try {
-            await Promise.all([loadFriends(), loadRecent(), loadFollows()]);
+            await Promise.all([loadFriends(), loadRecent(), loadFollows(), loadIncognito()]);
             if (s.activeFriend) {
                 await loadThread(s.activeFriend);
                 markRead(s.activeFriend);
@@ -685,7 +692,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function openChat(friendId, opts = {}) {
+        if (s.activeFriend && s.activeFriend !== friendId) pruneVanished(s.activeFriend, true);
         s.activeFriend = friendId;
+        s.chatOpenedAt[friendId] = Date.now();
+        pruneVanished(friendId);
         if (!s.threads[friendId]) loadThread(friendId);
         markRead(friendId);
         s.chatFocused = window.matchMedia('(hover: hover)').matches;
@@ -703,6 +713,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (app.state.view === 'messages') openChat(want, { fromHistory: true });
             else s.activeFriend = want; // setView renders it
         } else if (!want) {
+            if (s.activeFriend) pruneVanished(s.activeFriend, true);
             const done = () => {
                 s.activeFriend = null;
                 if (app.state.view === 'messages') app.render();
@@ -723,7 +734,8 @@ document.addEventListener('DOMContentLoaded', () => {
         updateComposerButton();
         clearTimeout(saveDraft.timer);
         saveDraft.timer = setTimeout(() => {
-            try { localStorage.setItem(`diaryChatDrafts:${s.profile.id}`, JSON.stringify(s.drafts)); } catch (e) {}
+            const kept = Object.fromEntries(Object.entries(s.drafts).filter(([id]) => !incognitoOf(id)));
+            try { localStorage.setItem(`diaryChatDrafts:${s.profile.id}`, JSON.stringify(kept)); } catch (e) {}
         }, 400);
     }
 
@@ -815,7 +827,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             for (const p of items) {
                 const ext = (p.name.match(/\.[a-z0-9]{1,5}$/i) || [''])[0].toLowerCase() || extFor(p.type);
-                const path = `${me}/${friendId}/${randomId()}${ext}`;
+                const path = `${me}/${friendId}/${incognitoOf(friendId) ? 'incognito/' : ''}${randomId()}${ext}`;
                 const { error } = await client.storage.from(BUCKET).upload(path, p.file, { contentType: p.type, upsert: false });
                 if (error) throw new Error(`Couldn’t upload ${p.name}: ${error.message}`);
                 uploaded.push({
@@ -1042,7 +1054,7 @@ document.addEventListener('DOMContentLoaded', () => {
         s.unread[m.sender] = (s.unread[m.sender] || 0) + 1;
         updateBadge();
         const friend = s.friends.find(f => f.id === m.sender);
-        if (!s.muted.has(m.sender)) app.showToast(`New message from ${friend ? friend.display_name : 'a friend'}`);
+        if (!s.muted.has(m.sender)) app.showToast(m.vanish ? 'New incognito message' : `New message from ${friend ? friend.display_name : 'a friend'}`);
         if (app.state.view === 'messages') updateConvoRow(m.sender);
     }
 
@@ -1053,7 +1065,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const local = thread && thread.find(x => x.id === m.id);
         if (local) {
             const changed = local.deleted_at !== m.deleted_at || JSON.stringify(local.reactions || {}) !== JSON.stringify(m.reactions || {});
-            Object.assign(local, { read_at: m.read_at, reactions: m.reactions || {}, deleted_at: m.deleted_at, body: m.body, attachments: m.attachments });
+            Object.assign(local, { read_at: m.read_at, reactions: m.reactions || {}, deleted_at: m.deleted_at, body: m.body, attachments: m.attachments, expires_at: m.expires_at, vanish: m.vanish });
             if (changed) repaintMessage(m.id);
             else {
                 const tick = content.querySelector(`[data-msg="${m.id}"] .ticks`);
@@ -1207,7 +1219,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="react-emojis">${REACTIONS.map(e => `<button type="button" data-action="react" data-id="${esc(String(id))}" data-emoji="${e}" aria-label="React ${e}">${e}</button>`).join('')}</div>
             <div class="react-actions">
                 <button type="button" data-action="msg-reply" data-id="${esc(String(id))}"><svg class="i"><use href="#i-reply"/></svg>Reply</button>
-                ${Rich.toText(m.body || '') ? `<button type="button" data-action="msg-copy" data-id="${esc(String(id))}"><svg class="i"><use href="#i-notes"/></svg>Copy</button>` : ''}
+                ${Rich.toText(m.body || '') && !m.vanish ? `<button type="button" data-action="msg-copy" data-id="${esc(String(id))}"><svg class="i"><use href="#i-notes"/></svg>Copy</button>` : ''}
                 ${mine ? `<button type="button" class="danger" data-action="msg-unsend" data-id="${esc(String(id))}"><svg class="i"><use href="#i-trash"/></svg>Unsend</button>` : ''}
             </div>`;
         el.querySelector('.msg-card').append(bar);
@@ -1290,6 +1302,151 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }, true);
 
+    // ---------- Incognito chats ----------
+    // Either friend can switch a chat to incognito. New messages then vanish for both of you — after they're
+    // seen (as soon as you leave the chat, and within five minutes of being read), or 1 or 24 hours after
+    // sending. The server enforces the timer; the app also keeps them out of drafts, previews, toasts,
+    // typing signals and Copy, and blurs the chat when you switch away.
+    const VANISH_MODES = [
+        ['seen', 'Vanish after seen'],
+        ['1h', 'Vanish after 1 hour'],
+        ['24h', 'Vanish after 24 hours']
+    ];
+    const VANISH_TEXT = { seen: 'vanish after they’re seen', '1h': 'vanish an hour after sending', '24h': 'vanish 24 hours after sending' };
+
+    function incognitoOf(friendId) {
+        const row = s.incognito[friendId];
+        return row && row.mode && row.mode !== 'off' ? row : null;
+    }
+
+    async function loadIncognito() {
+        const { data, error } = await client.from('diary_incognito').select('user_a, user_b, mode, set_by, updated_at');
+        if (error) return;
+        s.incognito = {};
+        const me = s.profile.id;
+        (data || []).forEach(row => { s.incognito[row.user_a === me ? row.user_b : row.user_a] = row; });
+    }
+
+    function onIncognitoChange(row) {
+        if (!row || !row.user_a || !s.profile) return;
+        const me = s.profile.id;
+        const friendId = row.user_a === me ? row.user_b : row.user_a;
+        const before = incognitoOf(friendId);
+        s.incognito[friendId] = row;
+        const after = incognitoOf(friendId);
+        if ((before && before.mode) === (after && after.mode)) return;
+        if (row.set_by && row.set_by !== me) {
+            const friend = s.friends.find(f => f.id === friendId);
+            const name = friend ? friend.display_name.split(' ')[0] : 'Your friend';
+            app.showToast(after ? `${name} turned on incognito — new messages ${VANISH_TEXT[after.mode]}` : `${name} turned off incognito`);
+        }
+        if (app.state.view === 'messages') {
+            if (s.activeFriend === friendId) app.render();
+            else updateConvoRow(friendId);
+        }
+    }
+
+    async function setIncognito(friendId, mode) {
+        const { data, error } = await client.rpc('diary_set_incognito', { friend: friendId, p_mode: mode });
+        if (error) return app.showToast(error.message || 'Couldn’t change incognito');
+        onIncognitoChange(data);
+        app.showToast(mode === 'off' ? 'Incognito off — new messages will stay' : `Incognito on — new messages ${VANISH_TEXT[mode]}`);
+        if (app.state.view === 'messages') app.render();
+    }
+
+    function incognitoMenu(el) {
+        const friendId = s.activeFriend;
+        if (!friendId) return;
+        const current = incognitoOf(friendId);
+        app.openPopover(el, [
+            ...VANISH_MODES.map(([mode, label]) => ({
+                label: `${current && current.mode === mode ? '✓ ' : ''}${label}`,
+                icon: 'i-timer',
+                onClick: () => setIncognito(friendId, mode)
+            })),
+            ...(current ? [{ label: 'Turn off incognito', icon: 'i-close', onClick: () => setIncognito(friendId, 'off') }] : [])
+        ]);
+    }
+
+    function incognitoBanner(friend, inc) {
+        const who = inc.set_by === s.profile.id ? 'You' : esc(friend.display_name.split(' ')[0]);
+        return `
+            <div class="incognito-banner" role="status">
+                <span class="incognito-ic" aria-hidden="true"><svg class="i"><use href="#i-incognito"/></svg></span>
+                <span class="incognito-text"><strong>Incognito chat</strong><small>${who} turned it on · new messages ${VANISH_TEXT[inc.mode]}. No previews, saved drafts or read receipts.</small></span>
+                <button type="button" class="chip" data-action="chat-incognito">Change</button>
+            </div>`;
+    }
+
+    function vanishTitle(m) {
+        if (m.vanish === 'seen') return m.read_at ? 'Seen — vanishes when the chat is closed' : 'Vanishes after it’s seen';
+        const left = Date.parse(m.expires_at) - Date.now();
+        if (!(left > 0)) return 'Vanishing';
+        const mins = Math.ceil(left / 60000);
+        return mins > 90 ? `Vanishes in ${Math.round(mins / 60)} h` : `Vanishes in ${mins} min`;
+    }
+
+    // Drop vanished messages from a thread. leaving = true also removes seen-and-vanish messages read during
+    // this visit (so they're gone when you come back).
+    function pruneVanished(friendId, leaving = false) {
+        const thread = s.threads[friendId];
+        if (!thread) return [];
+        const now = Date.now();
+        const openedAt = leaving ? now + 1 : (s.chatOpenedAt[friendId] || now);
+        const gone = thread.filter(m => m.vanish && (
+            (m.expires_at && Date.parse(m.expires_at) <= now) ||
+            (m.vanish === 'seen' && m.read_at && Date.parse(m.read_at) < openedAt - 2000)
+        ));
+        if (!gone.length) return gone;
+        s.threads[friendId] = thread.filter(m => !gone.includes(m));
+        if (s.last[friendId] && gone.some(m => m.id === s.last[friendId].id)) {
+            const rest = s.threads[friendId];
+            if (rest.length) s.last[friendId] = rest[rest.length - 1];
+            else delete s.last[friendId];
+        }
+        return gone;
+    }
+
+    // While a chat is open, timed-out messages fade away in place
+    setInterval(() => {
+        if (!signedIn() || app.state.view !== 'messages' || !s.activeFriend) return;
+        const thread = s.threads[s.activeFriend] || [];
+        const now = Date.now();
+        const expired = thread.filter(m => m.vanish && m.expires_at && Date.parse(m.expires_at) <= now);
+        if (!expired.length) return;
+        s.threads[s.activeFriend] = thread.filter(m => !expired.includes(m));
+        expired.forEach(m => {
+            const el = content.querySelector(`[data-msg="${m.id}"]`);
+            if (!el) return;
+            el.classList.add('vanishing');
+            setTimeout(() => el.remove(), 420);
+        });
+        if (s.last[s.activeFriend] && expired.some(m => m.id === s.last[s.activeFriend].id)) {
+            const rest = s.threads[s.activeFriend];
+            if (rest.length) s.last[s.activeFriend] = rest[rest.length - 1];
+            else delete s.last[s.activeFriend];
+            updateConvoRow(s.activeFriend);
+        }
+    }, 10000);
+
+    // Files from vanished messages are already locked; the sender's app deletes them for good
+    async function emptyIncognitoTrash() {
+        try {
+            await client.rpc('diary_purge_expired_messages');
+            const { data } = await client.from('diary_incognito_trash').select('id, path').limit(100);
+            if (!data || !data.length) return;
+            await client.storage.from(BUCKET).remove(data.map(d => d.path));
+            await client.from('diary_incognito_trash').delete().in('id', data.map(d => d.id));
+        } catch (e) {}
+    }
+
+    // Blur an incognito chat whenever the app isn't in front (app switcher, another tab, another window)
+    const shield = on => content.querySelector('.chat-pane.incognito')?.classList.toggle('shielded', on);
+    window.addEventListener('blur', () => shield(true));
+    window.addEventListener('focus', () => shield(false));
+    document.addEventListener('visibilitychange', () => shield(document.visibilityState !== 'visible'));
+
+
     // ---------- Typing indicator (a private channel just for the two of you) ----------
     function ensureTyping() {
         const want = app.state.view === 'messages' && signedIn() && s.activeFriend ? s.activeFriend : null;
@@ -1312,7 +1469,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function sendTyping(stop = false) {
-        if (!s.typing) return;
+        if (!s.typing || incognitoOf(s.typing.friendId)) return;
         const now = Date.now();
         if (!stop && now - s.typing.sentAt < 2000) return;
         s.typing.sentAt = stop ? 0 : now;
@@ -1410,6 +1567,7 @@ document.addEventListener('DOMContentLoaded', () => {
         id, author, local_id, title, body, html, color, mood, photos, audio, written_at, shared_at, allow_reposts,
         author_profile:diary_profiles!diary_shared_entries_author_fkey(username, display_name, avatar_path),
         likes:diary_entry_likes(user_id),
+        reactions:diary_entry_reactions(user_id, emoji),
         comments:diary_comments(count),
         reposts:diary_reposts(user_id, created_at, profile:diary_profiles!diary_reposts_user_id_fkey(username, display_name))`;
 
@@ -1624,6 +1782,135 @@ document.addEventListener('DOMContentLoaded', () => {
         app.showToast(allow ? 'Friends can repost this' : 'Reposts are off — existing reposts were removed');
         app.render();
     }
+
+    // ---------- Emoji reactions on posts ----------
+    // Tap the smile (or press and hold Like) for a row of reactions; tap a reaction chip to add or take back
+    // yours. You can leave more than one. The same picker is used for stories.
+    const POST_REACTIONS = ['❤️', '😂', '😮', '😢', '🔥', '👏', '🙏', '😍'];
+    const REACTION_NAMES = { '❤️': 'Love', '😂': 'Haha', '😮': 'Wow', '😢': 'Sad', '🔥': 'Fire', '👏': 'Clap', '🙏': 'Thanks', '😍': 'Adore' };
+
+    const myEntryReactions = id => {
+        const p = postsFor('entry').find(x => x.id === id);
+        return new Set(((p && p.reactions) || []).filter(r => r.user_id === s.profile.id).map(r => r.emoji));
+    };
+
+    function entryReactionsHTML(p) {
+        const list = (p.reactions || []).filter(r => POST_REACTIONS.includes(r.emoji));
+        if (!list.length) return '';
+        const me = s.profile.id;
+        const counts = new Map();
+        list.forEach(r => {
+            const x = counts.get(r.emoji) || { n: 0, mine: false };
+            x.n++;
+            if (r.user_id === me) x.mine = true;
+            counts.set(r.emoji, x);
+        });
+        const people = new Set(list.map(r => r.user_id)).size;
+        return `
+            <div class="post-reacts" aria-label="Reactions">
+                ${POST_REACTIONS.filter(e => counts.has(e)).map(e => {
+                    const x = counts.get(e);
+                    return `<button type="button" class="post-react${x.mine ? ' mine' : ''}" data-action="entry-react" data-id="${esc(p.id)}" data-emoji="${e}" aria-pressed="${x.mine}" aria-label="${REACTION_NAMES[e]} ${x.n}${x.mine ? ', including you' : ''}">${e}<span>${x.n}</span></button>`;
+                }).join('')}
+                <span class="post-react-who">${people === 1 ? '1 person' : `${people} people`} reacted</span>
+            </div>`;
+    }
+
+    async function toggleEntryReaction(entryId, emoji) {
+        if (!POST_REACTIONS.includes(emoji)) return;
+        const post = postsFor('entry').find(p => p.id === entryId);
+        if (!post) return;
+        const me = s.profile.id;
+        const before = (post.reactions || []).map(r => ({ ...r }));
+        const had = before.some(r => r.user_id === me && r.emoji === emoji);
+        post.reactions = had ? before.filter(r => !(r.user_id === me && r.emoji === emoji)) : [...before, { user_id: me, emoji }];
+        if (navigator.vibrate) navigator.vibrate(8);
+        app.render();
+        const { error } = had
+            ? await client.from('diary_entry_reactions').delete().eq('entry_id', entryId).eq('user_id', me).eq('emoji', emoji)
+            : await client.from('diary_entry_reactions').insert({ entry_id: entryId, emoji });
+        if (error) {
+            post.reactions = before;
+            app.render();
+            app.showToast('Couldn’t update your reaction');
+        }
+    }
+
+    // A floating row of emojis that grows out of the button that opened it. onPick(emoji) runs on tap.
+    // opts.chosen: emojis already picked (shown highlighted); opts.onClose: runs when it goes away.
+    function emojiPicker(anchor, onPick, opts = {}) {
+        document.querySelectorAll('.emoji-pop').forEach(p => p.remove());
+        const pop = document.createElement('div');
+        pop.className = 'emoji-pop';
+        pop.setAttribute('role', 'menu');
+        pop.setAttribute('aria-label', 'Reactions');
+        const chosen = opts.chosen || new Set();
+        pop.innerHTML = POST_REACTIONS.map((e, i) =>
+            `<button type="button" role="menuitem" data-emoji="${e}" style="--i:${i}" class="${chosen.has(e) ? 'on' : ''}" aria-label="${REACTION_NAMES[e]}${chosen.has(e) ? ' (yours — tap to remove)' : ''}">${e}</button>`).join('');
+        const host = anchor.closest('dialog[open]') || document.body;
+        host.append(pop);
+        const r = anchor.getBoundingClientRect();
+        const w = pop.offsetWidth;
+        const h = pop.offsetHeight;
+        const left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left + r.width / 2 - w / 2));
+        const above = r.top - h - 10 > 8;
+        pop.style.left = `${left}px`;
+        pop.style.top = `${above ? r.top - h - 10 : r.bottom + 10}px`;
+        pop.style.transformOrigin = `${r.left + r.width / 2 - left}px ${above ? '100%' : '0%'}`;
+        pop.classList.add(above ? 'above' : 'below');
+        const close = () => {
+            pop.classList.add('closing');
+            setTimeout(() => pop.remove(), 140);
+            document.removeEventListener('pointerdown', outside, true);
+            document.removeEventListener('keydown', key, true);
+            window.removeEventListener('scroll', close, true);
+            if (opts.onClose) opts.onClose();
+        };
+        const outside = e => { if (!pop.contains(e.target) && e.target !== anchor) close(); };
+        const key = e => { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(); anchor.focus(); } };
+        pop.addEventListener('click', e => {
+            const b = e.target.closest('button[data-emoji]');
+            if (!b) return;
+            e.stopPropagation();
+            onPick(b.dataset.emoji, b);
+            close();
+        });
+        setTimeout(() => {
+            document.addEventListener('pointerdown', outside, true);
+            window.addEventListener('scroll', close, true);
+        }, 0);
+        document.addEventListener('keydown', key, true);
+        pop.querySelector('button')?.focus({ preventScroll: true });
+        return close;
+    }
+
+    // Press and hold Like on a feed post: the reaction row appears (and the tap doesn't also like it)
+    {
+        let timer = null;
+        let fired = false;
+        content.addEventListener('pointerdown', e => {
+            const btn = e.target.closest('.like-btn[data-kind="entry"]');
+            if (!btn) return;
+            fired = false;
+            clearTimeout(timer);
+            timer = setTimeout(() => {
+                fired = true;
+                emojiPicker(btn, emoji => toggleEntryReaction(btn.dataset.id, emoji), { chosen: myEntryReactions(btn.dataset.id) });
+            }, 450);
+        });
+        const cancel = () => clearTimeout(timer);
+        content.addEventListener('pointerup', cancel);
+        content.addEventListener('pointercancel', cancel);
+        content.addEventListener('contextmenu', e => { if (e.target.closest('.like-btn[data-kind="entry"]')) e.preventDefault(); });
+        content.addEventListener('click', e => {
+            if (fired && e.target.closest('.like-btn[data-kind="entry"]')) {
+                e.stopPropagation();
+                e.preventDefault();
+                fired = false;
+            }
+        }, true);
+    }
+
 
     async function toggleLike(entryId) {
         const post = (s.feed || []).find(p => p.id === entryId);
@@ -2197,6 +2484,7 @@ document.addEventListener('DOMContentLoaded', () => {
             audio: p.audio,
             bucket: FEED_BUCKET,
             likes: p.likes,
+            reactsHTML: entryReactionsHTML(p),
             commentCount: commentCount(p),
             saved: s.saved.has(p.id),
             reposts: p.reposts || [],
@@ -2334,6 +2622,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <button class="act like-btn" data-action="like" data-kind="${o.kind}" data-id="${esc(o.id)}" aria-pressed="${liked}" aria-label="${liked ? 'Unlike' : 'Like'}">
                 <svg class="i"><use href="#${liked ? 'i-heart-fill' : 'i-heart'}"/></svg><span class="act-count">${o.likes.length || ''}</span>
             </button>
+            ${o.kind === 'entry' ? `<button class="act react-btn" data-action="entry-react-menu" data-id="${esc(o.id)}" aria-haspopup="true" aria-label="React"><svg class="i"><use href="#i-smile"/></svg></button>` : ''}
             <button class="act" data-action="post-open" data-key="${esc(key)}" data-focus="input" aria-label="Comment"><svg class="i"><use href="#i-chat"/></svg><span class="act-count">${o.commentCount || ''}</span></button>
             ${o.canRepost ? (() => {
                 const on = o.reposts.some(r => r.user_id === me);
@@ -2370,6 +2659,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${audioCardHTML(o.audio)}
                 ${o.bodyExtra || ''}
                 <div class="post-actions">${postActionsHTML(o)}</div>
+                ${o.reactsHTML || ''}
                 ${o.likes.length ? likedBy(o.likes) : ''}
                 ${photos.length ? postCaptionHTML(o, photos, false) : ''}
                 ${o.extraHTML || ''}
@@ -2759,7 +3049,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
             <footer class="pv-foot">
                 <div class="post-actions" data-pd="actions">${postActionsHTML(o)}</div>
-                <div class="pv-stats" data-pd="stats">${o.likes.length ? likedBy(o.likes) : ''}</div>
+                <div class="pv-stats" data-pd="stats">${o.reactsHTML || ''}${o.likes.length ? likedBy(o.likes) : ''}</div>
                 ${o.canComment ? `
                     <div class="pv-emojis" role="group" aria-label="Add an emoji">
                         ${QUICK_EMOJI.map(e => `<button type="button" data-pv="emoji" data-emoji="${e}" aria-label="Add ${e}">${e}</button>`).join('')}
@@ -2864,7 +3154,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (el && el.innerHTML !== html) el.innerHTML = html;
             };
             set('actions', postActionsHTML(o));
-            set('stats', o.likes.length ? likedBy(o.likes) : '');
+            set('stats', (o.reactsHTML || '') + (o.likes.length ? likedBy(o.likes) : ''));
             set('bodyextra', o.bodyExtra || '');
             set('extra', o.extraHTML || '');
         });
@@ -3031,7 +3321,7 @@ document.addEventListener('DOMContentLoaded', () => {
         renderPost, commentCount, openComments, repaintComments, MOOD_EMOJI: () => MOOD_EMOJI,
         respond, openChat, focusPost, commentsBlock, addComment, deleteComment, toggleSaved, postsFor,
         changeAvatar, removeAvatar, signOut, openAuth, hashtags, commentCount, followButton, toggleFollow, loadFollows,
-        pickAudio, uploadAudio, voiceHTML, POST_AUDIO, linkTags,
+        pickAudio, uploadAudio, voiceHTML, POST_AUDIO, linkTags, emojiPicker, POST_REACTIONS,
         loadFeed: () => { if (s.feed === null) loadFeed(); },
         // Open a feed post in the post view from anywhere (Explore, notifications), even if its card isn't on screen
         openEntry(id, opts) {
@@ -3108,7 +3398,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="convo-list">${rows}</div>
                     <p class="muted small inbox-foot">You’re <strong>@${esc(s.profile.username)}</strong> — share it so friends can add you.</p>
                 </aside>
-                <section class="chat-pane">
+                <section class="chat-pane${friend && incognitoOf(friend.id) ? ' incognito' : ''}">
                     ${friend ? chatPane(friend) : `<div class="chat-placeholder"><svg class="i"><use href="#i-chat"/></svg>
                         <p>Pick a conversation to start chatting.</p></div>`}
                 </section>
@@ -3180,8 +3470,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 <button class="convo${f.id === s.activeFriend ? ' active' : ''}${unread ? ' unread' : ''}" data-action="open-chat" data-id="${esc(f.id)}">
                     ${avatar(f, 'md')}
                     <span class="convo-main">
-                        <span class="convo-top"><strong>${esc(f.display_name)}</strong>${m ? `<time>${shortTime(m.created_at)}</time>` : ''}</span>
-                        <span class="convo-bottom">${mine && !m.deleted_at ? `<span class="convo-ticks${m.read_at ? ' read' : ''}" aria-label="${m.read_at ? 'Read' : 'Sent'}"><svg class="i"><use href="#i-checks"/></svg></span>` : ''}<span class="convo-preview">${esc(preview)}</span>${unread ? `<span class="badge">${unread}</span>` : ''}</span>
+                        <span class="convo-top"><strong>${esc(f.display_name)}${incognitoOf(f.id) ? '<svg class="i convo-incognito" aria-label="Incognito on"><use href="#i-incognito"/></svg>' : ''}</strong>${m ? `<time>${shortTime(m.created_at)}</time>` : ''}</span>
+                        <span class="convo-bottom">${mine && !m.deleted_at && !m.vanish ? `<span class="convo-ticks${m.read_at ? ' read' : ''}" aria-label="${m.read_at ? 'Read' : 'Sent'}"><svg class="i"><use href="#i-checks"/></svg></span>` : ''}<span class="convo-preview">${esc(preview)}</span>${unread ? `<span class="badge">${unread}</span>` : ''}</span>
                     </span>
                 </button>
                 ${window.diaryCalls ? `<button type="button" class="convo-call" data-action="call-friend" data-id="${esc(f.id)}" aria-label="Voice call ${esc(f.display_name)}" title="Voice call"><svg class="i"><use href="#i-phone"/></svg></button>` : ''}
@@ -3190,6 +3480,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function previewOf(m) {
         if (m.deleted_at) return '🚫 Message unsent';
+        if (m.vanish) return 'Incognito message';
         const text = Rich.toText(m.body || '').replace(/\s+/g, ' ').trim();
         if (text) return text.slice(0, 80);
         const a = (m.attachments || [])[0];
@@ -3202,6 +3493,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function chatPane(friend) {
         const thread = s.threads[friend.id];
+        const inc = incognitoOf(friend.id);
         let body;
         if (!thread) body = '<p class="chat-empty">Loading…</p>';
         else if (!thread.length) body = `<p class="chat-empty">This is the start of your chat with ${esc(friend.display_name)}. Say hi 👋</p>`;
@@ -3213,10 +3505,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${avatar(friend, 'sm')}
                 <div class="friend-name">${esc(friend.display_name)}<small data-status="${esc(friend.id)}" data-away="@${esc(friend.username)}">${s.online.has(friend.id) ? 'Active now' : `@${esc(friend.username)}`}</small></div>
                 ${window.diaryCalls ? `<button class="icon-btn accent" data-action="call-friend" data-id="${esc(friend.id)}" aria-label="Voice call ${esc(friend.display_name)}" title="Voice call"><svg class="i"><use href="#i-phone"/></svg></button>` : ''}
+                <button class="icon-btn incognito-btn" data-action="chat-incognito" aria-pressed="${!!inc}" aria-label="Incognito chat${inc ? ' (on)' : ''}" title="Incognito chat"><svg class="i"><use href="#i-incognito"/></svg></button>
                 <button class="icon-btn refresh-btn" data-action="chat-refresh" aria-label="Refresh this chat" title="Refresh"><svg class="i"><use href="#i-refresh"/></svg></button>
                 <button class="icon-btn" data-action="chat-wallpaper" aria-label="Chat wallpaper" title="Wallpaper"><svg class="i"><use href="#i-palette"/></svg></button>
                 <button class="icon-btn" data-action="toggle-info" aria-pressed="${s.showInfo}" aria-label="Contact details" title="Contact details"><svg class="i"><use href="#i-info"/></svg></button>
             </header>
+            ${inc ? incognitoBanner(friend, inc) : ''}
             <div class="chat-thread" id="chat-thread">${body}</div>
             <button type="button" class="chat-jump" id="chat-jump" data-action="chat-jump" hidden aria-label="Jump to latest"><svg class="i"><use href="#i-down"/></svg><span></span></button>
             <form class="composer${s.rec ? ' recording' : ''}" data-form="send-message">
@@ -3228,7 +3522,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <button type="button" class="composer-plus" data-action="chat-add" title="Photo, document, voice note, drawing or formatting" aria-label="Add photo, document, voice note or drawing"><svg class="i"><use href="#i-plus"/></svg></button>
                     <div class="composer-box">
                         <div class="rich chat-input" id="chat-input" contenteditable="true" role="textbox" aria-multiline="true"
-                            aria-label="Message ${esc(friend.display_name)}" data-placeholder="Message ${esc(friend.display_name.split(' ')[0])}…"></div>
+                            aria-label="${inc ? 'Incognito message to' : 'Message'} ${esc(friend.display_name)}" data-placeholder="${inc ? 'Incognito message…' : `Message ${esc(friend.display_name.split(' ')[0])}…`}"></div>
                         <div class="composer-tools">
                             <button type="button" class="tool-btn" data-action="chat-emoji" title="Emoji" aria-label="Emoji"><svg class="i"><use href="#i-smile"/></svg></button>
                         </div>
@@ -3298,13 +3592,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const onlyEmoji = !atts && /^\p{Extended_Pictographic}(\u200d?\p{Extended_Pictographic}|\ufe0f|\s){0,6}$/u.test(Rich.toText(m.body || '').trim());
         const reactions = Object.entries(m.reactions || {}).filter(([, users]) => Array.isArray(users) && users.length);
         return `${sep}
-            <div class="msg ${mine ? 'out' : 'in'}${grouped ? ' grouped' : ''}${onlyEmoji ? ' jumbo' : ''}${reactions.length ? ' has-reacts' : ''}" data-msg="${id}">
+            <div class="msg ${mine ? 'out' : 'in'}${grouped ? ' grouped' : ''}${onlyEmoji ? ' jumbo' : ''}${reactions.length ? ' has-reacts' : ''}${m.vanish ? ' vanish' : ''}" data-msg="${id}">
                 ${mine || !friend ? '' : avatar(friend, 'xs')}
                 <div class="msg-card" title="${date.toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' })}">
                     ${quote}
                     ${body}
                     ${atts ? `<div class="msg-atts">${atts}</div>` : ''}
-                    <span class="msg-meta"><time>${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</time>${mine ? `<span class="ticks${m.read_at ? ' read' : ''}" title="${m.read_at ? 'Read' : 'Sent'}"><svg class="i"><use href="#i-checks"/></svg></span>` : ''}</span>
+                    <span class="msg-meta">${m.vanish ? `<span class="vanish-mark" title="${esc(vanishTitle(m))}"><svg class="i"><use href="#i-timer"/></svg></span>` : ''}<time>${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</time>${mine && !m.vanish ? `<span class="ticks${m.read_at ? ' read' : ''}" title="${m.read_at ? 'Read' : 'Sent'}"><svg class="i"><use href="#i-checks"/></svg></span>` : ''}</span>
                     ${reactions.length ? `<div class="msg-reacts">${reactions.map(([e, users]) => `<button type="button" class="react-chip${users.includes(me) ? ' mine' : ''}" data-action="react" data-id="${id}" data-emoji="${esc(e)}" aria-label="${esc(e)} ${users.length}">${esc(e)}${users.length > 1 ? `<span>${users.length}</span>` : ''}</button>`).join('')}</div>` : ''}
                 </div>
                 <div class="msg-tools">
@@ -3598,7 +3892,11 @@ document.addEventListener('DOMContentLoaded', () => {
             if (s.addOpen) $('add-friend-input').focus();
         },
         'open-chat': el => openChat(el.dataset.id),
+        'entry-react-menu': el => emojiPicker(el, emoji => toggleEntryReaction(el.dataset.id, emoji), { chosen: myEntryReactions(el.dataset.id) }),
+        'entry-react': el => toggleEntryReaction(el.dataset.id, el.dataset.emoji),
+        'chat-incognito': el => incognitoMenu(el),
         'close-chat': () => {
+            if (s.activeFriend) pruneVanished(s.activeFriend, true);
             // Going back through history keeps Back / Forward in step with what's on screen
             if (history.state && history.state.chat) return history.back();
             const pane = content.querySelector('.chat-pane');

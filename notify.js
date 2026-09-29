@@ -74,7 +74,9 @@ document.addEventListener('DOMContentLoaded', () => {
         community_post: ['group', 'i-users'], community_join: ['group', 'i-users'],
         call_started: ['call', 'i-phone'], missed_call: ['missed', 'i-phone-off'],
         entry_repost: ['group', 'i-repost'], reel_like: ['like', 'i-heart-fill'], reel_comment: ['comment', 'i-chat'], library_like: ['like', 'i-heart-fill'],
-        live_started: ['call', 'i-live'], new_follower: ['group', 'i-user-plus']
+        live_started: ['call', 'i-live'], new_follower: ['group', 'i-user-plus'],
+        entry_reaction: ['like', 'i-smile'], story_reaction: ['like', 'i-smile'],
+        book_request: ['group', 'i-store'], book_request_update: ['group', 'i-store'], book_message: ['comment', 'i-store']
     };
 
     // plain=true gives text for toasts and device alerts
@@ -101,6 +103,18 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'library_like': return `${who} loved your writing${quote}`;
             case 'live_started': return `${who} is live now${quote}`;
             case 'new_follower': return `${who} started following you`;
+            case 'entry_reaction': return `${who} reacted ${d.emoji || ''} to your post`;
+            case 'story_reaction': return `${who} reacted ${d.emoji || ''} to your story`;
+            case 'book_request': {
+                const t = plain ? `“${d.title || 'your book'}”` : `<strong>${esc(d.title || 'your book')}</strong>`;
+                return `${who} ${d.kind === 'rent' ? 'wants to rent' : d.kind === 'gift' ? 'would love your free copy of' : 'wants to buy'} ${t}`;
+            }
+            case 'book_request_update': {
+                const t = plain ? `“${d.title || 'the book'}”` : `<strong>${esc(d.title || 'the book')}</strong>`;
+                const verb = { accepted: 'accepted your request for', declined: 'declined your request for', completed: 'marked the handover done for', cancelled: 'cancelled the request for' }[d.status] || 'updated the request for';
+                return `${who} ${verb} ${t}`;
+            }
+            case 'book_message': return `${who} sent you a message about ${plain ? `“${d.title || 'a book'}”` : `<strong>${esc(d.title || 'a book')}</strong>`}`;
             default: return `${who} did something`;
         }
     }
@@ -124,6 +138,19 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'new_follower':
                 I.loadFollows().then(() => app.render());
                 app.setView('settings');
+                break;
+            case 'entry_reaction':
+                app.setView('feed');
+                I.focusPost(`entry:${d.entry}`, { open: false });
+                break;
+            case 'story_reaction':
+                if (window.diaryStories && window.diaryStories.openMine) window.diaryStories.openMine();
+                break;
+            case 'book_request':
+            case 'book_request_update':
+            case 'book_message':
+                app.setView('market');
+                if (window.diaryMarket) window.diaryMarket.openRequest(d.request);
                 break;
             case 'library_like':
                 app.setView('library');

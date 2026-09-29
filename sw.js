@@ -4,11 +4,11 @@
 //
 // Strategy: when online, always fetch fresh (so a new deploy shows up right away) and refresh the saved copy;
 // when the network fails, answer from the saved copy. Supabase data (posts, messages…) is never cached here.
-const CACHE = 'cordial-shell-v5';
+const CACHE = 'cordial-shell-v6';
 const SHELL = [
     '/', '/index.html', '/manifest.webmanifest',
     '/style.css', '/photoedit.css',
-    '/config.js', '/rich.js', '/media.js', '/dilute.js', '/script.js', '/social.js', '/stories.js', '/library.js',
+    '/config.js', '/rich.js', '/media.js', '/dilute.js', '/script.js', '/social.js', '/stories.js', '/library.js', '/market.js',
     '/community.js', '/live.js', '/explore.js', '/call.js', '/notify.js', '/settings.js', '/transcribe.js', '/ai.js',
     '/photoedit.js', '/sync.js', '/zoom.js', '/speak.js', '/zoom.css', '/speak.css', '/groupchat.js', '/location.js', '/location.css', '/wallpaper.js',
     '/icons/icon-180.png', '/icons/icon-192.png', '/icons/icon-512.png',

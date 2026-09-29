@@ -2363,7 +2363,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function openMainMenu(anchor) {
         const nav = [['home', 'Notes', 'i-notes'], ['calendar', 'Calendar', 'i-calendar'], ['insights', 'Insights', 'i-chart'],
-            ['photos', 'Photos', 'i-image'], ['highlights', 'Highlights', 'i-marker'], ['feed', 'Feed', 'i-feed'], ['explore', 'Explore', 'i-compass'], ['reels', 'Reels', 'i-reel'], ['library', 'Library', 'i-book'], ['communities', 'Communities', 'i-users'], ['messages', 'Messages', 'i-chat'],
+            ['photos', 'Photos', 'i-image'], ['highlights', 'Highlights', 'i-marker'], ['feed', 'Feed', 'i-feed'], ['explore', 'Explore', 'i-compass'], ['reels', 'Reels', 'i-reel'], ['library', 'Library', 'i-book'], ['market', 'Marketplace', 'i-store'], ['communities', 'Communities', 'i-users'], ['messages', 'Messages', 'i-chat'],
             ['archive', 'Archive', 'i-archive'], ['trash', 'Trash', 'i-trash']]
             .map(([view, label, icon]) => ({ label, icon, cls: 'mobile-only', onClick: () => setView(view) }));
         openPopover(anchor, [

@@ -329,6 +329,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (tab === 'all') {
             sections.push(newsSection('world', true));
             sections.push(newsSection('local', true));
+            if (window.diaryMarket) sections.push(window.diaryMarket.exploreSection());
         }
         if (show('reels') && (reels.length || tab === 'reels')) {
             sections.push(`<section class="ex-sec">${head('i-reel', 'Popular reels', 'Short videos your friends are watching',
