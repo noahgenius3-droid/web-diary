@@ -4,11 +4,11 @@
 //
 // Strategy: when online, always fetch fresh (so a new deploy shows up right away) and refresh the saved copy;
 // when the network fails, answer from the saved copy. Supabase data (posts, messages…) is never cached here.
-const CACHE = 'cordial-shell-v9';
+const CACHE = 'cordial-shell-v11';
 const SHELL = [
     '/', '/index.html', '/manifest.webmanifest',
     '/style.css', '/photoedit.css',
-    '/config.js', '/rich.js', '/media.js', '/dilute.js', '/script.js', '/social.js', '/stories.js', '/library.js', '/market.js',
+    '/config.js', '/rich.js', '/media.js', '/dilute.js', '/script.js', '/social.js', '/stories.js', '/library.js', '/market.js', '/profile.js',
     '/community.js', '/live.js', '/explore.js', '/call.js', '/notify.js', '/settings.js', '/transcribe.js', '/ai.js',
     '/photoedit.js', '/sync.js', '/zoom.js', '/speak.js', '/zoom.css', '/speak.css', '/groupchat.js', '/location.js', '/location.css', '/wallpaper.js',
     '/icons/icon-180.png', '/icons/icon-192.png', '/icons/icon-512.png',
@@ -89,4 +89,40 @@ self.addEventListener('fetch', event => {
         event.respondWith(cacheFirst(request));
     }
     // Everything else (Supabase data, uploads, video) goes straight to the network
+});
+
+// ---------- Push notifications (friend requests, new followers…) ----------
+// The server sends { title, body, url, tag, icon }. If Cordial is open and in front, the app already
+// shows it as a toast, so the lock-screen alert is skipped.
+self.addEventListener('push', event => {
+    let data = {};
+    try { data = event.data ? event.data.json() : {}; } catch (e) { data = { body: event.data && event.data.text() }; }
+    event.waitUntil((async () => {
+        const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+        if (windows.some(w => w.focused && w.visibilityState === 'visible')) return;
+        await self.registration.showNotification(data.title || 'Cordial', {
+            body: data.body || '',
+            icon: data.icon || '/icons/icon-192.png',
+            badge: data.badge || '/icons/icon-192.png',
+            tag: data.tag || data.id || 'cordial',
+            renotify: true,
+            data: { url: data.url || '/' }
+        });
+    })());
+});
+
+// Tapping the alert opens Cordial on the right page (reusing an open window when there is one)
+self.addEventListener('notificationclick', event => {
+    event.notification.close();
+    const target = new URL((event.notification.data && event.notification.data.url) || '/', self.location.origin).href;
+    event.waitUntil((async () => {
+        const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+        const open = windows.find(w => new URL(w.url).origin === self.location.origin);
+        if (open) {
+            await open.focus();
+            if ('navigate' in open) return open.navigate(target).catch(() => {});
+            return;
+        }
+        return self.clients.openWindow(target);
+    })());
 });

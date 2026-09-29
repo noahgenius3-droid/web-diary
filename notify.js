@@ -27,6 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'diary_notifications', filter: `user_id=eq.${id}` },
                 payload => onNew(payload.new))
             .subscribe();
+        if (alertStatus() === 'on') subscribePush();
     }
 
     function stop() {
@@ -62,6 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const plain = describe(item, true);
         if (item.type === 'call_started') showCallBanner(item);
+        else if (item.type === 'live_started') showLivePopup(item);
         else if (item.type !== 'missed_call') app.showToast(plain);
         deviceAlert(item, plain);
     }
@@ -351,6 +353,64 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && n.open) close(); });
 
+    // ---------- "Went live" pop-up ----------
+    // A friend (or someone you follow) starts a live video: a card pops up with Watch / Later
+    let livePop = null;
+    let liveTimer = null;
+    function showLivePopup(item) {
+        const d = item.data || {};
+        if (window.diaryCalls && window.diaryCalls.inCall && window.diaryCalls.inCall()) return app.showToast(describe(item, true));
+        if (!livePop) {
+            livePop = document.createElement('div');
+            livePop.className = 'live-pop';
+            livePop.setAttribute('role', 'alertdialog');
+            livePop.setAttribute('aria-live', 'assertive');
+            document.body.append(livePop);
+            livePop.addEventListener('click', e => {
+                const b = e.target.closest('[data-lp]');
+                if (!b) return;
+                hideLive();
+                if (b.dataset.lp === 'watch') {
+                    markRead(livePop.dataset.id);
+                    if (window.diaryLive) window.diaryLive.watch(livePop.dataset.stream);
+                }
+            });
+            document.addEventListener('keydown', e => { if (e.key === 'Escape' && livePop && !livePop.hidden) hideLive(); });
+        }
+        const actor = item.actor_profile || { id: item.actor, display_name: 'Someone' };
+        livePop.dataset.stream = d.stream_id || '';
+        livePop.dataset.id = item.id;
+        livePop.innerHTML = `
+            <div class="live-pop-card">
+                <span class="live-pop-av">${avatar(actor, 'lg')}<span class="live-pop-badge">LIVE</span></span>
+                <span class="live-pop-text">
+                    <strong>${esc(actor.display_name || 'Someone')} is live now</strong>
+                    <small>${esc(d.snippet || d.title || 'Tap Watch to join them')}</small>
+                </span>
+                <span class="live-pop-actions">
+                    <button type="button" class="chip" data-lp="later">Later</button>
+                    <button type="button" class="primary-btn small live-watch" data-lp="watch"><svg class="i"><use href="#i-live"/></svg>Watch</button>
+                </span>
+            </div>`;
+        livePop.hidden = false;
+        livePop.classList.remove('leaving');
+        if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+        livePop.querySelector('[data-lp="watch"]').focus({ preventScroll: true });
+        clearTimeout(liveTimer);
+        liveTimer = setTimeout(hideLive, 20000);
+    }
+    function hideLive() {
+        clearTimeout(liveTimer);
+        if (livePop) livePop.hidden = true;
+    }
+    function markRead(id) {
+        const it = n.items.find(x => x.id === id);
+        if (it && !it.read_at) {
+            it.read_at = new Date().toISOString();
+            client.from('diary_notifications').update({ read_at: it.read_at }).eq('id', id).then(() => paintBadge());
+        }
+    }
+
     // ---------- Group call banner ----------
     let bannerTimer = null;
 
@@ -391,34 +451,94 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (permission === 'granted') {
             try { localStorage.setItem('diaryAlerts', '1'); } catch (e) {}
-            new Notification('Cordial alerts are on', { body: 'You’ll hear from friends and groups here while Cordial is open.' });
+            const pushed = await subscribePush();
+            showLocal('Cordial alerts are on', pushed
+                ? 'You’ll get friend requests and new followers here — even when Cordial is closed.'
+                : 'You’ll hear from friends and groups here while Cordial is open.');
         } else {
             app.showToast('Alerts were blocked — you can allow them in your browser settings');
         }
         paintPanel();
     }
 
+    async function disableAlerts() {
+        try { localStorage.removeItem('diaryAlerts'); } catch (e) {}
+        await unsubscribePush();
+        paintPanel();
+    }
+
+    // Android Chrome has no `new Notification()`: alerts must go through the service worker there
+    async function showLocal(title, body, opts = {}) {
+        try {
+            const reg = await swReady();
+            if (reg) return await reg.showNotification(title, { body, icon: '/icons/icon-192.png', badge: '/icons/icon-192.png', ...opts });
+            const alert = new Notification(title, { body, ...opts });
+            if (opts.onclick) alert.onclick = opts.onclick;
+        } catch (e) { /* some browsers only allow alerts from installed apps */ }
+    }
+
+    // ---------- Push (alerts while Cordial is closed) ----------
+    const PUSH_TYPES = new Set(['friend_request', 'friend_accepted', 'new_follower', 'live_started']);
+    const pushKey = () => (window.DIARY_CONFIG || {}).pushPublicKey;
+    const pushSupported = () => canAlert && 'serviceWorker' in navigator && 'PushManager' in window && !!pushKey();
+    const swReady = () => ('serviceWorker' in navigator && navigator.serviceWorker.controller !== undefined)
+        ? Promise.race([navigator.serviceWorker.ready, new Promise(r => setTimeout(() => r(null), 4000))]).catch(() => null)
+        : Promise.resolve(null);
+    const keyBytes = b64 => {
+        const raw = atob(b64.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (b64.length % 4)) % 4));
+        return Uint8Array.from(raw, c => c.charCodeAt(0));
+    };
+
+    async function subscribePush() {
+        if (!pushSupported() || Notification.permission !== 'granted' || !s.profile) return false;
+        try {
+            const reg = await swReady();
+            if (!reg) return false;
+            let sub = await reg.pushManager.getSubscription();
+            try {
+                if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(pushKey()) });
+            } catch (e) {
+                // An old subscription made with a different key: replace it
+                if (sub) await sub.unsubscribe();
+                sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(pushKey()) });
+            }
+            const j = sub.toJSON();
+            const { error } = await client.rpc('diary_save_push_subscription', {
+                p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_user_agent: navigator.userAgent.slice(0, 300)
+            });
+            return !error;
+        } catch (e) {
+            console.warn('[push] subscribe failed', e);
+            return false;
+        }
+    }
+
+    // Signing out (or turning alerts off) stops this device getting that account's alerts
+    async function unsubscribePush() {
+        try {
+            const reg = await swReady();
+            const sub = reg && await reg.pushManager.getSubscription();
+            if (!sub) return;
+            if (s.profile) await client.from('diary_push_subscriptions').delete().eq('endpoint', sub.endpoint);
+            await sub.unsubscribe();
+        } catch (e) { /* nothing to undo */ }
+    }
+
     function deviceAlert(item, text) {
         if (alertStatus() !== 'on') return;
+        if (PUSH_TYPES.has(item.type) && pushSupported()) return; // the push alert covers this one
         if (document.visibilityState === 'visible' && document.hasFocus()) return; // already on screen as a toast
-        try {
-            const actor = item.actor_profile;
-            const alert = new Notification('Cordial', {
-                body: text,
-                tag: item.id,
-                icon: actor && actor.avatar_path ? avatarUrl(actor.avatar_path) : undefined
-            });
-            alert.onclick = () => {
-                window.focus();
-                navigate(item);
-                alert.close();
-            };
-        } catch (e) { /* some mobile browsers only allow alerts from installed apps */ }
+        const actor = item.actor_profile;
+        showLocal('Cordial', text, {
+            tag: item.id,
+            icon: actor && actor.avatar_path ? avatarUrl(actor.avatar_path) : '/icons/icon-192.png',
+            onclick: () => { window.focus(); navigate(item); }
+        });
     }
 
     // Missed calls are logged by the callee's own device (call.js calls this)
     window.diaryNotify = {
-        alertStatus, enableAlerts,
+        alertStatus, enableAlerts, disableAlerts, unsubscribePush, pushSupported, showLivePopup,
         logMissedCall(callerId) {
             if (!s.profile || !callerId) return;
             client.from('diary_notifications').insert({ actor: callerId, type: 'missed_call', data: {} }).then(() => {});

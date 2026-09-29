@@ -40,7 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
         members: () => c.members,
         loadMembers: () => loadMembers(),
         presenceChannel: () => (c.presence ? c.presence.channel : null),
-        joinCall: () => { if (window.diaryCalls && c.current) window.diaryCalls.joinCommunity(c.current); },
+        joinCall: (opts = {}) => { if (window.diaryCalls && c.current) window.diaryCalls.joinCommunity(c.current, opts); },
         canInteract: () => !!(c.current && c.memberships.has(c.current.id)),
         toggleLike, postMenu, onRemoteChange, reset,
         // For the note share sheet

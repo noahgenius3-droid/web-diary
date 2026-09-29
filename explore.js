@@ -265,13 +265,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const has = t => (t || '').toLowerCase().includes(q);
         const posts = (s.feed || []).filter(p => has(p.title) || has(p.body) || has(p.author_profile && p.author_profile.display_name) || I.hashtags(p).some(t => t.includes(q.replace(/^#/, '')))).slice(0, 12);
         const tags = trendingTags().filter(([t]) => t.includes(q.replace(/^#/, ''))).slice(0, 8);
-        const people = [...s.friends, ...s.suggestions].filter(p => has(p.display_name) || has(p.username)).slice(0, 8);
+        const everyone = I.peopleResults ? I.peopleResults(q) : '';
+        const people = everyone ? [] : [...s.friends, ...s.suggestions].filter(p => has(p.display_name) || has(p.username)).slice(0, 8);
         const groups = (E.groups || []).filter(g => has(g.name) || has(g.description)).slice(0, 6);
         const books = window.diaryLibrary ? window.diaryLibrary.popular(100).filter(x => has(x.title) || has(x.genre) || has(x.description)).slice(0, 8) : [];
         const total = posts.length + tags.length + people.length + groups.length + books.length;
-        if (!total) return `<div class="ex-empty"><svg class="i"><use href="#i-search"/></svg><strong>Nothing found for “${esc(q)}”</strong><span>Try a name, a #tag or a word from a post.</span></div>`;
+        if (!total && !everyone) return `<div class="ex-empty"><svg class="i"><use href="#i-search"/></svg><strong>Nothing found for “${esc(q)}”</strong><span>Try a name, a #tag or a word from a post.</span></div>`;
         return `
             ${tags.length ? `<section class="ex-sec">${head('i-tag', 'Tags')}<div class="ex-tags">${tags.map(([t, v]) => `<button type="button" class="ex-tag" data-action="ex-tag" data-tag="${esc(t)}">#${esc(t)}<small>${v.n}</small></button>`).join('')}</div></section>` : ''}
+            ${everyone ? `<section class="ex-sec">${everyone}</section>` : ''}
             ${people.length ? `<section class="ex-sec">${head('i-users', 'People')}<div class="ex-people">${people.map(p => s.friends.includes(p)
                 ? `<div class="ex-person">${avatar(p, 'md')}<span class="ex-person-text"><strong>${esc(p.display_name)}</strong><small>@${esc(p.username)} · friend</small></span><button type="button" class="chip" data-action="message-friend" data-id="${esc(p.id)}">Message</button></div>`
                 : personRow(p)).join('')}</div></section>` : ''}
@@ -362,7 +364,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                     <label class="search ex-search">
                         <svg class="i"><use href="#i-search"/></svg>
-                        <input type="search" id="ex-search" placeholder="Search posts, #tags, people, books and communities" aria-label="Search Explore" value="${esc(q)}" enterkeyhint="search" autocomplete="off">
+                        <input type="search" id="ex-search" placeholder="Search posts, #tags, people, books and communities" aria-label="Search Explore" value="${esc(E.raw ?? q)}" enterkeyhint="search" autocomplete="off">
                     </label>
                 </section>
                 <nav class="ex-tabs" role="tablist" aria-label="Show">
@@ -375,6 +377,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Search re-draws only the results, so typing keeps its focus
     content.addEventListener('input', e => {
         if (e.target.id !== 'ex-search') return;
+        E.raw = e.target.value;
         E.query = e.target.value.trim().toLowerCase();
         const body = document.getElementById('ex-body');
         if (!body) return;
@@ -409,6 +412,7 @@ document.addEventListener('DOMContentLoaded', () => {
         'ex-tab': el => {
             E.tab = el.dataset.tab;
             E.query = '';
+            E.raw = '';
             app.render();
         },
         'ex-post': el => {

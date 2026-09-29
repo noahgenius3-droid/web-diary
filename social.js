@@ -200,6 +200,84 @@ document.addEventListener('DOMContentLoaded', () => {
         return `<span class="avatar-stack" title="${s.friends.length} friends">${shown.map(f => avatar(f, 'sm')).join('')}${extra > 0 ? `<span class="avatar sm more">+${extra}</span>` : ''}</span>`;
     };
 
+    // ---------- Global people search ----------
+    // Anyone on Cordial by name or @username (the top search bar and Explore both use this). Results come
+    // from the server and are painted in place, so typing is never interrupted.
+    const people = { cache: new Map(), timer: null, pending: null };
+
+    function peopleResults(q) {
+        q = String(q || '').trim().replace(/^@/, '').toLowerCase();
+        if (!signedIn() || q.length < 2) return '';
+        const hit = people.cache.get(q);
+        if (!hit) {
+            clearTimeout(people.timer);
+            people.timer = setTimeout(() => fetchPeople(q), 220);
+        }
+        return `<section class="people-results" data-people-q="${esc(q)}" aria-live="polite">${peopleHTML(q, hit)}</section>`;
+    }
+
+    async function fetchPeople(q) {
+        if (people.cache.has(q) || people.pending === q) return;
+        people.pending = q;
+        const { data, error } = await client.rpc('diary_search_people', { q });
+        people.pending = null;
+        people.cache.set(q, error ? { error: true, list: [] } : { list: data || [] });
+        if (people.cache.size > 40) people.cache.delete(people.cache.keys().next().value);
+        paintPeople(q);
+    }
+
+    function paintPeople(q) {
+        document.querySelectorAll(`.people-results[data-people-q="${CSS.escape(q)}"]`).forEach(box => {
+            box.innerHTML = peopleHTML(q, people.cache.get(q));
+            hydrateStorage(box);
+        });
+    }
+
+    function peopleHTML(q, hit) {
+        const head = '<h3 class="people-head"><svg class="i"><use href="#i-users"/></svg>People on Cordial</h3>';
+        if (!hit) {
+            // While the server looks, show friends that already match
+            const local = [...s.friends, ...(s.suggestions || [])].filter(p => `${p.display_name} ${p.username}`.toLowerCase().includes(q)).slice(0, 5);
+            return `${head}${local.length ? `<div class="people-list">${local.map(p => personHTML({ ...p, relation: s.friends.includes(p) ? 'friend' : 'none' })).join('')}</div>` : ''}<p class="people-note muted small">Searching everyone…</p>`;
+        }
+        if (hit.error) return `${head}<p class="people-note muted small">Couldn’t search people right now.</p>`;
+        if (!hit.list.length) return `${head}<p class="people-note muted small">No one called “${esc(q)}” yet — check the spelling, or try their @username.</p>`;
+        return `${head}<div class="people-list">${hit.list.map(personHTML).join('')}</div>`;
+    }
+
+    function personHTML(p) {
+        const first = esc((p.display_name || '').split(' ')[0] || 'them');
+        const incoming = p.relation === 'incoming' ? s.incoming.find(f => f.id === p.id) : null;
+        const label = { friend: 'Friend', requested: 'Request sent', incoming: 'Wants to be friends' }[p.relation] || (p.follows_you ? 'Follows you' : '');
+        let actions;
+        if (p.relation === 'friend') {
+            actions = `<button type="button" class="chip accent" data-action="message-friend" data-id="${esc(p.id)}">Message</button>`;
+        } else if (incoming) {
+            actions = `<button type="button" class="chip accent" data-action="people-accept" data-id="${esc(incoming.friendshipId)}" data-person="${esc(p.id)}">Accept</button>`;
+        } else if (p.relation === 'requested') {
+            actions = '<button type="button" class="chip" disabled>Requested</button>';
+        } else {
+            actions = `<button type="button" class="chip accent" data-action="people-add" data-username="${esc(p.username)}" data-person="${esc(p.id)}" aria-label="Add ${first} as a friend">Add friend</button>`;
+        }
+        const follow = p.relation === 'friend' ? '' : followButton(p);
+        return `
+            <div class="person-row" data-person-row="${esc(p.id)}">
+                <button type="button" class="person-open" data-profile="${esc(p.id)}" aria-label="View ${esc(p.display_name)}’s profile">${avatar(p, 'md')}</button>
+                <span class="person-text" data-profile="${esc(p.id)}" role="button" tabindex="0"><strong>${esc(p.display_name)}</strong><small>@${esc(p.username)}${label ? ` · ${label}` : ''}</small></span>
+                <span class="person-actions">${actions}${follow}</span>
+            </div>`;
+    }
+
+    // After adding / accepting, every cached result for that person shows the new state
+    function setRelation(personId, relation) {
+        people.cache.forEach((hit, q) => {
+            const p = (hit.list || []).find(x => x.id === personId);
+            if (p) { p.relation = relation; paintPeople(q); }
+        });
+    }
+
+    app.hooks.searchPeople = q => peopleResults(q);
+
     app.hooks.screenKey = view => (view === 'messages' && s.activeFriend) || '';
 
     app.hooks.afterRender = (view, how = {}) => {
@@ -389,6 +467,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     async function signOut() {
+        // This device stops getting the account's lock-screen alerts
+        if (window.diaryNotify && window.diaryNotify.unsubscribePush) await window.diaryNotify.unsubscribePush();
         if (client) await client.auth.signOut();
         app.showToast('Signed out');
     }
@@ -517,23 +597,61 @@ document.addEventListener('DOMContentLoaded', () => {
                 })
             .subscribe();
 
-        // Who's online right now (shown for friends only)
-        s.presence = client.channel('diary-presence', { config: { presence: { key: me } } });
-        s.presence
-            .on('presence', { event: 'sync' }, () => {
-                s.online = new Set(Object.keys(s.presence.presenceState()));
-                paintPresence();
-            })
-            .subscribe(async status => {
-                if (status === 'SUBSCRIBED') await s.presence.track({ at: Date.now() });
-            });
+        // Who's online / last seen: a heartbeat, and a check that honours each person's privacy settings
+        heartbeat();
+        refreshPresence();
+    }
+
+    // ---------- Presence (online now, last seen) ----------
+    // Every 30 seconds while Cordial is open you check in; people's status comes back only as far as their
+    // privacy settings allow (Settings → Privacy). "Online" means checked in within the last ~75 seconds.
+    s.lastSeen = new Map(); // user id -> ISO time, when they let you see it
+    const presenceWatch = new Set(); // extra people to keep an eye on (an open profile, group members)
+    function heartbeat() {
+        if (!signedIn() || document.visibilityState !== 'visible') return;
+        client.rpc('diary_heartbeat').then(() => {}, () => {});
+    }
+    async function refreshPresence(extra = []) {
+        if (!signedIn()) return;
+        extra.forEach(id => presenceWatch.add(id));
+        const ids = [...new Set([...s.friends.map(f => f.id), ...presenceWatch])].filter(id => id && id !== s.profile.id).slice(0, 200);
+        if (!ids.length) return;
+        const { data, error } = await client.rpc('diary_get_presence', { ids });
+        if (error) return;
+        const online = new Set();
+        (data || []).forEach(r => {
+            if (r.online) online.add(r.id);
+            if (r.last_seen) s.lastSeen.set(r.id, r.last_seen); else s.lastSeen.delete(r.id);
+        });
+        s.online = online;
+        paintPresence();
+    }
+    setInterval(() => { heartbeat(); if (document.visibilityState === 'visible') refreshPresence(); }, 30000);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { heartbeat(); refreshPresence(); } });
+
+    // "Active now", "Last seen 5 min ago", or nothing when they keep it private
+    function presenceText(id) {
+        if (s.online.has(id)) return 'Active now';
+        const seen = s.lastSeen.get(id);
+        if (!seen) return '';
+        const mins = Math.round((Date.now() - Date.parse(seen)) / 60000);
+        if (mins < 1) return 'Last seen just now';
+        if (mins < 60) return `Last seen ${mins} min ago`;
+        const d = new Date(seen);
+        const today = new Date();
+        const yesterday = new Date(); yesterday.setDate(today.getDate() - 1);
+        const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        if (d.toDateString() === today.toDateString()) return `Last seen today at ${time}`;
+        if (d.toDateString() === yesterday.toDateString()) return `Last seen yesterday at ${time}`;
+        return `Last seen ${d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
     }
 
     function paintPresence() {
-        content.querySelectorAll('[data-presence]').forEach(el =>
+        document.querySelectorAll('[data-presence]').forEach(el =>
             el.classList.toggle('online', s.online.has(el.dataset.presence)));
-        content.querySelectorAll('[data-status]').forEach(el => {
-            el.textContent = s.online.has(el.dataset.status) ? 'Active now' : el.dataset.away;
+        document.querySelectorAll('[data-status]').forEach(el => {
+            el.textContent = presenceText(el.dataset.status) || el.dataset.away;
+            el.classList.toggle('is-online', s.online.has(el.dataset.status));
         });
     }
 
@@ -696,6 +814,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function openChat(friendId, opts = {}) {
         if (s.activeFriend && s.activeFriend !== friendId) pruneVanished(s.activeFriend, true);
         s.activeFriend = friendId;
+        s.editing = null;
         s.chatOpenedAt[friendId] = Date.now();
         pruneVanished(friendId);
         if (!s.threads[friendId]) loadThread(friendId);
@@ -794,6 +913,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!input || !friendId) return;
         const html = Rich.sanitize(input.innerHTML);
         const text = Rich.toText(html);
+        if (s.editing && s.editing.friendId === friendId) {
+            if (!text) return app.showToast('A message can’t be empty — delete it instead');
+            return saveEdit(html);
+        }
         const pending = s.pending[friendId] || [];
         if (!text && !pending.length) return;
 
@@ -1066,8 +1189,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const thread = s.threads[other];
         const local = thread && thread.find(x => x.id === m.id);
         if (local) {
-            const changed = local.deleted_at !== m.deleted_at || JSON.stringify(local.reactions || {}) !== JSON.stringify(m.reactions || {});
-            Object.assign(local, { read_at: m.read_at, reactions: m.reactions || {}, deleted_at: m.deleted_at, body: m.body, attachments: m.attachments, expires_at: m.expires_at, vanish: m.vanish });
+            const changed = local.deleted_at !== m.deleted_at || local.body !== m.body || local.edited_at !== m.edited_at || local.restored_at !== m.restored_at
+                || JSON.stringify(local.reactions || {}) !== JSON.stringify(m.reactions || {});
+            Object.assign(local, { read_at: m.read_at, reactions: m.reactions || {}, deleted_at: m.deleted_at, body: m.body, attachments: m.attachments, expires_at: m.expires_at, vanish: m.vanish, edited_at: m.edited_at, restored_at: m.restored_at });
             if (changed) repaintMessage(m.id);
             else {
                 const tick = content.querySelector(`[data-msg="${m.id}"] .ticks`);
@@ -1174,6 +1298,15 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderReplyBar() {
         const bar = $('reply-bar');
         if (!bar) return;
+        if (s.editing && s.editing.friendId === s.activeFriend) {
+            const em = findMessage(s.editing.id);
+            bar.hidden = false;
+            bar.innerHTML = `
+                <svg class="i"><use href="#i-edit"/></svg>
+                <span class="reply-text"><strong>Editing message</strong><small>${esc(em ? previewOf(em) : '')}</small></span>
+                <button type="button" class="icon-btn ghost" data-action="cancel-edit" aria-label="Cancel editing"><svg class="i"><use href="#i-close"/></svg></button>`;
+            return;
+        }
         const m = findMessage(s.replyTo[s.activeFriend]);
         bar.hidden = !m;
         if (!m) return;
@@ -1198,6 +1331,183 @@ document.addEventListener('DOMContentLoaded', () => {
         updateConvoRow(s.activeFriend);
     }
 
+    // ---------- Editing, deleting and restoring messages (shared by chats and group chats) ----------
+    // Edit: your own messages, for 24 hours; they show "edited", and anyone in the chat can see earlier versions.
+    // Delete for me: hidden only for you. Delete for everyone: your own messages (or, in groups, what staff remove).
+    // Both can be restored from "Recently deleted" for 30 days.
+    const EDIT_WINDOW = 24 * 3600 * 1000;
+    const canEdit = m => m && !m.deleted_at && !m.vanish && Date.now() - Date.parse(m.created_at) < EDIT_WINDOW;
+
+    function editedTag(kind, m) {
+        if (m.restored_at && !m.deleted_at) return '<span class="msg-flag" title="Restored after being deleted">restored</span>';
+        if (!m.edited_at) return '';
+        return `<button type="button" class="msg-flag" data-action="msg-history" data-kind="${kind}" data-id="${esc(String(m.id))}" title="Edited ${esc(new Date(m.edited_at).toLocaleString())} — see earlier versions">edited</button>`;
+    }
+
+    async function showHistory(kind, id, current) {
+        const { data, error } = await client.from('diary_message_edits').select('body, edited_at').eq('kind', kind).eq('message_id', Number(id)).order('edited_at');
+        if (error) return app.showToast('Couldn’t load the edit history');
+        const d = historySheet();
+        const text = b => (kind === 'dm' ? Rich.toText(b || '') : String(b || ''));
+        d.innerHTML = `
+            <div class="hist-card">
+                <header><strong>Edit history</strong><button type="button" class="icon-btn" data-close aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button></header>
+                <ol class="hist-list">
+                    ${(data || []).map(v => `<li><small>${esc(new Date(v.edited_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }))}</small><p>${esc(text(v.body))}</p></li>`).join('')}
+                    ${current ? `<li class="now"><small>Now${current.edited_at ? ` · edited ${esc(new Date(current.edited_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }))}` : ''}</small><p>${esc(text(current.body))}</p></li>` : ''}
+                </ol>
+            </div>`;
+        if (!d.open) d.showModal();
+    }
+
+    let histDlg = null;
+    function historySheet() {
+        if (histDlg) return histDlg;
+        histDlg = document.createElement('dialog');
+        histDlg.className = 'hist-sheet';
+        document.body.append(histDlg);
+        histDlg.addEventListener('click', async e => {
+            if (e.target === histDlg || e.target.closest('[data-close]')) return histDlg.close();
+            const btn = e.target.closest('[data-restore]');
+            if (!btn) return;
+            btn.disabled = true;
+            const [kind, id, how] = btn.dataset.restore.split(':');
+            const { error } = how === 'me'
+                ? await client.from('diary_message_hidden').delete().eq('kind', kind).eq('message_id', Number(id))
+                : await client.rpc('diary_restore_message', { p_kind: kind, p_id: Number(id) });
+            if (error) { btn.disabled = false; return app.showToast(error.message || 'Couldn’t restore that'); }
+            btn.closest('li').remove();
+            app.showToast('Message restored');
+            if (histDlg.onRestored) histDlg.onRestored(kind, id);
+            if (!histDlg.querySelector('.hist-list li')) histDlg.querySelector('.hist-list').innerHTML = '<li class="empty"><p>Nothing left to restore.</p></li>';
+        });
+        return histDlg;
+    }
+
+    // "Recently deleted" for one chat (kind 'dm', scope = friend id) or group (kind 'gc', scope = community id)
+    async function openRecentlyDeleted(kind, scope, { title = 'Recently deleted', nameOf = () => '', onRestored } = {}) {
+        const d = historySheet();
+        d.onRestored = onRestored || null;
+        d.innerHTML = `<div class="hist-card"><header><strong>${esc(title)}</strong><button type="button" class="icon-btn" data-close aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button></header><p class="muted small">Loading…</p></div>`;
+        if (!d.open) d.showModal();
+        const { data, error } = await client.rpc('diary_recently_deleted', { p_kind: kind, p_scope: scope });
+        const text = r => (kind === 'dm' ? Rich.toText(r.body || '') : String(r.body || '')).trim()
+            || ((r.attachments || [])[0] ? ({ audio: '🎤 Voice note', image: '📷 Photo', location: '📍 Location' }[r.attachments[0].kind] || '📎 Attachment') : '');
+        d.innerHTML = `
+            <div class="hist-card">
+                <header><strong>${esc(title)}</strong><button type="button" class="icon-btn" data-close aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button></header>
+                <p class="muted small hist-note">Messages you deleted in the last 30 days. Restore one to put it back where it was.</p>
+                <ol class="hist-list">
+                    ${error ? '<li class="empty"><p>Couldn’t load deleted messages.</p></li>'
+                        : (data || []).length ? data.map(r => `
+                            <li>
+                                <small>${esc(r.author === s.profile.id ? 'You' : nameOf(r.author) || 'Them')} · deleted ${esc(r.how === 'me' ? 'for you' : 'for everyone')} ${esc(timeAgo(r.deleted_at))}</small>
+                                <p>${esc(text(r) || 'Message')}</p>
+                                <button type="button" class="chip" data-restore="${r.kind}:${r.message_id}:${r.how}"><svg class="i"><use href="#i-undo"/></svg>Restore</button>
+                            </li>`).join('')
+                        : '<li class="empty"><p>Nothing deleted in the last 30 days.</p></li>'}
+                </ol>
+            </div>`;
+    }
+
+    // Delete choices: for me (any message) / for everyone (your own, or staff in a group)
+    async function chooseDelete(anchor, { mine, canEveryone, everyoneLabel = 'Delete for everyone' }) {
+        // Open after the tap that asked for it has finished, or that same tap would close the menu again
+        await new Promise(r => setTimeout(r, 0));
+        if (!anchor || !anchor.isConnected) anchor = content.querySelector('.chat-thread, .gc-thread') || document.body;
+        return new Promise(resolve => {
+            const items = [{ label: 'Delete for me', icon: 'i-eye-off', onClick: () => resolve('me') }];
+            if (canEveryone) items.push({ label: everyoneLabel, icon: 'i-trash', danger: true, onClick: () => resolve('everyone') });
+            items.push({ label: 'Cancel', icon: 'i-close', onClick: () => resolve(null) });
+            app.openPopover(anchor, items);
+            // Closing the menu any other way counts as cancel
+            setTimeout(() => {
+                const pop = document.getElementById('popover');
+                const watch = setInterval(() => { if (!pop || pop.hidden) { clearInterval(watch); resolve(null); } }, 250);
+            }, 0);
+        });
+    }
+
+    // ---------- Chats: edit & delete ----------
+    function startEdit(id) {
+        const m = findMessage(id);
+        if (!m || m.sender !== s.profile.id || !canEdit(m)) return app.showToast('Messages can be edited for 24 hours');
+        closeReactBar();
+        const input = $('chat-input');
+        if (!input) return;
+        s.editing = { friendId: s.activeFriend, id: m.id, draft: input.innerHTML };
+        delete s.replyTo[s.activeFriend];
+        input.innerHTML = Rich.sanitize(m.body || '');
+        renderReplyBar();
+        input.focus();
+        Rich.placeCaretAtEnd(input);
+        updateComposerButton();
+    }
+
+    function cancelEdit() {
+        const e = s.editing;
+        s.editing = null;
+        const input = $('chat-input');
+        if (input && e) input.innerHTML = e.draft || '';
+        renderReplyBar();
+        updateComposerButton();
+    }
+
+    async function saveEdit(html) {
+        const e = s.editing;
+        const m = findMessage(e.id);
+        s.editing = null;
+        renderReplyBar();
+        const input = $('chat-input');
+        if (input) input.innerHTML = e.draft || '';
+        if (!m || html === m.body) return;
+        const before = { body: m.body, edited_at: m.edited_at };
+        Object.assign(m, { body: html, edited_at: new Date().toISOString() });
+        repaintMessage(m.id);
+        const { data, error } = await client.rpc('diary_edit_message', { p_id: Number(m.id), p_body: html });
+        if (error) {
+            Object.assign(m, before);
+            repaintMessage(m.id);
+            return app.showToast(error.message || 'Couldn’t edit that message');
+        }
+        Object.assign(m, { body: data.body, edited_at: data.edited_at });
+        repaintMessage(m.id);
+        updateConvoRow(e.friendId);
+    }
+
+    async function deleteMessage(id, anchor) {
+        const m = findMessage(id);
+        if (!m) return;
+        closeReactBar();
+        const mine = m.sender === s.profile.id;
+        const how = await chooseDelete(anchor, { mine, canEveryone: mine && !m.deleted_at });
+        if (!how) return;
+        const friendId = s.activeFriend;
+        if (how === 'me') {
+            const { error } = await client.from('diary_message_hidden').insert({ kind: 'dm', message_id: Number(m.id) });
+            if (error) return app.showToast('Couldn’t delete that');
+            s.threads[friendId] = (s.threads[friendId] || []).filter(x => x !== m);
+            if (s.last[friendId] === m) s.last[friendId] = s.threads[friendId][s.threads[friendId].length - 1];
+            content.querySelector(`[data-msg="${id}"]`)?.remove();
+            updateConvoRow(friendId);
+            app.showToast('Deleted for you', async () => {
+                await client.from('diary_message_hidden').delete().eq('kind', 'dm').eq('message_id', Number(m.id));
+                loadThread(friendId);
+            });
+        } else {
+            const { error } = await client.rpc('diary_unsend_message', { p_id: Number(id) });
+            if (error) return app.showToast('Couldn’t delete that message');
+            Object.assign(m, { deleted_at: new Date().toISOString(), body: '', attachments: [], reactions: {} });
+            repaintMessage(id);
+            updateConvoRow(friendId);
+            app.showToast('Deleted for everyone', async () => {
+                const { error: e2 } = await client.rpc('diary_restore_message', { p_kind: 'dm', p_id: Number(id) });
+                if (e2) return app.showToast('Couldn’t restore it');
+                loadThread(friendId);
+            });
+        }
+    }
+
     function jumpTo(id) {
         const el = content.querySelector(`[data-msg="${id}"]`);
         if (!el) return app.showToast('That message is further back in the chat');
@@ -1212,7 +1522,8 @@ document.addEventListener('DOMContentLoaded', () => {
         closeReactBar();
         const m = findMessage(id);
         const el = content.querySelector(`[data-msg="${id}"]`);
-        if (!m || !el || m.deleted_at) return;
+        if (!m || !el) return;
+        if (m.deleted_at) return deleteMessage(id, el.querySelector('.msg-card'));
         const mine = m.sender === s.profile.id;
         const bar = document.createElement('div');
         bar.className = 'react-bar';
@@ -1222,7 +1533,8 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="react-actions">
                 <button type="button" data-action="msg-reply" data-id="${esc(String(id))}"><svg class="i"><use href="#i-reply"/></svg>Reply</button>
                 ${Rich.toText(m.body || '') && !m.vanish ? `<button type="button" data-action="msg-copy" data-id="${esc(String(id))}"><svg class="i"><use href="#i-notes"/></svg>Copy</button>` : ''}
-                ${mine ? `<button type="button" class="danger" data-action="msg-unsend" data-id="${esc(String(id))}"><svg class="i"><use href="#i-trash"/></svg>Unsend</button>` : ''}
+                ${mine && canEdit(m) && Rich.toText(m.body || '') ? `<button type="button" data-action="msg-edit" data-id="${esc(String(id))}"><svg class="i"><use href="#i-edit"/></svg>Edit</button>` : ''}
+                <button type="button" class="danger" data-action="msg-delete" data-id="${esc(String(id))}"><svg class="i"><use href="#i-trash"/></svg>Delete</button>
             </div>`;
         el.querySelector('.msg-card').append(bar);
         el.classList.add('menu-open');
@@ -3334,9 +3646,11 @@ document.addEventListener('DOMContentLoaded', () => {
     window.diarySocial.internals = {
         client, state: s, esc, avatar, avatarUrl, timeAgo, gate, extFor, randomId, uploadImage, hydrateStorage,
         renderPost, commentCount, openComments, repaintComments, MOOD_EMOJI: () => MOOD_EMOJI,
-        respond, openChat, focusPost, commentsBlock, addComment, deleteComment, toggleSaved, postsFor,
+        respond, loadFriends, openChat, focusPost, commentsBlock, addComment, deleteComment, toggleSaved, postsFor,
         changeAvatar, removeAvatar, signOut, openAuth, hashtags, commentCount, followButton, toggleFollow, loadFollows,
-        pickAudio, uploadAudio, voiceHTML, POST_AUDIO, linkTags, emojiPicker, POST_REACTIONS,
+        pickAudio, uploadAudio, voiceHTML, POST_AUDIO, linkTags, emojiPicker, POST_REACTIONS, peopleResults,
+        presenceText, refreshPresence, paintPresence, heartbeat,
+        chooseDelete, openRecentlyDeleted, editedTag, showHistory,
         loadFeed: () => { if (s.feed === null) loadFeed(); },
         // Open a feed post in the post view from anywhere (Explore, notifications), even if its card isn't on screen
         openEntry(id, opts) {
@@ -3517,9 +3831,9 @@ document.addEventListener('DOMContentLoaded', () => {
         return `
             <header class="chat-head">
                 <button class="icon-btn back-chat" data-action="close-chat" aria-label="Back to inbox"><svg class="i"><use href="#i-back"/></svg></button>
-                ${avatar(friend, 'sm')}
-                <div class="friend-name">${esc(friend.display_name)}<small data-status="${esc(friend.id)}" data-away="@${esc(friend.username)}">${s.online.has(friend.id) ? 'Active now' : `@${esc(friend.username)}`}</small></div>
-                ${window.diaryCalls ? `<button class="icon-btn accent" data-action="call-friend" data-id="${esc(friend.id)}" aria-label="Voice call ${esc(friend.display_name)}" title="Voice call"><svg class="i"><use href="#i-phone"/></svg></button>` : ''}
+                <button type="button" class="chat-who" data-profile="${esc(friend.id)}" aria-label="View ${esc(friend.display_name)}’s profile">${avatar(friend, 'sm')}</button>
+                <div class="friend-name"><button type="button" class="chat-who-name" data-profile="${esc(friend.id)}">${esc(friend.display_name)}</button><small data-status="${esc(friend.id)}" data-away="@${esc(friend.username)}">${esc(presenceText(friend.id) || `@${friend.username}`)}</small></div>
+                ${window.diaryCalls ? `<button class="icon-btn accent" data-action="call-friend" data-id="${esc(friend.id)}" aria-label="Voice call ${esc(friend.display_name)}" title="Voice call"><svg class="i"><use href="#i-phone"/></svg></button><button class="icon-btn accent" data-action="call-friend" data-video="1" data-id="${esc(friend.id)}" aria-label="Video call ${esc(friend.display_name)}" title="Video call"><svg class="i"><use href="#i-video"/></svg></button>` : ''}
                 <button class="icon-btn incognito-btn" data-action="chat-incognito" aria-pressed="${!!inc}" aria-label="Incognito chat${inc ? ' (on)' : ''}" title="Incognito chat"><svg class="i"><use href="#i-incognito"/></svg></button>
                 <button class="icon-btn refresh-btn" data-action="chat-refresh" aria-label="Refresh this chat" title="Refresh"><svg class="i"><use href="#i-refresh"/></svg></button>
                 <button class="icon-btn" data-action="chat-wallpaper" aria-label="Chat wallpaper" title="Wallpaper"><svg class="i"><use href="#i-palette"/></svg></button>
@@ -3613,7 +3927,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${quote}
                     ${body}
                     ${atts ? `<div class="msg-atts">${atts}</div>` : ''}
-                    <span class="msg-meta">${m.vanish ? `<span class="vanish-mark" title="${esc(vanishTitle(m))}"><svg class="i"><use href="#i-timer"/></svg></span>` : ''}<time>${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</time>${mine && !m.vanish ? `<span class="ticks${m.read_at ? ' read' : ''}" title="${m.read_at ? 'Read' : 'Sent'}"><svg class="i"><use href="#i-checks"/></svg></span>` : ''}</span>
+                    <span class="msg-meta">${editedTag('dm', m)}${m.vanish ? `<span class="vanish-mark" title="${esc(vanishTitle(m))}"><svg class="i"><use href="#i-timer"/></svg></span>` : ''}<time>${date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</time>${mine && !m.vanish ? `<span class="ticks${m.read_at ? ' read' : ''}" title="${m.read_at ? 'Read' : 'Sent'}"><svg class="i"><use href="#i-checks"/></svg></span>` : ''}</span>
                     ${reactions.length ? `<div class="msg-reacts">${reactions.map(([e, users]) => `<button type="button" class="react-chip${users.includes(me) ? ' mine' : ''}" data-action="react" data-id="${id}" data-emoji="${esc(e)}" aria-label="${esc(e)} ${users.length}">${esc(e)}${users.length > 1 ? `<span>${users.length}</span>` : ''}</button>`).join('')}</div>` : ''}
                 </div>
                 <div class="msg-tools">
@@ -3669,6 +3983,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 <h4 class="info-label">Files</h4>
                 ${files.length ? files.map(attachmentHTML).join('') : '<p class="muted small">No documents yet.</p>'}
                 <h4 class="info-label">Settings</h4>
+                <button class="info-row" data-action="chat-recent-deleted">
+                    <span class="info-ic blue"><svg class="i"><use href="#i-history"/></svg></span><span>Recently deleted</span><b>30 days</b>
+                </button>
                 <label class="info-row toggle">
                     <span class="info-ic purple"><svg class="i"><use href="#i-bell"/></svg></span><span>Notifications</span>
                     <span class="share-toggle"><input type="checkbox" data-action="toggle-mute"${muted ? '' : ' checked'}><span class="switch" aria-hidden="true"></span></span>
@@ -3685,7 +4002,7 @@ document.addEventListener('DOMContentLoaded', () => {
         'change-avatar': () => changeAvatar(),
         'call-friend': el => {
             const friend = s.friends.find(f => f.id === el.dataset.id);
-            if (friend && window.diaryCalls) window.diaryCalls.callUser(friend);
+            if (friend && window.diaryCalls) window.diaryCalls.callUser(friend, { video: el.dataset.video === '1' });
         },
         'refresh-feed': () => { s.feed = null; app.render(); },
         'feed-all': () => { s.feedAuthor = null; s.feedFilter = 'all'; app.render(); },
@@ -3933,6 +4250,20 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         'msg-reply': el => startReply(el.dataset.id),
         'msg-unsend': el => { closeReactBar(); unsend(el.dataset.id); },
+        'msg-edit': el => startEdit(el.dataset.id),
+        'msg-delete': el => deleteMessage(el.dataset.id, el.closest('.msg')?.querySelector('.msg-card') || el),
+        'cancel-edit': () => cancelEdit(),
+        'msg-history': el => {
+            if (el.dataset.kind === 'dm') showHistory('dm', el.dataset.id, findMessage(el.dataset.id));
+        },
+        'chat-recent-deleted': () => {
+            const friend = s.friends.find(f => f.id === s.activeFriend);
+            openRecentlyDeleted('dm', s.activeFriend, {
+                title: 'Recently deleted',
+                nameOf: id => (friend && friend.id === id ? friend.display_name : ''),
+                onRestored: () => loadThread(s.activeFriend)
+            });
+        },
         'msg-copy': async el => {
             closeReactBar();
             const m = findMessage(el.dataset.id);
@@ -3975,6 +4306,17 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         },
         'accept-request': el => respond(el.dataset.id, true),
+        'people-add': async el => {
+            el.disabled = true;
+            el.textContent = 'Sending…';
+            await addFriend(el.dataset.username);
+            setRelation(el.dataset.person, s.friends.some(f => f.id === el.dataset.person) ? 'friend' : 'requested');
+        },
+        'people-accept': async el => {
+            el.disabled = true;
+            await respond(el.dataset.id, true);
+            setRelation(el.dataset.person, 'friend');
+        },
         'decline-request': el => respond(el.dataset.id, false),
         'cancel-request': el => removeFriendship(el.dataset.id),
         'chat-emoji': () => {

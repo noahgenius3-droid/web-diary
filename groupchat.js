@@ -25,7 +25,9 @@ document.addEventListener('DOMContentLoaded', () => {
         typingBound: null,    // the presence channel we listen to for typing
         lastTypingSent: 0,
         sending: false,
-        unseen: 0
+        unseen: 0,
+        editing: null,       // message being edited
+        rec: null            // voice note being recorded
     };
 
     window.diaryGroupChat = { html, refreshMutes };
@@ -55,7 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function load() {
         const cid = g.cid;
         const { data, error } = await client.from('diary_community_messages')
-            .select('id, community_id, author, body, attachments, reply_to, created_at, deleted_at, deleted_by')
+            .select('id, community_id, author, body, attachments, reply_to, created_at, deleted_at, deleted_by, edited_at, restored_at')
             .eq('community_id', cid)
             .order('id', { ascending: false })
             .limit(150);
@@ -108,15 +110,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Leave the chat tab → stop listening
     const previousAfter = app.hooks.afterRender;
-    app.hooks.afterRender = view => {
-        if (previousAfter) previousAfter(view);
+    app.hooks.afterRender = (view, how = {}) => {
+        if (previousAfter) previousAfter(view, how);
         const box = content.querySelector('.gc');
         if (!box) {
             if (g.cid) teardown();
             return;
         }
         bindTyping();
-        paint({ stick: true });
+        paint({ stick: !how.repaint });
         const input = $('gc-input');
         if (input && g.draft) input.value = g.draft;
     };
@@ -156,8 +158,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         <strong>${esc(community.name)} chat</strong>
                         <small>${members} ${members === 1 ? 'member' : 'members'} · <span id="gc-online"></span></small>
                     </div>
-                    ${window.diaryCalls ? '<button type="button" class="gc-call" data-action="gc-call" aria-label="Start or join the group voice call"><svg class="i"><use href="#i-phone"/></svg><span>Call</span></button>' : ''}
+                    ${window.diaryCalls ? '<button type="button" class="gc-call" data-action="gc-call" aria-label="Start or join the group call" aria-haspopup="menu"><svg class="i"><use href="#i-phone"/></svg><span>Call</span></button>' : ''}
                     ${window.ChatWallpaper ? '<button type="button" class="icon-btn" data-action="gc-wallpaper" aria-label="Chat wallpaper" title="Wallpaper"><svg class="i"><use href="#i-palette"/></svg></button>' : ''}
+                    <button type="button" class="icon-btn" data-action="gc-recent-deleted" aria-label="Recently deleted messages" title="Recently deleted"><svg class="i"><use href="#i-history"/></svg></button>
                     ${admin ? '<button type="button" class="icon-btn" data-action="cm-chat-settings" aria-label="Chat settings" aria-haspopup="menu"><svg class="i"><use href="#i-settings"/></svg></button>' : ''}
                 </header>
                 <div class="gc-pinned" id="gc-pinned" hidden></div>
@@ -170,7 +173,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="gc-row">
                         <button type="button" class="gc-tool" data-action="gc-photo" aria-label="Send a photo"><svg class="i"><use href="#i-image"/></svg></button>
                         ${window.LiveLocation && window.LiveLocation.supported ? '<button type="button" class="gc-tool" data-action="gc-location" aria-label="Share your live location"><svg class="i"><use href="#i-pin"/></svg></button>' : ''}
+                        <div class="gc-rec" id="gc-rec" hidden aria-live="polite">
+                            <button type="button" class="gc-tool" data-action="gc-rec-cancel" aria-label="Delete recording"><svg class="i"><use href="#i-trash"/></svg></button>
+                            <span class="rec-dot" aria-hidden="true"></span><span class="gc-rec-time" id="gc-rec-time">0:00</span>
+                            <span class="gc-rec-wave" id="gc-rec-wave" aria-hidden="true"></span>
+                        </div>
                         <textarea id="gc-input" rows="1" maxlength="4000" placeholder="Message ${esc(community.name)}…" aria-label="Message" enterkeyhint="send"></textarea>
+                        <button type="button" class="gc-tool gc-mic" id="gc-mic" data-action="gc-mic" aria-label="Record a voice note"><svg class="i"><use href="#i-mic"/></svg></button>
                         <button type="submit" class="gc-send" aria-label="Send"><svg class="i"><use href="#i-send"/></svg></button>
                     </div>
                 </form>
@@ -194,23 +203,25 @@ document.addEventListener('DOMContentLoaded', () => {
         const time = new Date(m.created_at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
         const pinned = cm() && cm().pinned_message === m.id;
         if (m.deleted_at) {
-            return `<div class="gc-msg removed${mine ? ' mine' : ''}" data-mid="${m.id}"><span class="gc-bubble"><svg class="i"><use href="#i-trash"/></svg>${m.deleted_by && m.deleted_by !== m.author ? 'Removed by a moderator' : 'Message deleted'}</span></div>`;
+            return `<div class="gc-msg removed${mine ? ' mine' : ''}" data-mid="${m.id}"><span class="gc-bubble"><svg class="i"><use href="#i-trash"/></svg>${m.deleted_by && m.deleted_by !== m.author ? 'Removed by a moderator' : 'Message deleted'}</span><button type="button" class="gc-more" data-action="gc-menu" data-id="${m.id}" aria-label="Message options"><svg class="i"><use href="#i-more"/></svg></button></div>`;
         }
         const reply = m.reply_to ? g.messages.find(x => x.id === m.reply_to) : null;
         const atts = Array.isArray(m.attachments) ? m.attachments : [];
         const photos = atts.filter(a => a.kind === 'image' && a.path);
         const locations = atts.filter(a => a.kind === 'location' && a.id);
+        const voices = atts.filter(a => a.kind === 'audio' && a.path);
         return `
             <div class="gc-msg${mine ? ' mine' : ''}${grouped ? ' grouped' : ''}${pinned ? ' is-pinned' : ''}" data-mid="${m.id}">
-                ${!mine ? `<span class="gc-av">${grouped ? '' : avatar(p, 'sm')}</span>` : ''}
+                ${!mine ? `<span class="gc-av">${grouped ? '' : `<button type="button" class="gc-who" data-profile="${esc(m.author)}" aria-label="View ${esc(p.display_name)}’s profile">${avatar(p, 'sm')}</button>`}</span>` : ''}
                 <div class="gc-col">
-                    ${!mine && !grouped ? `<span class="gc-name">${esc(p.display_name)}${ROLE[role] ? `<span class="gc-role role-${role}">${ROLE[role]}</span>` : ''}</span>` : ''}
+                    ${!mine && !grouped ? `<span class="gc-name"><button type="button" class="gc-who-name" data-profile="${esc(m.author)}">${esc(p.display_name)}</button>${ROLE[role] ? `<span class="gc-role role-${role}">${ROLE[role]}</span>` : ''}</span>` : ''}
                     <div class="gc-bubble">
                         ${reply ? `<button type="button" class="gc-quote" data-action="gc-goto" data-id="${reply.id}"><strong>${esc(personOf(reply.author).display_name)}</strong><span>${esc(reply.deleted_at ? 'Message deleted' : (reply.body || (reply.attachments || []).length ? (reply.body || '📎 Attachment') : '')).slice(0, 120)}</span></button>` : ''}
                         ${photos.length ? `<div class="gc-photos n${Math.min(photos.length, 4)}">${photos.slice(0, 4).map(ph => `<button type="button" class="gc-photo" data-action="gc-view-photo" data-path="${esc(ph.path)}"><img data-path="${esc(ph.path)}" data-bucket="${BUCKET}" alt=""></button>`).join('')}</div>` : ''}
+                        ${voices.map(a => I.voiceHTML(a, BUCKET)).join('')}
                         ${locations.map(a => window.LiveLocation ? window.LiveLocation.cardHTML(a, { mine, person: p }) : '<p>📍 Live location</p>').join('')}
                         ${m.body ? `<p class="gc-text">${I.linkTags ? I.linkTags(esc(m.body)) : esc(m.body)}</p>` : ''}
-                        <span class="gc-meta">${pinned ? '<svg class="i"><use href="#i-pin-note"/></svg>' : ''}${time}</span>
+                        <span class="gc-meta">${I.editedTag ? I.editedTag('gc', m) : ''}${pinned ? '<svg class="i"><use href="#i-pin-note"/></svg>' : ''}${time}</span>
                     </div>
                 </div>
                 <button type="button" class="gc-more" data-action="gc-menu" data-id="${m.id}" aria-label="Message options"><svg class="i"><use href="#i-more"/></svg></button>
@@ -240,15 +251,17 @@ document.addEventListener('DOMContentLoaded', () => {
         const thread = $('gc-thread');
         if (!thread) return;
         const near = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 120;
+        const keepTop = thread.scrollTop;
         thread.innerHTML = threadHTML();
         hydrateStorage(thread);
         if (window.LiveLocation) window.LiveLocation.hydrate(thread);
         if (window.ChatWallpaper && !thread.dataset.wp) { thread.dataset.wp = '1'; window.ChatWallpaper.apply(thread, 'gc:' + g.cid); }
-        if (stick || near || !incoming) {
+        if (stick || near) {
             thread.scrollTop = thread.scrollHeight;
             g.unseen = 0;
         } else {
-            g.unseen++;
+            thread.scrollTop = keepTop; // reading older messages: stay put
+            if (incoming) g.unseen++;
         }
         const jump = $('gc-jump');
         if (jump) {
@@ -306,6 +319,12 @@ document.addEventListener('DOMContentLoaded', () => {
     function paintReply() {
         const box = $('gc-reply');
         if (!box) return;
+        if (g.editing) {
+            box.hidden = false;
+            box.innerHTML = `<span><strong>Editing message</strong><small>${esc((g.editing.body || '').slice(0, 100))}</small></span>
+                <button type="button" class="icon-btn" data-action="gc-cancel-edit" aria-label="Cancel editing"><svg class="i"><use href="#i-close"/></svg></button>`;
+            return;
+        }
         box.hidden = !g.reply;
         if (!g.reply) return;
         box.innerHTML = `<span><strong>Replying to ${esc(personOf(g.reply.author).display_name)}</strong><small>${esc((g.reply.body || '📎 Attachment').slice(0, 100))}</small></span>
@@ -326,7 +345,7 @@ document.addEventListener('DOMContentLoaded', () => {
         g.sending = true;
         const row = { community_id: g.cid, body: body.slice(0, 4000), attachments, reply_to: g.reply ? g.reply.id : null };
         const { data, error } = await client.from('diary_community_messages').insert(row)
-            .select('id, community_id, author, body, attachments, reply_to, created_at, deleted_at, deleted_by').single();
+            .select('id, community_id, author, body, attachments, reply_to, created_at, deleted_at, deleted_by, edited_at, restored_at').single();
         g.sending = false;
         if (error) {
             const c = cm();
@@ -347,7 +366,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!form) return;
         e.preventDefault();
         const input = $('gc-input');
+        if (g.rec) return finishRecording(true);
         const body = input.value.trim();
+        if (g.editing) return saveEdit(body);
         if (!body) return;
         input.value = '';
         g.draft = '';
@@ -394,9 +415,138 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => el.classList.remove('flash'), 1600);
     }
 
+    // ---------- Editing & deleting ----------
+    function startEdit(m) {
+        const input = $('gc-input');
+        if (!input) return;
+        g.editing = { id: m.id, body: m.body, draft: input.value };
+        g.reply = null;
+        input.value = m.body;
+        autosize(input);
+        paintReply();
+        input.focus();
+    }
+
+    function cancelEdit() {
+        const input = $('gc-input');
+        if (input && g.editing) { input.value = g.editing.draft || ''; autosize(input); }
+        g.editing = null;
+        paintReply();
+    }
+
+    async function saveEdit(body) {
+        const e = g.editing;
+        const m = g.messages.find(x => x.id === e.id);
+        cancelEdit();
+        if (!m || !body || body === m.body) return;
+        const before = { body: m.body, edited_at: m.edited_at };
+        Object.assign(m, { body, edited_at: new Date().toISOString() });
+        paint();
+        const { data, error } = await client.rpc('diary_edit_community_message', { p_id: m.id, p_body: body });
+        if (error) {
+            Object.assign(m, before);
+            paint();
+            return app.showToast(error.message || 'Couldn’t edit that message');
+        }
+        Object.assign(m, { body: data.body, edited_at: data.edited_at });
+        paint();
+    }
+
+    async function deleteMessage(m, anchor, canEveryone) {
+        const mine = m.author === me();
+        const how = I.chooseDelete
+            ? await I.chooseDelete(anchor, { mine, canEveryone: canEveryone && !m.deleted_at, everyoneLabel: mine ? 'Delete for everyone' : 'Remove for everyone' })
+            : 'everyone';
+        if (!how) return;
+        if (how === 'me') {
+            const { error } = await client.from('diary_message_hidden').insert({ kind: 'gc', message_id: m.id });
+            if (error) return app.showToast('Couldn’t delete that');
+            g.messages = g.messages.filter(x => x !== m);
+            paint();
+            app.showToast('Deleted for you', async () => {
+                await client.from('diary_message_hidden').delete().eq('kind', 'gc').eq('message_id', m.id);
+                load();
+            });
+            return;
+        }
+        const { error } = await client.rpc('diary_delete_community_message', { mid: m.id });
+        if (error) return app.showToast('Couldn’t remove that message');
+        Object.assign(m, { deleted_at: new Date().toISOString(), deleted_by: me(), body: '', attachments: [] });
+        if (cm().pinned_message === m.id) cm().pinned_message = null;
+        paint();
+        app.showToast(mine ? 'Deleted for everyone' : 'Removed for everyone', async () => {
+            const { error: e2 } = await client.rpc('diary_restore_message', { p_kind: 'gc', p_id: m.id });
+            if (e2) return app.showToast('Couldn’t restore it');
+            load();
+        });
+    }
+
+    // ---------- Voice notes ----------
+    // Tap the mic to record; tap send (or the mic again) to send it, or the bin to throw it away
+    async function startRecording() {
+        if (g.rec || !g.cid) return;
+        const rec = g.rec = { controller: null, levels: [] };
+        paintRec(0, 0);
+        try {
+            rec.controller = await Media.createRecorder((level, secs) => { if (g.rec === rec) paintRec(level, secs); });
+        } catch (err) {
+            g.rec = null;
+            paintRec();
+            return app.showToast(err.message || 'Allow microphone access to record');
+        }
+        if (g.rec !== rec) rec.controller.cancel();
+    }
+
+    function paintRec(level, secs) {
+        const bar = $('gc-rec');
+        const input = $('gc-input');
+        const mic = $('gc-mic');
+        if (!bar) return;
+        const on = !!g.rec;
+        bar.hidden = !on;
+        if (input) input.hidden = on;
+        if (mic) {
+            mic.classList.toggle('recording', on);
+            mic.setAttribute('aria-label', on ? 'Send voice note' : 'Record a voice note');
+            mic.innerHTML = `<svg class="i"><use href="#${on ? 'i-send' : 'i-mic'}"/></svg>`;
+        }
+        if (!on) return;
+        if (typeof secs === 'number') $('gc-rec-time').textContent = Media.formatDuration(secs);
+        if (typeof level === 'number') {
+            g.rec.levels.push(level);
+            const wave = $('gc-rec-wave');
+            if (wave) wave.innerHTML = g.rec.levels.slice(-40).map(v => `<span style="height:${Math.max(12, Math.round(v * 100))}%"></span>`).join('');
+        }
+    }
+
+    async function finishRecording(sendIt) {
+        const rec = g.rec;
+        if (!rec) return;
+        g.rec = null;
+        paintRec();
+        if (!rec.controller) return;
+        if (!sendIt) return rec.controller.cancel();
+        const result = await rec.controller.stop();
+        if (result.duration < 1) return app.showToast('Record a little longer to send a voice note');
+        const ext = I.extFor ? I.extFor(result.type) : '.webm';
+        const path = `${g.cid}/${me()}/${randomId()}${ext}`;
+        app.showToast('Sending voice note…');
+        const { error } = await client.storage.from(BUCKET).upload(path, result.blob, { contentType: result.type, upsert: false });
+        if (error) return app.showToast('Couldn’t upload the voice note');
+        const ok = await send('', [{ kind: 'audio', path, name: 'Voice note', type: result.type, duration: Math.round(result.duration), waveform: (result.waveform || []).slice(0, 40) }]);
+        if (!ok) client.storage.from(BUCKET).remove([path]);
+    }
+
     // ---------- Actions ----------
     Object.assign(app.actions, {
-        'gc-call': () => C.joinCall(),
+        'gc-call': el => {
+            // Already in this group's call: just open it; otherwise choose voice or video
+            if (window.diaryCalls && cm() && window.diaryCalls.activeTopic() === window.diaryCalls.topicFor(cm())) return C.joinCall();
+            app.openPopover(el, [
+                { label: 'Voice call', icon: 'i-phone', onClick: () => C.joinCall({ video: false }) },
+                { label: 'Video call', icon: 'i-video', onClick: () => C.joinCall({ video: true }) }
+            ]);
+        },
         'gc-wallpaper': () => {
             if (!window.ChatWallpaper || !g.cid) return;
             window.ChatWallpaper.open('gc:' + g.cid, { label: cm() ? cm().name : '', onDone: () => window.ChatWallpaper.apply(document.getElementById('gc-thread'), 'gc:' + g.cid) });
@@ -410,6 +560,19 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         'gc-goto': el => flash(Number(el.dataset.id)),
         'gc-cancel-reply': () => { g.reply = null; paintReply(); },
+        'gc-cancel-edit': () => cancelEdit(),
+        'gc-mic': () => (g.rec ? finishRecording(true) : startRecording()),
+        'gc-rec-cancel': () => finishRecording(false),
+        'gc-recent-deleted': () => I.openRecentlyDeleted && I.openRecentlyDeleted('gc', g.cid, {
+            title: 'Recently deleted',
+            nameOf: id => personOf(id).display_name,
+            onRestored: () => load()
+        }),
+        'msg-history': el => {
+            if (el.dataset.kind !== 'gc') return;
+            const m = g.messages.find(x => x.id === Number(el.dataset.id));
+            if (I.showHistory) I.showHistory('gc', el.dataset.id, m);
+        },
         'gc-unpin': async () => {
             const { error } = await client.rpc('diary_pin_community_message', { cid: g.cid, mid: null });
             if (error) return app.showToast('Couldn’t unpin that');
@@ -448,8 +611,9 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         'gc-menu': el => {
             const m = g.messages.find(x => x.id === Number(el.dataset.id));
-            if (!m || m.deleted_at) return;
+            if (!m) return;
             const mine = m.author === me();
+            if (m.deleted_at) return deleteMessage(m, el, false);
             const authorRole = (member(m.author) || {}).role || 'member';
             const rank = { owner: 3, admin: 2, moderator: 1, member: 0 };
             const canRemove = mine || (isStaff() && rank[myRole()] > rank[authorRole]);
@@ -457,6 +621,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const items = [
                 { label: 'Reply', icon: 'i-reply', onClick: () => { g.reply = m; paintReply(); $('gc-input') && $('gc-input').focus(); } }
             ];
+            if (mine && m.body && Date.now() - Date.parse(m.created_at) < 24 * 3600 * 1000) items.push({ label: 'Edit', icon: 'i-edit', onClick: () => startEdit(m) });
             if (m.body) items.push({ label: 'Copy text', icon: 'i-file', onClick: () => navigator.clipboard.writeText(m.body).then(() => app.showToast('Copied'), () => {}) });
             if (m.body && window.Speak && window.Speak.supported) items.push({ label: 'Listen', icon: 'i-volume', onClick: () => window.Speak.read(m.body, { title: `${personOf(m.author).display_name} in ${cm().name}` }) });
             if (isStaff()) items.push({ label: pinned ? 'Unpin' : 'Pin for everyone', icon: 'i-pin-note', onClick: async () => {
@@ -473,15 +638,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     refreshMutes();
                 } });
             }
-            if (canRemove) items.push({ label: mine ? 'Delete message' : 'Remove message', icon: 'i-trash', danger: true, onClick: async () => {
-                const ok = await app.ask({ title: mine ? 'Delete this message?' : 'Remove this message?', text: mine ? 'It’s removed for everyone.' : 'It’s removed for everyone, and shows as removed by a moderator.', ok: mine ? 'Delete' : 'Remove', danger: true });
-                if (!ok) return;
-                const { error } = await client.rpc('diary_delete_community_message', { mid: m.id });
-                if (error) return app.showToast('Couldn’t remove that message');
-                Object.assign(m, { deleted_at: new Date().toISOString(), deleted_by: me(), body: '', attachments: [] });
-                if (cm().pinned_message === m.id) cm().pinned_message = null;
-                paint();
-            } });
+            items.push({ label: 'Delete…', icon: 'i-trash', danger: true, onClick: () => deleteMessage(m, el, canRemove) });
             app.openPopover(el, items);
         }
     });

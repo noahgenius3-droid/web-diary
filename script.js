@@ -896,6 +896,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <h2>Search results</h2>
                     <span class="muted">${results.length} ${results.length === 1 ? 'note' : 'notes'} for “${escapeHTML(searchInput.value.trim())}”</span>
                 </div>
+                ${hooks.searchPeople ? hooks.searchPeople(state.query) : ''}
                 <div style="height:18px"></div>
                 ${notesGrid(results, { newTile: false, empty: 'Nothing matches your search.' })}
             </section>`;

@@ -26,6 +26,30 @@ document.addEventListener('DOMContentLoaded', () => {
     const F = { loaded: false, loading: false, followers: [], following: [] };
     const PROFILE = 'id, username, display_name, avatar_path';
 
+    // Online status & last seen privacy (kept on the server, so it applies on every device)
+    const PRESENCE = [['everyone', 'Everyone'], ['friends', 'Friends'], ['nobody', 'Nobody']];
+    const P = { loaded: false, settings: { show_online: 'everyone', show_last_seen: 'everyone' } };
+    async function loadPresencePrivacy() {
+        P.loaded = true;
+        const { data } = await I.client.from('diary_presence').select('show_online, show_last_seen').maybeSingle();
+        if (data) {
+            P.settings = data;
+            if (app.state.view === 'settings') app.requestRender ? app.requestRender('settings') : app.render();
+        }
+    }
+    async function setPresencePrivacy(key, value) {
+        const before = { ...P.settings };
+        P.settings = { ...P.settings, [key]: value };
+        app.render();
+        const { error } = await I.client.rpc('diary_set_presence_privacy', { p_online: P.settings.show_online, p_last_seen: P.settings.show_last_seen });
+        if (error) {
+            P.settings = before;
+            app.render();
+            return app.showToast('Couldn’t save that — check your connection');
+        }
+        app.showToast(value === 'nobody' ? 'Hidden from everyone' : value === 'friends' ? 'Only friends can see it' : 'Everyone can see it');
+    }
+
     async function loadFollowLists() {
         if (F.loading || !I || !signedIn()) return;
         F.loading = true;
@@ -86,6 +110,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }).catch(() => {});
         }
 
+        const presence = P.settings;
+        if (signedIn() && !P.loaded) loadPresencePrivacy();
         const seg = (name, options, current) => `
             <div class="st-seg" role="radiogroup" aria-label="${name}">
                 ${options.map(([v, l]) => `<button type="button" role="radio" aria-checked="${current === v}" data-action="st-set" data-setting="${name}" data-value="${v}">${l}</button>`).join('')}
@@ -146,13 +172,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 <section class="st-card">
                     <h3>Notifications</h3>
-                    ${row('i-bell', 'Alerts on this device', alerts === 'unavailable' ? 'Not available in this browser — on iPhone, add Cordial to your Home Screen first' : 'Messages, likes, comments and calls while Cordial is open',
+                    ${row('i-bell', 'Alerts on this device', alerts === 'unavailable' ? 'Not available in this browser — on iPhone, add Cordial to your Home Screen first' : (window.diaryNotify && window.diaryNotify.pushSupported && window.diaryNotify.pushSupported() ? 'Friend requests, new followers and people going live — even when Cordial is closed; messages, likes and calls while it’s open' : 'Messages, likes, comments and calls while Cordial is open'),
                         alerts === 'unavailable' ? '<span class="muted small">Off</span>' : toggle('st-alerts', alerts === 'on', 'Device alerts'))}
                 </section>
 
                 <section class="st-card">
                     <h3>Privacy & security</h3>
                     ${row('i-lock', 'Private notes PIN', pinSet ? 'On — private notes need your PIN' : 'Off — protect private notes on this device', go('st-pin', pinSet ? 'Change' : 'Set PIN'))}
+                    ${signedIn() ? row('i-user', 'Who sees when you’re online', 'The green dot and “Active now”', seg('presence-online', PRESENCE, presence.show_online)) : ''}
+                    ${signedIn() ? row('i-history', 'Who sees your last seen', presence.show_last_seen === 'nobody' ? 'Hidden — and you won’t see other people’s last seen either' : '“Last seen 5 min ago” when you’re away', seg('presence-last', PRESENCE, presence.show_last_seen)) : ''}
                     ${signedIn() ? row('i-lock', 'Password', 'Change the password you sign in with', go('st-password', 'Change')) : ''}
                     ${signedIn() ? row('i-logout', 'Sign out', 'Your notes stay on this device', go('st-signout', 'Sign out')) : ''}
                 </section>
@@ -233,6 +261,7 @@ document.addEventListener('DOMContentLoaded', () => {
     Object.assign(app.actions, {
         'st-set': el => {
             const { setting, value } = el.dataset;
+            if (setting === 'presence-online' || setting === 'presence-last') return setPresencePrivacy(setting === 'presence-online' ? 'show_online' : 'show_last_seen', value);
             if (setting === 'theme') setTheme(value);
             if (setting === 'accent') setPref('accent', 'diaryAccent', value, 'indigo');
             if (setting === 'text') setPref('text', 'diaryTextSize', value, 'default');
@@ -318,7 +347,10 @@ document.addEventListener('DOMContentLoaded', () => {
             setPref('motion', 'diaryMotion', e.target.checked ? 'reduce' : 'full', 'full');
         } else if (a === 'st-alerts') {
             if (e.target.checked && window.diaryNotify && window.diaryNotify.enableAlerts) await window.diaryNotify.enableAlerts();
-            else if (!e.target.checked) write('diaryAlerts', null);
+            else if (!e.target.checked) {
+                write('diaryAlerts', null);
+                if (window.diaryNotify && window.diaryNotify.disableAlerts) await window.diaryNotify.disableAlerts();
+            }
             app.render();
         }
     });
