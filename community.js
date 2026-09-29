@@ -23,7 +23,12 @@ document.addEventListener('DOMContentLoaded', () => {
         members: [],
         loadingPosts: false,
         tab: 'posts',
-        draft: { text: '', photos: [] },
+        draft: { text: '', photos: [], poll: null },
+        filter: 'all',           // communities page: all | joined | discover
+        query: '',
+        here: [],                // who's on this community's page right now
+        presence: null,
+        reactOpen: null,         // post id whose emoji picker is open
         posting: false
     };
 
@@ -40,7 +45,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     function reset() {
-        Object.assign(c, { list: null, memberships: new Map(), current: null, posts: [], members: [], draft: { text: '', photos: [] } });
+        Object.assign(c, { list: null, memberships: new Map(), current: null, posts: [], members: [], draft: { text: '', photos: [], poll: null }, here: [] });
     }
 
     const me = () => s.profile.id;
@@ -48,6 +53,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const isMod = id => ['owner', 'admin'].includes(roleOf(id));
     const memberCount = cm => (Array.isArray(cm.members) && cm.members[0] ? cm.members[0].count : 0);
     const inView = () => ['communities', 'community'].includes(app.state.view);
+
+    const POST_SELECT = `id, community_id, author, kind, title, body, html, photos, poll, pinned_at, created_at,
+        author_profile:diary_profiles!diary_community_posts_author_fkey(username, display_name, avatar_path),
+        likes:diary_community_likes(user_id),
+        comments:diary_comments(count),
+        votes:diary_community_poll_votes(user_id, option),
+        reactions:diary_community_reactions(user_id, emoji)`;
+    const REACTIONS = ['❤️', '😂', '🔥', '👏', '😮', '🙏'];
 
     // ---------- Data ----------
     // Phones on weak signal (or waking from the background) can leave a request hanging;
@@ -107,7 +120,7 @@ document.addEventListener('DOMContentLoaded', () => {
             app.setView('communities');
             return;
         }
-        Object.assign(c, { current: cm, tab: 'posts', posts: [], members: [], draft: { text: '', photos: [] } });
+        Object.assign(c, { current: cm, tab: 'posts', posts: [], members: [], draft: { text: '', photos: [], poll: null }, reactOpen: null });
         loadPosts();
         loadMembers();
         app.render();
@@ -118,10 +131,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const id = c.current.id;
         c.loadingPosts = true;
         const { data } = await client.from('diary_community_posts')
-            .select(`id, community_id, author, kind, title, body, html, photos, created_at,
-                author_profile:diary_profiles!diary_community_posts_author_fkey(username, display_name, avatar_path),
-                likes:diary_community_likes(user_id),
-                comments:diary_comments(count)`)
+            .select(POST_SELECT)
             .eq('community_id', id)
             .order('created_at', { ascending: false })
             .limit(60);
@@ -141,6 +151,23 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!c.current || c.current.id !== id) return;
         c.members = data || [];
         if (app.state.view === 'community' && c.tab !== 'posts') app.render();
+    }
+
+    async function refreshPost(id) {
+        const i = c.posts.findIndex(p => p.id === id);
+        if (i < 0) return;
+        const { data } = await client.from('diary_community_posts').select(POST_SELECT).eq('id', id).maybeSingle();
+        if (!data) return;
+        c.posts[i] = data;
+        repaintPost(id);
+    }
+
+    function repaintPost(id) {
+        const el = content.querySelector(`[data-post="post:${CSS.escape(id)}"]`);
+        const p = c.posts.find(x => x.id === id);
+        if (!el || !p) return;
+        el.outerHTML = postHTML(p, !!roleOf(p.community_id));
+        hydrateStorage(content);
     }
 
     function onRemoteChange(payload) {
@@ -165,8 +192,13 @@ document.addEventListener('DOMContentLoaded', () => {
             loadCommunities();
             return '<p class="muted">Loading communities…</p>';
         }
-        const mine = c.list.filter(x => c.memberships.has(x.id));
-        const discover = c.list.filter(x => !c.memberships.has(x.id) && x.visibility === 'public');
+        const q = c.query.trim().toLowerCase();
+        const match = x => !q || `${x.name} ${x.description || ''}`.toLowerCase().includes(q);
+        const mine = c.list.filter(x => c.memberships.has(x.id) && match(x));
+        const discover = c.list.filter(x => !c.memberships.has(x.id) && x.visibility === 'public' && match(x));
+        const trending = [...c.list.filter(x => x.visibility === 'public')]
+            .sort((a, b) => memberCount(b) - memberCount(a)).slice(0, 6);
+        const filterBtn = (key, label, n) => `<button class="cm-filter" data-action="cm-filter" data-filter="${key}" aria-pressed="${c.filter === key}">${label}${n ? `<span>${n}</span>` : ''}</button>`;
 
         return `
             <header class="notes-head">
@@ -179,7 +211,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     <button class="create-post" data-action="cm-create"><svg class="i"><use href="#i-plus"/></svg><span>Create community</span></button>
                 </div>
             </header>
-            <section class="section">
+            <div class="cm-toolbar">
+                <label class="search cm-search">
+                    <svg class="i"><use href="#i-search"/></svg>
+                    <input type="search" id="cm-search" value="${esc(c.query)}" placeholder="Find a community" aria-label="Find a community" enterkeyhint="search">
+                </label>
+                <div class="cm-filters" role="group" aria-label="Show">
+                    ${filterBtn('all', 'All', 0)}${filterBtn('joined', 'Joined', mine.length)}${filterBtn('discover', 'Discover', discover.length)}
+                </div>
+            </div>
+            ${!q && c.filter !== 'joined' && trending.length ? `
+                <section class="section cm-trending-wrap">
+                    <div class="section-head"><h2>🔥 Trending</h2></div>
+                    <div class="cm-trending">${trending.map(trendCard).join('')}</div>
+                </section>` : ''}
+            <section class="section"${c.filter === 'discover' ? ' hidden' : ''}>
                 <h2>Your communities</h2>
                 <div class="cm-grid">
                     ${mine.map(card).join('')}
@@ -189,7 +235,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     </button>
                 </div>
             </section>
-            <section class="section">
+            <section class="section"${c.filter === 'joined' ? ' hidden' : ''}>
                 <h2>Discover</h2>
                 ${discover.length
                     ? `<div class="cm-grid">${discover.map(card).join('')}</div>`
@@ -206,11 +252,25 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>`;
     }
 
+    // Big colourful card for the Trending row
+    function trendCard(cm) {
+        const role = roleOf(cm.id);
+        return `
+            <article class="cm-trend c-${esc(cm.color)}" data-action="cm-open" data-id="${esc(cm.id)}" tabindex="0" role="button" aria-label="Open ${esc(cm.name)}">
+                <span class="cm-trend-emoji" aria-hidden="true">${esc(cm.emoji)}</span>
+                <strong>${esc(cm.name)}</strong>
+                <small>${memberCount(cm)} ${memberCount(cm) === 1 ? 'member' : 'members'}</small>
+                ${role
+                    ? '<span class="cm-trend-tag">Joined ✓</span>'
+                    : `<button class="cm-trend-join" data-action="cm-join" data-id="${esc(cm.id)}">Join</button>`}
+            </article>`;
+    }
+
     function card(cm) {
         const role = roleOf(cm.id);
         return `
             <article class="cm-card" data-action="cm-open" data-id="${esc(cm.id)}" tabindex="0" role="button" aria-label="Open ${esc(cm.name)}">
-                <div class="cm-cover tinted c-${esc(cm.color)}"><span class="cm-emoji">${esc(cm.emoji)}</span></div>
+                <div class="cm-cover c-${esc(cm.color)}"><span class="cm-emoji">${esc(cm.emoji)}</span></div>
                 <div class="cm-info">
                     <h3>${esc(cm.name)}</h3>
                     <p class="cm-meta">${cm.visibility === 'private' ? '🔒 Invite-only' : '🌐 Public'} · ${memberCount(cm)} ${memberCount(cm) === 1 ? 'member' : 'members'}</p>
@@ -240,12 +300,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
         return `
             <button class="back-link" data-action="cm-back"><svg class="i"><use href="#i-back"/></svg>All communities</button>
-            <header class="cm-hero tinted c-${esc(cm.color)}">
-                <span class="cm-hero-emoji">${esc(cm.emoji)}</span>
+            <header class="cm-hero c-${esc(cm.color)}">
+                <span class="cm-hero-emoji" aria-hidden="true">${esc(cm.emoji)}</span>
                 <div class="cm-hero-text">
                     <h2>${esc(cm.name)}</h2>
                     ${cm.description ? `<p>${esc(cm.description)}</p>` : ''}
                     <p class="cm-meta">${cm.visibility === 'private' ? '🔒 Invite-only' : '🌐 Public'} · ${memberCount(cm)} ${memberCount(cm) === 1 ? 'member' : 'members'}${role ? ` · You’re ${role === 'member' ? 'a member' : `the ${role}`}` : ''}</p>
+                    <div class="cm-stats">
+                        <span><b>${postsThisWeek()}</b> posts this week</span>
+                        <span class="cm-here" id="cm-here">${hereHTML()}</span>
+                    </div>
                 </div>
                 <div class="cm-hero-actions">
                     ${role
@@ -256,8 +320,126 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
             </header>
             <div class="tabs" role="tablist">${tab('posts', 'Posts')}${tab('members', `Members · ${memberCount(cm)}`)}${tab('about', 'About')}</div>
-            ${c.tab === 'members' ? membersTab(cm) : c.tab === 'about' ? aboutTab(cm) : postsTab(cm)}`;
+            ${c.tab === 'members' ? membersTab(cm) : c.tab === 'about' ? aboutTab(cm) : `<div class="cm-layout">${sideRail(cm)}${postsTab(cm)}</div>`}`;
     };
+
+    function postsThisWeek() {
+        const since = Date.now() - 7 * 86400000;
+        return c.posts.filter(p => Date.parse(p.created_at) > since).length;
+    }
+
+    function hereHTML() {
+        const others = c.here.filter(h => h.id !== me());
+        if (!others.length) return c.current && roleOf(c.current.id) ? '<span class="cm-here-dot"></span>Just you here right now' : '';
+        return `<span class="avatar-stack">${others.slice(0, 4).map(h => avatar(h, 'xs')).join('')}</span><span class="cm-here-dot"></span>${others.length} here now`;
+    }
+
+    // A fresh prompt every week, different per community
+    const PROMPTS = [
+        'What made you smile this week?', 'Share a photo from your week 📸', 'What are you reading or watching right now?',
+        'One small win worth celebrating 🎉', 'What’s something you learned recently?', 'Recommend one song everyone should hear 🎵',
+        'What are you looking forward to next week?', 'Show us your workspace or favourite corner', 'Describe your week in three emojis',
+        'What’s a goal you’re working towards?'
+    ];
+
+    function weeklyPrompt(cm) {
+        const week = Math.floor(Date.now() / (7 * 86400000));
+        let h = 0;
+        for (const ch of cm.id) h = (h * 31 + ch.charCodeAt(0)) | 0;
+        return PROMPTS[Math.abs(h + week) % PROMPTS.length];
+    }
+
+    // Prompt, top voices — beside the posts on desktop, above them on phones
+    function sideRail(cm) {
+        const member = !!roleOf(cm.id);
+        const since = Date.now() - 7 * 86400000;
+        const tally = new Map();
+        c.posts.forEach(p => {
+            if (Date.parse(p.created_at) < since) return;
+            const t = tally.get(p.author) || { n: 0, profile: p.author_profile, id: p.author };
+            t.n += 1 + (p.likes || []).length * 0.25 + (p.reactions || []).length * 0.25;
+            tally.set(p.author, t);
+        });
+        const top = [...tally.values()].sort((a, b) => b.n - a.n).slice(0, 3);
+        const medals = ['🥇', '🥈', '🥉'];
+        return `
+            <aside class="cm-rail">
+                <div class="cm-prompt">
+                    <span class="cm-prompt-tag">This week’s prompt</span>
+                    <p>${esc(weeklyPrompt(cm))}</p>
+                    ${member ? '<button class="cm-prompt-btn" data-action="cm-answer-prompt">Answer it</button>' : ''}
+                </div>
+                ${top.length ? `
+                    <div class="cm-top">
+                        <h3>Top voices this week</h3>
+                        ${top.map((t, i) => {
+                            const p = t.profile || { display_name: 'Member', username: '' };
+                            return `<div class="cm-top-row"><span class="cm-medal" aria-hidden="true">${medals[i]}</span>${avatar({ id: t.id, ...p }, 'sm')}<span>${t.id === me() ? 'You' : esc(p.display_name)}</span></div>`;
+                        }).join('')}
+                    </div>` : ''}
+            </aside>`;
+    }
+
+    function pollHTML(p, member) {
+        const poll = p.poll;
+        if (!poll || !Array.isArray(poll.options)) return '';
+        const votes = p.votes || [];
+        const total = votes.length;
+        const mine = votes.find(v => v.user_id === me());
+        const showResults = !!mine || !member;
+        return `
+            <div class="cm-poll${showResults ? ' results' : ''}">
+                <p class="cm-poll-q">${esc(poll.question || '')}</p>
+                ${poll.options.map((o, i) => {
+                    const n = votes.filter(v => v.option === i).length;
+                    const pct = total ? Math.round((n / total) * 100) : 0;
+                    const chosen = mine && mine.option === i;
+                    return `
+                        <button type="button" class="cm-poll-opt${chosen ? ' chosen' : ''}" data-action="cm-vote" data-id="${esc(p.id)}" data-opt="${i}"${member ? '' : ' disabled'} style="--pct:${showResults ? pct : 0}%" aria-pressed="${!!chosen}">
+                            <span class="cm-poll-fill" aria-hidden="true"></span>
+                            <span class="cm-poll-label">${chosen ? '✓ ' : ''}${esc(o)}</span>
+                            ${showResults ? `<span class="cm-poll-pct">${pct}%</span>` : ''}
+                        </button>`;
+                }).join('')}
+                <p class="cm-poll-foot">${total} ${total === 1 ? 'vote' : 'votes'} · ${!member ? 'Join to vote' : mine ? 'Tap another option to change your vote' : 'Tap to vote — results show after you vote'}</p>
+            </div>`;
+    }
+
+    function reactionsHTML(p, member) {
+        const counts = new Map();
+        (p.reactions || []).forEach(r => {
+            const e = counts.get(r.emoji) || { n: 0, mine: false };
+            e.n++;
+            if (r.user_id === me()) e.mine = true;
+            counts.set(r.emoji, e);
+        });
+        const chips = REACTIONS.filter(e => counts.has(e)).map(e => {
+            const x = counts.get(e);
+            return `<button type="button" class="cm-react${x.mine ? ' mine' : ''}" data-action="cm-react" data-id="${esc(p.id)}" data-emoji="${e}"${member ? '' : ' disabled'} aria-pressed="${x.mine}" aria-label="${e} ${x.n}">${e}<span>${x.n}</span></button>`;
+        }).join('');
+        if (!chips && !member) return '';
+        const open = c.reactOpen === p.id;
+        return `
+            <div class="cm-reacts">
+                ${chips}
+                ${member ? `<button type="button" class="cm-react-add" data-action="cm-react-menu" data-id="${esc(p.id)}" aria-expanded="${open}" aria-label="Add a reaction"><svg class="i"><use href="#i-smile"/></svg><span aria-hidden="true">+</span></button>` : ''}
+                ${open ? `<div class="cm-react-picker">${REACTIONS.map(e => `<button type="button" data-action="cm-react" data-id="${esc(p.id)}" data-emoji="${e}" aria-label="React ${e}">${e}</button>`).join('')}</div>` : ''}
+            </div>`;
+    }
+
+    function pollBuilder() {
+        const poll = c.draft.poll;
+        if (!poll) return '';
+        return `
+            <div class="cm-poll-build">
+                <input class="cm-poll-in" data-poll="q" maxlength="200" placeholder="Ask a question…" value="${esc(poll.question)}" aria-label="Poll question">
+                ${poll.options.map((o, i) => `<input class="cm-poll-in opt" data-poll="${i}" maxlength="80" placeholder="Option ${i + 1}" value="${esc(o)}" aria-label="Option ${i + 1}">`).join('')}
+                <div class="cm-poll-build-foot">
+                    ${poll.options.length < 4 ? '<button type="button" class="chip" data-action="cm-poll-add">+ Add option</button>' : ''}
+                    <button type="button" class="chip" data-action="cm-poll-remove">Remove poll</button>
+                </div>
+            </div>`;
+    }
 
     function postsTab(cm) {
         const member = !!roleOf(cm.id);
@@ -269,8 +451,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     <textarea id="cm-text" rows="2" maxlength="5000" placeholder="Share an update with ${esc(cm.name)}, ${esc(first)}…" aria-label="Write a post"></textarea>
                 </div>
                 <div class="pc-photos" id="cm-photos" hidden></div>
+                ${pollBuilder()}
                 <div class="pc-foot">
                     <button type="button" class="pc-tool" data-action="cm-add-photos"><svg class="i"><use href="#i-image"/></svg>Photo</button>
+                    <button type="button" class="pc-tool poll" data-action="cm-poll" aria-pressed="${!!c.draft.poll}"><svg class="i"><use href="#i-chart"/></svg>Poll</button>
                     <button type="button" class="pc-tool camera" data-action="cm-camera"><svg class="i"><use href="#i-camera"/></svg>Camera</button>
                     <button type="button" class="pc-tool note" data-action="cm-share-note"><svg class="i"><use href="#i-notes"/></svg>Share a note</button>
                     <button type="submit" class="pc-post" id="cm-post-btn"${c.posting ? ' disabled' : ''}>${c.posting ? 'Posting…' : 'Post'}</button>
@@ -283,7 +467,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const posts = c.loadingPosts && !c.posts.length
             ? '<p class="muted">Loading posts…</p>'
-            : c.posts.map(p => postHTML(p, member)).join('') || `<div class="empty"><p class="empty-title">No posts yet</p><p>${member ? 'Be the first to share something.' : 'Nothing has been shared here yet.'}</p></div>`;
+            : [...c.posts].sort((a, b) => (b.pinned_at ? 1 : 0) - (a.pinned_at ? 1 : 0)).map(p => postHTML(p, member)).join('') || `<div class="empty"><p class="empty-title">No posts yet</p><p>${member ? 'Be the first to share something.' : 'Nothing has been shared here yet.'}</p></div>`;
 
         return `<div class="cm-posts">${composer}<div class="feed-list">${posts}</div></div>`;
     }
@@ -304,7 +488,10 @@ document.addEventListener('DOMContentLoaded', () => {
             commentCount: commentCount(p),
             canComment: member,
             mine: p.author === me(),
-            badge: p.kind === 'note' ? '📓 shared a note' : ''
+            pinned: !!p.pinned_at,
+            bodyExtra: pollHTML(p, member),
+            extraHTML: reactionsHTML(p, member),
+            badge: p.kind === 'note' ? '📓 shared a note' : p.kind === 'poll' ? '📊 started a poll' : ''
         });
     }
 
@@ -378,11 +565,45 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // "Who's here now" — a members-only presence channel while a community page is open
+    function syncPresence() {
+        const want = app.state.view === 'community' && c.current && roleOf(c.current.id) ? c.current.id : null;
+        if (c.presence && c.presence.id !== want) {
+            client.removeChannel(c.presence.channel);
+            c.presence = null;
+            c.here = [];
+        }
+        if (!want || c.presence) return;
+        const channel = client.channel(`diary_comm:${want}`, { config: { private: true, presence: { key: me() } } });
+        channel
+            .on('presence', { event: 'sync' }, () => {
+                const state = channel.presenceState();
+                c.here = Object.values(state).map(list => list[0]).filter(Boolean);
+                const el = $('cm-here');
+                if (el) el.innerHTML = hereHTML();
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_community_poll_votes' }, payload => {
+                const row = payload.new && payload.new.post_id ? payload.new : payload.old;
+                if (row && row.user_id !== me()) refreshPost(row.post_id);
+            })
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_community_reactions' }, payload => {
+                const row = payload.new && payload.new.post_id ? payload.new : payload.old;
+                if (row && row.user_id !== me()) refreshPost(row.post_id);
+            })
+            .subscribe(async status => {
+                if (status === 'SUBSCRIBED') {
+                    await channel.track({ id: me(), display_name: s.profile.display_name, username: s.profile.username, avatar_path: s.profile.avatar_path || null });
+                }
+            });
+        c.presence = { id: want, channel };
+    }
+
     // Keep the composer's text and photos across re-renders, and load private photos
     const previousAfter = app.hooks.afterRender;
     app.hooks.afterRender = view => {
         if (previousAfter) previousAfter(view);
         syncCallWatch();
+        syncPresence();
         if (view !== 'community') return;
         hydrateStorage(content);
         const text = $('cm-text');
@@ -441,13 +662,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (sources.length && photos.length < sources.length) {
                 app.showToast(`${sources.length - photos.length} photo(s) couldn’t upload`);
             }
-            if (!fields.body && !fields.title && !photos.length) throw new Error('Nothing to post');
+            if (!fields.body && !fields.title && !photos.length && !fields.poll) throw new Error('Nothing to post');
             const { data, error } = await client.from('diary_community_posts')
                 .insert({ community_id: cm.id, photos, ...fields })
-                .select(`id, community_id, author, kind, title, body, html, photos, created_at,
-                    author_profile:diary_profiles!diary_community_posts_author_fkey(username, display_name, avatar_path),
-                    likes:diary_community_likes(user_id),
-                    comments:diary_comments(count)`)
+                .select(POST_SELECT)
                 .single();
             if (error) throw error;
             if (c.current && c.current.id === cm.id) c.posts.unshift(data);
@@ -467,11 +685,20 @@ document.addEventListener('DOMContentLoaded', () => {
         if (c.posting) return;
         const body = c.draft.text.trim();
         const photos = c.draft.photos;
-        if (!body && !photos.length) return app.showToast('Write something or add a photo first');
-        const ok = await publish({ kind: 'update', body }, photos.map(p => p.file));
+        let poll = null;
+        if (c.draft.poll) {
+            const question = c.draft.poll.question.trim();
+            const options = c.draft.poll.options.map(o => o.trim()).filter(Boolean);
+            if (!question || options.length < 2) return app.showToast('A poll needs a question and at least two options');
+            poll = { question, options };
+        }
+        if (!body && !photos.length && !poll) return app.showToast('Write something or add a photo first');
+        const ok = await publish(poll ? { kind: 'poll', body, poll } : { kind: 'update', body }, photos.map(p => p.file));
         if (ok) {
             photos.forEach(p => URL.revokeObjectURL(p.preview));
-            c.draft = { text: '', photos: [] };
+            c.draft = { text: '', photos: [], poll: null };
+            const btn = $('cm-post-btn');
+            if (btn) celebrate(btn, 14);
             app.render();
             app.showToast(`Posted to ${c.current.name}`);
         }
@@ -536,12 +763,88 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    async function vote(postId, option) {
+        const p = c.posts.find(x => x.id === postId);
+        if (!p || !roleOf(p.community_id)) return app.showToast('Join the community to vote');
+        const before = (p.votes || []).map(v => ({ ...v }));
+        const mine = before.find(v => v.user_id === me());
+        if (mine && mine.option === option) return; // same choice — nothing to do
+        p.votes = [...before.filter(v => v.user_id !== me()), { user_id: me(), option }];
+        repaintPost(postId);
+        const { error } = mine
+            ? await client.from('diary_community_poll_votes').update({ option }).eq('post_id', postId).eq('user_id', me())
+            : await client.from('diary_community_poll_votes').insert({ post_id: postId, option });
+        if (error) {
+            p.votes = before;
+            repaintPost(postId);
+            app.showToast('Couldn’t save your vote');
+        } else if (!mine) {
+            const el = content.querySelector(`[data-post="post:${CSS.escape(postId)}"] .cm-poll-opt.chosen`);
+            if (el) celebrate(el, 10);
+        }
+    }
+
+    async function react(postId, emoji) {
+        const p = c.posts.find(x => x.id === postId);
+        if (!p || !roleOf(p.community_id)) return app.showToast('Join the community to react');
+        const before = (p.reactions || []).map(r => ({ ...r }));
+        const had = before.some(r => r.user_id === me() && r.emoji === emoji);
+        p.reactions = had ? before.filter(r => !(r.user_id === me() && r.emoji === emoji)) : [...before, { user_id: me(), emoji }];
+        c.reactOpen = null;
+        repaintPost(postId);
+        if (!had) {
+            const chip = content.querySelector(`[data-post="post:${CSS.escape(postId)}"] .cm-react[data-emoji="${emoji}"]`);
+            if (chip) chip.classList.add('pop');
+        }
+        const { error } = had
+            ? await client.from('diary_community_reactions').delete().eq('post_id', postId).eq('user_id', me()).eq('emoji', emoji)
+            : await client.from('diary_community_reactions').insert({ post_id: postId, emoji });
+        if (error) {
+            p.reactions = before;
+            repaintPost(postId);
+            app.showToast('Couldn’t add that reaction');
+        }
+    }
+
+    async function togglePin(post) {
+        const pinned = !post.pinned_at;
+        const { error } = await client.from('diary_community_posts').update({ pinned_at: pinned ? new Date().toISOString() : null }).eq('id', post.id);
+        if (error) return app.showToast('Couldn’t pin that post');
+        post.pinned_at = pinned ? new Date().toISOString() : null;
+        app.showToast(pinned ? 'Pinned to the top 📌' : 'Unpinned');
+        app.render();
+    }
+
+    // A small burst of confetti from an element (skipped when motion is reduced)
+    function celebrate(el, count = 22) {
+        if (!el || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+        const r = el.getBoundingClientRect();
+        const colours = ['#4f46e5', '#ec4899', '#f59e0b', '#10b981', '#8b5cf6', '#06b6d4'];
+        for (let i = 0; i < count; i++) {
+            const bit = document.createElement('span');
+            bit.className = 'confetti-bit';
+            bit.style.left = `${r.left + r.width / 2}px`;
+            bit.style.top = `${r.top + r.height / 2}px`;
+            bit.style.background = colours[i % colours.length];
+            document.body.appendChild(bit);
+            const angle = (Math.PI * 2 * i) / count + Math.random() * 0.5;
+            const dist = 60 + Math.random() * 90;
+            bit.animate([
+                { transform: 'translate(-50%, -50%) rotate(0deg)', opacity: 1 },
+                { transform: `translate(calc(-50% + ${Math.cos(angle) * dist}px), calc(-50% + ${Math.sin(angle) * dist + 40}px)) rotate(${Math.random() * 540}deg)`, opacity: 0 }
+            ], { duration: 700 + Math.random() * 400, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' }).onfinish = () => bit.remove();
+        }
+    }
+
     function postMenu(el) {
         const post = c.posts.find(p => p.id === el.dataset.id);
         if (!post) return;
         const canDelete = post.author === me() || isMod(post.community_id);
+        const pinItem = isMod(post.community_id)
+            ? [{ label: post.pinned_at ? 'Unpin post' : 'Pin to top', icon: 'i-pin-note', onClick: () => togglePin(post) }]
+            : [];
         const isFriend = s.friends.some(f => f.id === post.author);
-        const items = [];
+        const items = [...pinItem];
         if (isFriend && post.author !== me()) {
             items.push({ label: 'Message', icon: 'i-chat', onClick: () => { app.setView('messages'); content.querySelector(`.convo[data-id="${CSS.escape(post.author)}"]`)?.click(); } });
         }
@@ -652,6 +955,7 @@ document.addEventListener('DOMContentLoaded', () => {
         c.memberships.set(data.id, 'member');
         c.list = null;
         app.showToast(`Welcome to ${data.name} 🎉`);
+        celebrate(document.querySelector(`[data-action="cm-join"][data-id="${CSS.escape(data.id)}"]`) || $('page-title'), 28);
         if (c.current && c.current.id === data.id) {
             c.current = null;
             app.render();
@@ -759,6 +1063,37 @@ document.addEventListener('DOMContentLoaded', () => {
             renderDraftPhotos();
         },
         'cm-share-note': el => pickNoteToShare(el),
+        'cm-filter': el => { c.filter = el.dataset.filter; app.render(); },
+        'cm-poll': () => {
+            c.draft.poll = c.draft.poll ? null : { question: '', options: ['', ''] };
+            app.render();
+            const q = content.querySelector('[data-poll="q"]');
+            if (q) q.focus();
+        },
+        'cm-poll-add': () => {
+            if (c.draft.poll && c.draft.poll.options.length < 4) c.draft.poll.options.push('');
+            app.render();
+            const inputs = content.querySelectorAll('.cm-poll-in.opt');
+            if (inputs.length) inputs[inputs.length - 1].focus();
+        },
+        'cm-poll-remove': () => { c.draft.poll = null; app.render(); },
+        'cm-vote': el => vote(el.dataset.id, Number(el.dataset.opt)),
+        'cm-react': el => react(el.dataset.id, el.dataset.emoji),
+        'cm-react-menu': el => {
+            c.reactOpen = c.reactOpen === el.dataset.id ? null : el.dataset.id;
+            repaintPost(el.dataset.id);
+        },
+        'cm-answer-prompt': () => {
+            const text = $('cm-text');
+            if (!text) return;
+            if (!c.draft.text.trim()) {
+                c.draft.text = `💬 ${weeklyPrompt(c.current)}\n`;
+                text.value = c.draft.text;
+            }
+            text.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            text.focus();
+            text.setSelectionRange(text.value.length, text.value.length);
+        },
         'cm-call': () => {
             if (!window.diaryCalls) return app.showToast('Calls aren’t supported in this browser');
             window.diaryCalls.joinCommunity(c.current);
@@ -777,6 +1112,23 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     content.addEventListener('input', e => {
+        if (e.target.id === 'cm-search') {
+            c.query = e.target.value;
+            // Filter cards in place so typing isn't interrupted
+            const q = c.query.trim().toLowerCase();
+            content.querySelectorAll('.cm-card[data-id], .cm-trend[data-id]').forEach(card => {
+                card.hidden = !!q && !card.textContent.toLowerCase().includes(q);
+            });
+            const trending = content.querySelector('.cm-trending-wrap');
+            if (trending) trending.hidden = !!q;
+            return;
+        }
+        if (e.target.dataset && e.target.dataset.poll && c.draft.poll) {
+            const k = e.target.dataset.poll;
+            if (k === 'q') c.draft.poll.question = e.target.value;
+            else c.draft.poll.options[Number(k)] = e.target.value;
+            return;
+        }
         if (e.target.id !== 'cm-text') return;
         c.draft.text = e.target.value;
         e.target.style.height = 'auto';

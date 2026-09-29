@@ -1836,6 +1836,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         return `
             <article class="post ig" data-post="${key}" data-search="${esc(`${profile.display_name} ${profile.username} ${o.title || ''} ${o.body || ''}`.toLowerCase())}">
+                ${o.pinned ? '<p class="repost-line pinned-line"><svg class="i"><use href="#i-pin-note"/></svg>Pinned by the admins</p>' : ''}
                 ${o.repostedBy ? `<p class="repost-line"><svg class="i"><use href="#i-repost"/></svg>${esc(o.repostedBy)} reposted</p>` : ''}
                 <header class="post-head">
                     ${avatar(person, 'md')}
@@ -1846,6 +1847,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <button class="more-btn" data-action="post-menu" data-kind="${o.kind}" data-id="${esc(o.id)}" aria-label="Post options"><svg class="i"><use href="#i-more"/></svg></button>
                 </header>
                 ${photos.length ? media : caption}
+                ${o.bodyExtra || ''}
                 <div class="post-actions">
                     <button class="act like-btn" data-action="like" data-kind="${o.kind}" data-id="${esc(o.id)}" aria-pressed="${liked}" aria-label="${liked ? 'Unlike' : 'Like'}">
                         <svg class="i"><use href="#${liked ? 'i-heart-fill' : 'i-heart'}"/></svg>
@@ -1866,6 +1868,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     o.reposts && o.reposts.length ? `${o.reposts.length} ${o.reposts.length === 1 ? 'repost' : 'reposts'}` : ''
                 ].filter(Boolean).join(' · ')}</p>` : ''}
                 ${photos.length ? caption : ''}
+                ${o.extraHTML || ''}
                 ${commentsBlock(o.kind, o.id, o.commentCount, o.canComment)}
             </article>`;
     }
