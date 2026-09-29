@@ -10,7 +10,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const read = (k, d) => { try { return localStorage.getItem(k) || d; } catch (e) { return d; } };
     const write = (k, v) => { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} };
 
-    const ACCENTS = [['indigo', 'Indigo', '#4f46e5'], ['violet', 'Violet', '#7c3aed'], ['rose', 'Rose', '#e11d48'], ['emerald', 'Emerald', '#047857']];
+    const ACCENTS = [
+        ['indigo', 'Indigo', '#4f46e5'], ['violet', 'Violet', '#7c3aed'], ['blue', 'Blue', '#2563eb'], ['sky', 'Ocean', '#0e7490'],
+        ['teal', 'Teal', '#0f766e'], ['emerald', 'Emerald', '#047857'], ['orange', 'Sunset', '#c2410c'], ['rose', 'Rose', '#e11d48'],
+        ['pink', 'Pink', '#db2777'], ['graphite', 'Graphite', '#475569']
+    ];
+    // App background: [value, label, light swatch, dark swatch]
+    const BACKGROUNDS = [
+        ['default', 'Default', '#fafafa', '#09090b'], ['paper', 'Paper', '#f7f3ec', '#12100d'], ['mist', 'Mist', '#eef2f7', '#0a0f16'],
+        ['sage', 'Sage', '#eef4ef', '#0a100c'], ['blush', 'Blush', '#fbf0f2', '#120b0d'], ['midnight', 'Pure black', '#fafafa', '#000000']
+    ];
     const SIZES = [['small', 'Small'], ['default', 'Default'], ['large', 'Large']];
 
     let storageText = '';
@@ -64,6 +73,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const theme = read('diaryTheme', 'system');
         const accent = root.dataset.accent || 'indigo';
         const size = root.dataset.text || 'default';
+        const bg = root.dataset.bg || 'default';
         const motion = root.dataset.motion === 'reduce';
         const alerts = window.diaryNotify && window.diaryNotify.alertStatus ? window.diaryNotify.alertStatus() : 'unavailable';
         const pinSet = !!read('diaryPin', '');
@@ -122,7 +132,15 @@ document.addEventListener('DOMContentLoaded', () => {
                             ${ACCENTS.map(([v, l, c]) => `<button type="button" class="st-swatch" role="radio" aria-checked="${accent === v}" aria-label="${l}" style="--sw:${c}" data-action="st-set" data-setting="accent" data-value="${v}"></button>`).join('')}
                         </div>
                     </div>
+                    <div class="st-row">
+                        <span class="st-ic"><svg class="i"><use href="#i-palette"/></svg></span>
+                        <span class="st-text"><strong>Background</strong><small>${esc((BACKGROUNDS.find(b => b[0] === bg) || BACKGROUNDS[0])[1])}${bg === 'midnight' ? ' · shows in dark mode' : ''}</small></span>
+                        <div class="st-swatches st-bg" role="radiogroup" aria-label="App background">
+                            ${BACKGROUNDS.map(([v, l, light, dark]) => `<button type="button" class="st-swatch st-bgswatch" role="radio" aria-checked="${bg === v}" aria-label="${l}" style="--l:${light};--d:${dark}" data-action="st-set" data-setting="bg" data-value="${v}"></button>`).join('')}
+                        </div>
+                    </div>
                     ${row('i-edit', 'Text size', 'Applies across the app', seg('text', SIZES, size))}
+                    ${window.Speak && window.Speak.supported ? row('i-volume', 'Read-aloud voice', 'Used when you tap Listen on a note or post', seg('speakvoice', [['female', 'Female'], ['male', 'Male']], window.Speak.getPrefs().voice)) : ''}
                     ${row('i-play', 'Reduce motion', 'Calmer screens: no slides, bounces or confetti', toggle('st-motion', motion, 'Reduce motion'))}
                 </section>
 
@@ -141,6 +159,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 <section class="st-card">
                     <h3>Your data</h3>
+                    ${window.diaryBackup ? (signedIn()
+                        ? row('i-refresh', 'Backup', `<span id="st-backup-sub">${esc(backupText())}</span>`, go('st-backup', 'Back up now'))
+                        : row('i-lock', 'Back up your notes', 'Sign in and your notes are saved to your account, so they come back on any device', go('sign-in', 'Sign in'))) : ''}
                     ${row('i-download', 'Export your notes', 'Download everything as a file', go('st-export', 'Export'))}
                     ${row('i-archive', 'Storage', `<span id="st-storage">${esc(storageText || 'Checking…')}</span>`, '')}
                     ${row('i-trash', 'Clear this device', 'Remove notes, photos and settings stored in this browser', go('st-clear', 'Clear', true))}
@@ -165,6 +186,21 @@ document.addEventListener('DOMContentLoaded', () => {
         if (view !== 'settings') F.loaded = false;
         else I && I.hydrateStorage(document.getElementById('content'));
     };
+
+    function backupText() {
+        const b = window.diaryBackup.status();
+        if (b.busy) return 'Backing up your notes…';
+        if (b.error) return `${b.error} — tap Back up now to try again`;
+        if (!navigator.onLine) return 'You’re offline — changes back up when you reconnect';
+        const when = b.lastSync ? `last backed up ${I.timeAgo(new Date(b.lastSync).toISOString())}` : 'not backed up yet';
+        return `${b.count} ${b.count === 1 ? 'note' : 'notes'} saved to your account · ${when}`;
+    }
+    if (window.diaryBackup) {
+        window.diaryBackup.onchange = () => {
+            const el = document.getElementById('st-backup-sub');
+            if (el) el.textContent = backupText();
+        };
+    }
 
     function followSection() {
         if (!F.loaded) loadFollowLists();
@@ -199,9 +235,17 @@ document.addEventListener('DOMContentLoaded', () => {
             if (setting === 'theme') setTheme(value);
             if (setting === 'accent') setPref('accent', 'diaryAccent', value, 'indigo');
             if (setting === 'text') setPref('text', 'diaryTextSize', value, 'default');
+            if (setting === 'bg') {
+                setPref('bg', 'diaryBackground', value, 'default');
+                // The phone's status bar follows the new background
+                const pageBg = getComputedStyle(root).getPropertyValue('--bg').trim();
+                if (pageBg) document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute('content', pageBg));
+            }
+            if (setting === 'speakvoice' && window.Speak) window.Speak.setPrefs({ voice: value });
             app.render();
         },
         'st-rename': () => app.renameUser(),
+        'st-backup': () => window.diaryBackup && window.diaryBackup.syncNow(),
         'st-unfollow': async el => {
             await I.toggleFollow(el.dataset.id, el.dataset.name);
             F.following = F.following.filter(p => p.id !== el.dataset.id);

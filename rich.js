@@ -3,7 +3,7 @@
 window.Rich = (() => {
     const ALLOWED_TAGS = ['b', 'strong', 'i', 'em', 'u', 's', 'strike', 'del', 'code', 'pre', 'blockquote',
         'a', 'br', 'p', 'div', 'ul', 'ol', 'li', 'mark'];
-    const HIGHLIGHTS = ['yellow', 'green', 'pink', 'blue'];
+    const HIGHLIGHTS = ['yellow', 'green', 'pink', 'blue', 'orange', 'purple'];
     const BLOCKS = new Set(['P', 'DIV', 'LI', 'PRE', 'BLOCKQUOTE', 'UL', 'OL']);
     let hooked = false;
 
@@ -123,7 +123,7 @@ window.Rich = (() => {
         { cmd: 'italic', label: 'Italic (Ctrl+I)', html: '<i>I</i>', state: true },
         { cmd: 'underline', label: 'Underline (Ctrl+U)', html: '<u>U</u>', state: true },
         { cmd: 'strikeThrough', label: 'Strikethrough', html: '<s>S</s>', state: true },
-        { cmd: 'highlight', label: 'Highlight (tap again inside a highlight to change its colour)', icon: 'i-marker' },
+        { cmd: 'highlight', label: 'Highlighter: select text to mark it, or tap for colours and the highlighter pen', html: '<svg class="i"><use href="#i-marker"/></svg><span class="hl-pen-dot" aria-hidden="true"></span>' },
         { sep: true },
         { cmd: 'code', label: 'Inline code', icon: 'i-code' },
         { cmd: 'codeblock', label: 'Code block', icon: 'i-codeblock' },
@@ -171,6 +171,18 @@ window.Rich = (() => {
             const cmd = btn.dataset.cmd;
             const custom = extra.find(x => x.cmd === cmd);
             if (custom) return custom.run(btn);
+            if (cmd === 'highlight') {
+                // With text selected: mark it now. Otherwise: colours, pen mode and remove
+                const sel = document.getSelection();
+                const hasText = sel.rangeCount && !sel.getRangeAt(0).collapsed && editable.contains(sel.getRangeAt(0).commonAncestorContainer);
+                if (hasText) {
+                    highlight(editable);
+                    changed();
+                } else {
+                    openPalette(btn, editable, changed);
+                }
+                return;
+            }
             await run(cmd, editable, opts);
             changed();
             toolbar.refresh();
@@ -223,6 +235,33 @@ window.Rich = (() => {
             if (editable.innerHTML === '<br>' || editable.innerHTML === '<div><br></div>') editable.innerHTML = '';
         });
 
+        // Highlighter pen: while it's on, whatever you select gets marked (like a real highlighter)
+        const penButton = toolbar.querySelector('[data-cmd="highlight"]');
+        const paintPen = () => {
+            if (!penButton) return;
+            penButton.dataset.colour = lastColour;
+            penButton.classList.toggle('pen-on', !!editable._pen);
+            penButton.setAttribute('aria-pressed', String(!!editable._pen));
+        };
+        editable._paintPen = paintPen;
+        paintPen();
+        const penMark = () => {
+            if (!editable._pen) return;
+            const sel = document.getSelection();
+            if (!sel.rangeCount || sel.getRangeAt(0).collapsed || !editable.contains(sel.getRangeAt(0).commonAncestorContainer)) return;
+            highlight(editable);
+            changed();
+        };
+        editable.addEventListener('pointerup', e => { if (e.pointerType === 'mouse') setTimeout(penMark, 0); });
+        editable.addEventListener('keyup', e => { if (e.shiftKey && e.key.startsWith('Arrow')) return; if (e.key === 'Shift') penMark(); });
+        // Touch: wait until the selection handles settle
+        let settle = null;
+        document.addEventListener('selectionchange', () => {
+            if (!editable._pen) return;
+            clearTimeout(settle);
+            settle = setTimeout(penMark, 700);
+        });
+
         toolbar.refresh = () => {
             const active = document.activeElement === editable || editable.contains(document.activeElement);
             toolbar.querySelectorAll('[data-state]').forEach(b => {
@@ -238,7 +277,94 @@ window.Rich = (() => {
     // ---------- Highlighter ----------
     // Select text and tap: it's marked in the last colour used. Tap inside a highlight to cycle
     // yellow → green → pink → blue → none.
-    let lastColour = 'yellow';
+    let lastColour = (() => { try { return HIGHLIGHTS.includes(localStorage.getItem('diaryHighlighter')) ? localStorage.getItem('diaryHighlighter') : 'yellow'; } catch (e) { return 'yellow'; } })();
+    const HL_NAMES = { yellow: 'Yellow', green: 'Green', pink: 'Pink', blue: 'Blue', orange: 'Orange', purple: 'Purple' };
+
+    function setColour(c) {
+        lastColour = c;
+        try { localStorage.setItem('diaryHighlighter', c); } catch (e) {}
+    }
+
+    // Take the highlight off whatever is selected (or the highlight the cursor is in)
+    function removeHighlight(editable) {
+        const sel = document.getSelection();
+        if (!sel.rangeCount) return false;
+        const range = sel.getRangeAt(0);
+        const marks = [...editable.querySelectorAll('mark')].filter(m => range.intersectsNode(m));
+        const inside = currentBlock(editable, ['MARK']);
+        if (inside && !marks.includes(inside)) marks.push(inside);
+        marks.forEach(unwrap);
+        return marks.length > 0;
+    }
+
+    // The small sheet under the highlighter button: colours, pen mode, remove
+    function openPalette(btn, editable, changed) {
+        document.querySelectorAll('.hl-palette').forEach(p => p.remove());
+        const host = btn.closest('dialog') || document.body;
+        const pal = document.createElement('div');
+        pal.className = 'hl-palette';
+        pal.setAttribute('role', 'dialog');
+        pal.setAttribute('aria-label', 'Highlighter');
+        const inMark = !!currentBlock(editable, ['MARK']);
+        pal.innerHTML = `
+            <div class="hl-swatches" role="radiogroup" aria-label="Highlighter colour">
+                ${HIGHLIGHTS.map(c => `<button type="button" class="hl-swatch hl-${c}" role="radio" aria-checked="${c === lastColour}" data-colour="${c}" aria-label="${HL_NAMES[c]}"></button>`).join('')}
+            </div>
+            <button type="button" class="hl-opt" data-pen aria-pressed="${!!editable._pen}">
+                <svg class="i"><use href="#i-marker"/></svg>
+                <span><strong>Highlighter pen</strong><small>${editable._pen ? 'On — select text to mark it' : 'Turn on, then select text to mark it'}</small></span>
+                <span class="hl-switch" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="hl-opt" data-remove${inMark ? '' : ' disabled'}>
+                <svg class="i"><use href="#i-eraser"/></svg>
+                <span><strong>Remove highlight</strong><small>${inMark ? 'From where the cursor is' : 'Put the cursor in a highlight first'}</small></span>
+            </button>`;
+        host.append(pal);
+        const r = btn.getBoundingClientRect();
+        const w = pal.offsetWidth;
+        pal.style.left = `${Math.max(8, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 8))}px`;
+        const below = r.bottom + 8 + pal.offsetHeight < window.innerHeight;
+        pal.style.top = `${below ? r.bottom + 8 : Math.max(8, r.top - pal.offsetHeight - 8)}px`;
+        pal.querySelector('[aria-checked="true"]').focus();
+
+        const close = () => {
+            pal.remove();
+            document.removeEventListener('pointerdown', outside, true);
+            document.removeEventListener('keydown', esc, true);
+        };
+        const outside = e => { if (!pal.contains(e.target) && e.target !== btn && !btn.contains(e.target)) close(); };
+        const esc = e => { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(); btn.focus(); } };
+        setTimeout(() => {
+            document.addEventListener('pointerdown', outside, true);
+            document.addEventListener('keydown', esc, true);
+        }, 0);
+        pal.addEventListener('mousedown', e => e.preventDefault()); // keep the editor's cursor where it is
+        pal.addEventListener('click', e => {
+            const sw = e.target.closest('[data-colour]');
+            if (sw) {
+                setColour(sw.dataset.colour);
+                // The cursor is inside a highlight: recolour it too
+                const inside = currentBlock(editable, ['MARK']);
+                if (inside) { inside.className = `hl-${lastColour}`; changed(); }
+                editable._paintPen && editable._paintPen();
+                close();
+                editable.focus();
+                return;
+            }
+            if (e.target.closest('[data-pen]')) {
+                editable._pen = !editable._pen;
+                editable._paintPen && editable._paintPen();
+                close();
+                editable.focus();
+                return;
+            }
+            if (e.target.closest('[data-remove]')) {
+                if (removeHighlight(editable)) changed();
+                close();
+                editable.focus();
+            }
+        });
+    }
 
     function highlight(editable) {
         const sel = document.getSelection();
@@ -252,7 +378,8 @@ window.Rich = (() => {
             const next = HIGHLIGHTS[HIGHLIGHTS.indexOf(now) + 1];
             if (next) {
                 inside.className = `hl-${next}`;
-                lastColour = next;
+                setColour(next);
+                if (editable._paintPen) editable._paintPen();
             } else {
                 unwrap(inside);
             }

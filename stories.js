@@ -407,7 +407,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function textCard(text, color) {
         const palette = {
             yellow: ['#f7d774', '#f59e0b'], pink: ['#f9a8d4', '#db2777'], blue: ['#93c5fd', '#2563eb'],
-            green: ['#86efac', '#059669'], purple: ['#c4b5fd', '#7c3aed']
+            green: ['#86efac', '#059669'], purple: ['#c4b5fd', '#7c3aed'], orange: ['#fdba74', '#ea580c'], coral: ['#fca5a5', '#dc2626'],
+            teal: ['#5eead4', '#0d9488'], sky: ['#7dd3fc', '#0284c7'], lime: ['#bef264', '#65a30d'], gray: ['#d4d4d8', '#52525b']
         }[color] || ['#a5b4fc', '#6366f1'];
         const canvas = document.createElement('canvas');
         canvas.width = 1080;

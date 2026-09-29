@@ -10,7 +10,127 @@ document.addEventListener('DOMContentLoaded', () => {
     const s = I.state;
     const content = document.getElementById('content');
     const FEED_BUCKET = 'diary-feed';
-    const TABS = [['all', 'For you'], ['posts', 'Posts'], ['reels', 'Reels'], ['live', 'Live'], ['library', 'Library'], ['groups', 'Communities'], ['people', 'People']];
+    const TABS = [['all', 'For you'], ['news', 'News'], ['posts', 'Posts'], ['reels', 'Reels'], ['live', 'Live'], ['library', 'Library'], ['groups', 'Communities'], ['people', 'People']];
+
+    // ---------- News ----------
+    // Headlines come from publishers' feeds through our diary-news function; each story opens on the publisher's site
+    const NEWS_KINDS = [['world', 'World'], ['local', 'Local'], ['business', 'Business'], ['technology', 'Tech'], ['sports', 'Sports'], ['health', 'Health'], ['science', 'Science'], ['entertainment', 'Entertainment']];
+    const COUNTRIES = [['NG', 'Nigeria'], ['GH', 'Ghana'], ['KE', 'Kenya'], ['ZA', 'South Africa'], ['EG', 'Egypt'], ['GB', 'United Kingdom'], ['US', 'United States'], ['CA', 'Canada'], ['IN', 'India'], ['AU', 'Australia'], ['FR', 'France'], ['DE', 'Germany'], ['AE', 'UAE'], ['BR', 'Brazil'], ['CN', 'China'], ['JP', 'Japan']];
+    const TZ_COUNTRY = { 'Africa/Lagos': 'NG', 'Africa/Accra': 'GH', 'Africa/Nairobi': 'KE', 'Africa/Johannesburg': 'ZA', 'Africa/Cairo': 'EG', 'Europe/London': 'GB', 'America/New_York': 'US', 'America/Chicago': 'US', 'America/Los_Angeles': 'US', 'America/Toronto': 'CA', 'Asia/Kolkata': 'IN', 'Australia/Sydney': 'AU', 'Europe/Paris': 'FR', 'Europe/Berlin': 'DE', 'Asia/Dubai': 'AE', 'America/Sao_Paulo': 'BR', 'Asia/Shanghai': 'CN', 'Asia/Tokyo': 'JP' };
+    const N = {
+        kind: 'world',
+        results: new Map(),   // request key -> { items, at, error, loading }
+        place: (() => {
+            try { const saved = JSON.parse(localStorage.getItem('diaryNewsPlace')); if (saved && saved.country) return saved; } catch (e) {}
+            let tz = '';
+            try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch (e) {}
+            const fromLang = (navigator.language || '').split('-')[1];
+            return { country: TZ_COUNTRY[tz] || (fromLang && fromLang.length === 2 ? fromLang.toUpperCase() : 'US'), city: '' };
+        })()
+    };
+    const countryName = code => (COUNTRIES.find(c => c[0] === code) || [code, code])[1];
+
+    function newsRequest(kind) {
+        if (kind === 'world') return { scope: 'world', country: N.place.country };
+        if (kind === 'local') return { scope: 'local', country: N.place.country, city: N.place.city || '' };
+        return { scope: 'topic', topic: kind };
+    }
+
+    function loadNews(kind, force = false) {
+        const req = newsRequest(kind);
+        const key = JSON.stringify(req);
+        const have = N.results.get(key);
+        if (have && (have.loading || (!force && Date.now() - have.at < (have.error ? 60000 : 10 * 60000)))) return have;
+        const entry = { items: have ? have.items : null, at: Date.now(), loading: true, error: false };
+        // Show the last copy we saved while the fresh one loads (and when offline)
+        if (!entry.items) {
+            try { const saved = JSON.parse(localStorage.getItem(`diaryNews:${key}`)); if (saved) entry.items = saved.items; } catch (e) {}
+        }
+        N.results.set(key, entry);
+        (async () => {
+            try {
+                const token = await social.accessToken();
+                if (!token) throw new Error('signin');
+                const cfg = window.DIARY_CONFIG;
+                const res = await fetch(`${cfg.supabaseUrl}/functions/v1/diary-news`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, apikey: cfg.supabaseKey },
+                    body: JSON.stringify(req)
+                });
+                const data = await res.json();
+                if (!res.ok || !Array.isArray(data.items)) throw new Error(data.error || 'news');
+                entry.items = data.items;
+                entry.sources = data.sources || [];
+                entry.error = false;
+                try { localStorage.setItem(`diaryNews:${key}`, JSON.stringify({ items: data.items.slice(0, 20) })); } catch (e) {}
+            } catch (e) {
+                entry.error = e.message === 'signin' ? 'signin' : true;
+            }
+            entry.loading = false;
+            entry.at = Date.now();
+            if (app.state.view === 'explore' && !document.getElementById('ex-search')?.value) app.render();
+        })();
+        return entry;
+    }
+
+    function newsAgo(iso) {
+        if (!iso) return '';
+        const mins = Math.round((Date.now() - Date.parse(iso)) / 60000);
+        if (mins < 1) return 'just now';
+        if (mins < 60) return `${mins}m ago`;
+        if (mins < 1440) return `${Math.round(mins / 60)}h ago`;
+        return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+    }
+
+    function newsCard(item, { big = false } = {}) {
+        return `
+            <a class="ex-news${big ? ' big' : ''}${item.image ? '' : ' noimg'}" href="${esc(item.link)}" target="_blank" rel="noopener noreferrer">
+                ${item.image ? `<span class="exn-img"><img src="${esc(item.image)}" alt="" loading="lazy" referrerpolicy="no-referrer"></span>` : `<span class="exn-img exn-mark" aria-hidden="true">${esc(item.source.slice(0, 1))}</span>`}
+                <span class="exn-text">
+                    <span class="exn-src">${esc(item.source)} · ${esc(newsAgo(item.published))}</span>
+                    <strong>${esc(item.title)}</strong>
+                    ${big && item.summary ? `<small>${esc(item.summary)}</small>` : ''}
+                </span>
+            </a>`;
+    }
+
+    function newsBody(entry, { compact = false } = {}) {
+        if (!entry.items && entry.loading) return `<div class="ex-row ex-news-row">${'<span class="ex-news skel"></span>'.repeat(compact ? 4 : 5)}</div>`;
+        if (!entry.items || !entry.items.length) {
+            if (entry.error === 'signin') return '<div class="ex-empty small"><strong>Sign in to see the news</strong><span>World and local headlines appear once you’re signed in.</span></div>';
+            return `<div class="ex-empty small"><strong>${!navigator.onLine ? 'You’re offline' : 'Couldn’t load the news'}</strong><span>${!navigator.onLine ? 'Headlines will load when you’re back online.' : 'Try again in a moment.'}</span><button type="button" class="chip" data-action="ex-news-retry">Try again</button></div>`;
+        }
+        if (compact) return `<div class="ex-row ex-news-row">${entry.items.slice(0, 8).map(i => newsCard(i)).join('')}</div>`;
+        const [lead, ...rest] = entry.items;
+        return `<div class="ex-news-list">${newsCard(lead, { big: true })}${rest.map(i => newsCard(i)).join('')}</div>`;
+    }
+
+    function newsSection(kind, compact) {
+        const entry = loadNews(kind);
+        const title = kind === 'world' ? 'World news' : kind === 'local' ? `Around you · ${esc(N.place.city ? `${N.place.city}, ` : '')}${esc(countryName(N.place.country))}` : `${(NEWS_KINDS.find(k => k[0] === kind) || ['', 'News'])[1]} news`;
+        const sub = kind === 'world' ? 'Top stories from around the world' : kind === 'local' ? 'Headlines from your country' : 'The latest in this topic';
+        const more = compact ? `<button type="button" class="link-btn accent ex-more" data-action="ex-news-open" data-kind="${kind}">See all</button>` : '';
+        return `<section class="ex-sec">${head(kind === 'local' ? 'i-pin' : 'i-feed', title, sub, more)}${newsBody(entry, { compact })}</section>`;
+    }
+
+    function newsTab() {
+        const kind = N.kind;
+        const listen = window.Speak && window.Speak.supported ? '<button type="button" class="chip ex-news-listen" data-action="ex-news-listen"><svg class="i"><use href="#i-volume"/></svg>Listen to the headlines</button>' : '';
+        return `
+            <section class="ex-sec">
+                <div class="ex-news-kinds" role="tablist" aria-label="News">
+                    ${NEWS_KINDS.map(([k, l]) => `<button type="button" class="cm-filter" role="tab" aria-selected="${kind === k}" data-action="ex-news-kind" data-kind="${k}">${l}</button>`).join('')}
+                </div>
+                ${kind === 'local' ? `
+                    <form class="ex-place" data-form="ex-place">
+                        <label><span>Country</span><select id="ex-country">${COUNTRIES.map(([c, n]) => `<option value="${c}"${c === N.place.country ? ' selected' : ''}>${n}</option>`).join('')}${COUNTRIES.some(c => c[0] === N.place.country) ? '' : `<option value="${esc(N.place.country)}" selected>${esc(N.place.country)}</option>`}</select></label>
+                        <label><span>City (optional)</span><input id="ex-city" value="${esc(N.place.city || '')}" placeholder="e.g. Lagos" maxlength="60" autocomplete="address-level2"></label>
+                        <button type="submit" class="chip">Update</button>
+                    </form>` : ''}
+                <div class="ex-news-bar"><span class="muted small">${kind === 'local' ? `Local headlines for ${esc(countryName(N.place.country))}` : 'Headlines'} · tap a story to read it on the publisher’s site</span>${listen}</div>
+            </section>
+            ${newsSection(kind, false)}`;
+    }
     const TILE_TINTS = [['#4f46e5', '#a855f7'], ['#0f766e', '#22c55e'], ['#be123c', '#f97316'], ['#1d4ed8', '#06b6d4'], ['#7c2d12', '#eab308'], ['#6d28d9', '#ec4899']];
 
     const E = { tab: 'all', query: '', groups: null, groupsLoading: false };
@@ -182,6 +302,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const q = E.query;
 
         const sections = [];
+        if (tab === 'news') {
+            return `
+                <div class="explore">
+                    <nav class="ex-tabs" role="tablist" aria-label="Show">
+                        ${TABS.map(([k, l]) => `<button type="button" class="cm-filter" role="tab" aria-selected="${tab === k}" data-action="ex-tab" data-tab="${k}">${l}</button>`).join('')}
+                    </nav>
+                    ${newsTab()}
+                </div>`;
+        }
         if (show('live')) {
             sections.push(`<section class="ex-sec">${head('i-live', 'Live now', 'Friends broadcasting right now')}<div class="ex-row ex-lives">${liveCards()}</div></section>`);
         }
@@ -196,6 +325,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${loading ? `<div class="ex-grid">${'<span class="ex-tile skel"></span>'.repeat(6)}</div>`
                     : list.length ? `<div class="ex-grid">${list.map((p, i) => postTile(p, i)).join('')}</div>`
                     : '<div class="ex-empty small"><strong>No posts yet</strong><span>When friends share entries, the most loved ones show up here.</span></div>'}</section>`);
+        }
+        if (tab === 'all') {
+            sections.push(newsSection('world', true));
+            sections.push(newsSection('local', true));
         }
         if (show('reels') && (reels.length || tab === 'reels')) {
             sections.push(`<section class="ex-sec">${head('i-reel', 'Popular reels', 'Short videos your friends are watching',
@@ -249,7 +382,29 @@ document.addEventListener('DOMContentLoaded', () => {
         I.hydrateStorage(body);
     });
 
+    content.addEventListener('submit', e => {
+        const form = e.target.closest('form[data-form="ex-place"]');
+        if (!form) return;
+        e.preventDefault();
+        N.place = { country: $id('ex-country').value, city: $id('ex-city').value.trim().slice(0, 60) };
+        try { localStorage.setItem('diaryNewsPlace', JSON.stringify(N.place)); } catch (err) {}
+        app.render();
+    });
+    const $id = id => document.getElementById(id);
+
     Object.assign(app.actions, {
+        'ex-news-kind': el => { N.kind = el.dataset.kind; app.render(); },
+        'ex-news-open': el => { E.tab = 'news'; N.kind = el.dataset.kind; app.render(); document.querySelector('.main-col').scrollTo({ top: 0 }); },
+        'ex-news-retry': () => {
+            [...N.results.keys()].forEach(k => { const v = N.results.get(k); if (v.error || !v.items) N.results.delete(k); });
+            app.render();
+        },
+        'ex-news-listen': () => {
+            const entry = N.results.get(JSON.stringify(newsRequest(N.kind)));
+            if (!entry || !entry.items || !window.Speak) return;
+            const lines = entry.items.slice(0, 10).map(i => `${i.title}. From ${i.source}.`).join(' ');
+            window.Speak.read(`Here are the latest headlines. ${lines}`, { title: `${(NEWS_KINDS.find(k => k[0] === N.kind) || ['', 'News'])[1]} headlines` });
+        },
         'ex-tab': el => {
             E.tab = el.dataset.tab;
             E.query = '';

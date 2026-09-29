@@ -205,6 +205,8 @@ document.addEventListener('DOMContentLoaded', () => {
     app.hooks.afterRender = view => {
         // An open conversation takes the whole phone screen (see .chat-open in style.css)
         document.body.classList.toggle('chat-open', view === 'messages' && signedIn() && !!s.activeFriend);
+        if (view === 'messages' && window.LiveLocation) window.LiveLocation.hydrate(content);
+        if (view === 'messages' && s.activeFriend && window.ChatWallpaper) window.ChatWallpaper.apply(document.getElementById('chat-thread'), 'dm:' + s.activeFriend);
         if (view === 'home') paintPresence();
         if (view === 'feed') {
             hydrateStorage(content);
@@ -658,6 +660,23 @@ document.addEventListener('DOMContentLoaded', () => {
     app.onRefresh('feed', refreshFeed);
     app.onRefresh('explore', refreshFeed);
 
+    // Share your live location in the open chat (location.js does the map, updates and stopping)
+    async function shareLocationInChat() {
+        const friendId = s.activeFriend;
+        if (!friendId || !window.LiveLocation) return;
+        const att = await window.LiveLocation.share({ peer: friendId });
+        if (!att) return;
+        const { data, error } = await client.from('diary_messages').insert({ recipient: friendId, body: '', attachments: [att] }).select().single();
+        if (error) {
+            window.LiveLocation.stop(att.id);
+            return app.showToast('Couldn’t share your location — try again');
+        }
+        (s.threads[friendId] = s.threads[friendId] || []).push(data);
+        s.last[friendId] = data;
+        appendMessage(data);
+        updateConvoRow(friendId);
+    }
+
     async function markRead(friendId) {
         if (!s.unread[friendId]) return;
         s.unread[friendId] = 0;
@@ -1073,6 +1092,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (typing) typing.insertAdjacentHTML('beforebegin', messageHTML(m, prev));
         else threadEl.insertAdjacentHTML('beforeend', messageHTML(m, prev));
         hydrateStorage(threadEl);
+        if (window.LiveLocation) window.LiveLocation.hydrate(threadEl);
         const fresh = threadEl.querySelector(`[data-msg="${m.id}"]`);
         if (fresh) fresh.classList.add('pop-in');
         if (nearBottom || m.sender === s.profile.id) {
@@ -1333,12 +1353,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Refresh one conversation row without re-rendering the whole inbox (keeps the composer intact)
     function updateConvoRow(friendId) {
-        const row = content.querySelector(`.convo[data-id="${CSS.escape(friendId)}"]`);
+        const row = content.querySelector(`.convo-wrap[data-wrap="${CSS.escape(friendId)}"]`);
         const friend = s.friends.find(f => f.id === friendId);
         if (!row || !friend) return;
         row.outerHTML = convoRow(friend);
         const list = content.querySelector('.convo-list');
-        const fresh = content.querySelector(`.convo[data-id="${CSS.escape(friendId)}"]`);
+        const fresh = content.querySelector(`.convo-wrap[data-wrap="${CSS.escape(friendId)}"]`);
         if (list && fresh) list.prepend(fresh);
         paintPresence();
     }
@@ -2631,6 +2651,28 @@ document.addEventListener('DOMContentLoaded', () => {
         if (counter) counter.textContent = `${index + 1}/${track.children.length}`;
     }, true);
 
+    // Zoom into a post's photos: every photo of that post, starting from the one you touched.
+    // The viewer handles pinch / double-tap / wheel zoom, so the feed itself never zooms or jumps.
+    function openZoom(slide, opts = {}) {
+        const media = slide.closest('.post-media');
+        const slides = media ? [...media.querySelectorAll('.slide')] : [slide];
+        const urls = slides.map(sl => (s.urls.get(`${sl.dataset.bucket}:${sl.dataset.img}`) || {}).url).filter(Boolean);
+        const index = Math.max(0, slides.indexOf(slide));
+        if (!urls.length) return;
+        const caption = media && media.closest('[data-post]') ? '' : '';
+        Media.lightbox(urls[index] || urls[0], caption, { sources: urls, index, origin: slide.querySelector('img'), ...opts });
+    }
+
+    // Two fingers on a feed photo: open the zoom viewer instead of zooming the whole page
+    document.addEventListener('touchstart', e => {
+        if (e.touches.length !== 2) return;
+        const slide = e.target.closest && e.target.closest('.post-media .slide');
+        if (!slide || (window.ZoomViewer && window.ZoomViewer.isOpen())) return;
+        e.preventDefault();
+        clearTimeout(s.photoTap);
+        openZoom(slide);
+    }, { passive: false });
+
     // Double-tap / double-click a photo to like it
     content.addEventListener('dblclick', e => {
         const media = e.target.closest('.post-media');
@@ -3132,15 +3174,18 @@ document.addEventListener('DOMContentLoaded', () => {
         const unread = s.unread[f.id];
         const mine = m && m.sender === s.profile.id;
         const preview = m ? `${mine ? 'You: ' : ''}${previewOf(m)}` : 'Say hello 👋';
+        // The row opens the chat; the phone beside it starts a voice call straight from the inbox
         return `
-            <button class="convo${f.id === s.activeFriend ? ' active' : ''}${unread ? ' unread' : ''}" data-action="open-chat" data-id="${esc(f.id)}"
-                data-search="${esc(`${f.display_name} ${f.username}`.toLowerCase())}">
-                ${avatar(f, 'md')}
-                <span class="convo-main">
-                    <span class="convo-top"><strong>${esc(f.display_name)}</strong>${m ? `<time>${shortTime(m.created_at)}</time>` : ''}</span>
-                    <span class="convo-bottom">${mine && !m.deleted_at ? `<span class="convo-ticks${m.read_at ? ' read' : ''}" aria-label="${m.read_at ? 'Read' : 'Sent'}"><svg class="i"><use href="#i-checks"/></svg></span>` : ''}<span class="convo-preview">${esc(preview)}</span>${unread ? `<span class="badge">${unread}</span>` : ''}</span>
-                </span>
-            </button>`;
+            <div class="convo-wrap" data-wrap="${esc(f.id)}" data-search="${esc(`${f.display_name} ${f.username}`.toLowerCase())}">
+                <button class="convo${f.id === s.activeFriend ? ' active' : ''}${unread ? ' unread' : ''}" data-action="open-chat" data-id="${esc(f.id)}">
+                    ${avatar(f, 'md')}
+                    <span class="convo-main">
+                        <span class="convo-top"><strong>${esc(f.display_name)}</strong>${m ? `<time>${shortTime(m.created_at)}</time>` : ''}</span>
+                        <span class="convo-bottom">${mine && !m.deleted_at ? `<span class="convo-ticks${m.read_at ? ' read' : ''}" aria-label="${m.read_at ? 'Read' : 'Sent'}"><svg class="i"><use href="#i-checks"/></svg></span>` : ''}<span class="convo-preview">${esc(preview)}</span>${unread ? `<span class="badge">${unread}</span>` : ''}</span>
+                    </span>
+                </button>
+                ${window.diaryCalls ? `<button type="button" class="convo-call" data-action="call-friend" data-id="${esc(f.id)}" aria-label="Voice call ${esc(f.display_name)}" title="Voice call"><svg class="i"><use href="#i-phone"/></svg></button>` : ''}
+            </div>`;
     }
 
     function previewOf(m) {
@@ -3150,6 +3195,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const a = (m.attachments || [])[0];
         if (!a) return '';
         if (a.kind === 'audio') return '🎤 Voice note';
+        if (a.kind === 'location') return '📍 Live location';
         if (a.kind === 'image' || a.kind === 'drawing') return '📷 Photo';
         return `📎 ${a.name}`;
     }
@@ -3168,6 +3214,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="friend-name">${esc(friend.display_name)}<small data-status="${esc(friend.id)}" data-away="@${esc(friend.username)}">${s.online.has(friend.id) ? 'Active now' : `@${esc(friend.username)}`}</small></div>
                 ${window.diaryCalls ? `<button class="icon-btn accent" data-action="call-friend" data-id="${esc(friend.id)}" aria-label="Voice call ${esc(friend.display_name)}" title="Voice call"><svg class="i"><use href="#i-phone"/></svg></button>` : ''}
                 <button class="icon-btn refresh-btn" data-action="chat-refresh" aria-label="Refresh this chat" title="Refresh"><svg class="i"><use href="#i-refresh"/></svg></button>
+                <button class="icon-btn" data-action="chat-wallpaper" aria-label="Chat wallpaper" title="Wallpaper"><svg class="i"><use href="#i-palette"/></svg></button>
                 <button class="icon-btn" data-action="toggle-info" aria-pressed="${s.showInfo}" aria-label="Contact details" title="Contact details"><svg class="i"><use href="#i-info"/></svg></button>
             </header>
             <div class="chat-thread" id="chat-thread">${body}</div>
@@ -3245,7 +3292,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 <span>${quoted ? esc(previewOf(quoted)) : 'Tap to find it'}</span>
             </button>` : '';
         const body = m.body ? `<div class="msg-body rich-content">${Rich.sanitize(m.body)}</div>` : '';
-        const atts = (m.attachments || []).map(attachmentHTML).join('');
+        const atts = (m.attachments || []).map(a => (a && a.kind === 'location'
+            ? (window.LiveLocation ? window.LiveLocation.cardHTML(a, { mine, person: mine ? s.profile : friend }) : '<p>📍 Live location</p>')
+            : attachmentHTML(a))).join('');
         const onlyEmoji = !atts && /^\p{Extended_Pictographic}(\u200d?\p{Extended_Pictographic}|\ufe0f|\s){0,6}$/u.test(Rich.toText(m.body || '').trim());
         const reactions = Object.entries(m.reactions || {}).filter(([, users]) => Array.isArray(users) && users.length);
         return `${sep}
@@ -3435,6 +3484,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const key = `entry:${post.id}`;
             const common = [
                 ...(s.detail === key ? [] : [{ label: 'Open post', icon: 'i-chat', onClick: () => openPost(key) }]),
+                ...(window.Speak && window.Speak.supported ? [{ label: 'Listen (read aloud)', icon: 'i-volume', onClick: () => {
+                    const who = post.author === s.profile.id ? 'your post' : `${(post.author_profile && post.author_profile.display_name) || 'a friend'}’s post`;
+                    window.Speak.read([post.title, post.body].filter(Boolean).join('. '), { title: post.title || who });
+                } }] : []),
                 { label: 'Copy text', icon: 'i-file', onClick: async () => {
                     try {
                         await navigator.clipboard.writeText([post.title, post.body].filter(Boolean).join('\n\n'));
@@ -3505,14 +3558,18 @@ document.addEventListener('DOMContentLoaded', () => {
         'go-notes': () => app.setView('home'),
         'tag-insert': el => insertTag(el),
         'chat-refresh': () => refreshChat(),
+        'chat-wallpaper': () => {
+            const friend = s.friends.find(f => f.id === s.activeFriend);
+            if (!friend || !window.ChatWallpaper) return;
+            window.ChatWallpaper.open('dm:' + friend.id, { label: friend.display_name, onDone: () => window.ChatWallpaper.apply(document.getElementById('chat-thread'), 'dm:' + friend.id) });
+        },
         'vc-send': () => finishVoiceComment(true),
         'vc-cancel': () => finishVoiceComment(false),
         'comment-delete': el => deleteComment(el.dataset.key, el.dataset.id),
         // In the post view a photo opens full screen; on a card one tap opens the post (a double tap likes it instead)
         'post-photo': el => {
             if (el.closest('#post-view') || !el.dataset.key) {
-                const entry = s.urls.get(`${el.dataset.bucket}:${el.dataset.img}`);
-                if (entry) Media.lightbox(entry.url);
+                openZoom(el);
                 return;
             }
             clearTimeout(s.photoTap);
@@ -3621,6 +3678,7 @@ document.addEventListener('DOMContentLoaded', () => {
             { label: 'Document', icon: 'i-file', onClick: async () => addPending(await Media.pickFiles(DOC_ACCEPT)) },
             { label: 'Voice note', icon: 'i-mic', onClick: () => startVoice(0, true) },
             { label: 'Drawing', icon: 'i-draw', onClick: drawForChat },
+            ...(window.LiveLocation && window.LiveLocation.supported ? [{ label: 'Live location', icon: 'i-pin', onClick: shareLocationInChat }] : []),
             { label: s.showFormat ? 'Hide text formatting' : 'Text formatting', icon: 'i-edit', onClick: () => {
                 s.showFormat = !s.showFormat;
                 $('chat-toolbar').hidden = !s.showFormat;
@@ -3705,7 +3763,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target.id === 'chat-search') {
             // Filter rows in place so typing isn't interrupted by a re-render
             const q = e.target.value.trim().toLowerCase();
-            content.querySelectorAll('.convo[data-search]').forEach(row => {
+            content.querySelectorAll('.convo-wrap[data-search]').forEach(row => {
                 row.hidden = !!q && !row.dataset.search.includes(q);
             });
         }

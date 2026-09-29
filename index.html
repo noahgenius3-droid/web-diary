@@ -18,8 +18,11 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=30">
-    <link rel="stylesheet" href="photoedit.css?v=30">
+    <link rel="stylesheet" href="style.css?v=33">
+    <link rel="stylesheet" href="photoedit.css?v=33">
+    <link rel="stylesheet" href="speak.css?v=33">
+    <link rel="stylesheet" href="zoom.css?v=33">
+    <link rel="stylesheet" href="location.css?v=33">
     <script>
         // Apply saved theme before paint to avoid a flash
         try {
@@ -28,14 +31,23 @@
                 document.documentElement.dataset.theme = t;
                 document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute('content', t === 'dark' ? '#09090b' : '#ffffff'));
             }
-            // Settings → accent colour, text size, reduce motion
-            const prefs = { accent: 'diaryAccent', text: 'diaryTextSize', motion: 'diaryMotion' };
+            // Settings → accent colour, background colour, text size, reduce motion
+            const prefs = { accent: 'diaryAccent', bg: 'diaryBackground', text: 'diaryTextSize', motion: 'diaryMotion' };
             for (const k in prefs) {
                 const v = localStorage.getItem(prefs[k]);
                 if (v) document.documentElement.dataset[k] = v;
             }
         } catch (e) {}
     </script>
+    <style>
+        /* The splash fills the whole screen from the very first frame — edge to edge, under the notch and the
+           home bar — before the main stylesheet has even finished loading */
+        html:has(#splash), html:has(#splash) body { background: #09090b; }
+        #splash { position: fixed; inset: 0; z-index: 10000; box-sizing: border-box; width: 100%; height: 100vh; height: 100dvh; min-height: -webkit-fill-available; margin: 0; background: var(--bg, #09090b); }
+        @media (prefers-color-scheme: light) { html:not([data-theme="dark"]):has(#splash), html:not([data-theme="dark"]):has(#splash) body, html:not([data-theme="dark"]) #splash { background: var(--bg, #ffffff); } }
+        html[data-theme="light"]:has(#splash), html[data-theme="light"]:has(#splash) body, html[data-theme="light"] #splash { background: var(--bg, #ffffff); }
+        html:has(#splash) { overflow: hidden; }
+    </style>
 </head>
 <body>
     <!-- Splash: plays while the app starts, then lifts away (see the end of this file) -->
@@ -680,23 +692,29 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
-    <script src="config.js?v=30"></script>
-    <script src="rich.js?v=30"></script>
-    <script src="media.js?v=30"></script>
-    <script src="dilute.js?v=30"></script>
-    <script src="script.js?v=30"></script>
-    <script src="social.js?v=30"></script>
-    <script src="stories.js?v=30"></script>
-    <script src="library.js?v=30"></script>
-    <script src="community.js?v=30"></script>
-    <script src="live.js?v=30"></script>
-    <script src="explore.js?v=30"></script>
-    <script src="call.js?v=30"></script>
-    <script src="notify.js?v=30"></script>
-    <script src="settings.js?v=30"></script>
-    <script src="transcribe.js?v=30"></script>
-    <script src="ai.js?v=30"></script>
-    <script src="photoedit.js?v=30"></script>
+    <script src="config.js?v=33"></script>
+    <script src="rich.js?v=33"></script>
+    <script src="media.js?v=33"></script>
+    <script src="wallpaper.js?v=33"></script>
+    <script src="dilute.js?v=33"></script>
+    <script src="script.js?v=33"></script>
+    <script src="social.js?v=33"></script>
+    <script src="sync.js?v=33"></script>
+    <script src="stories.js?v=33"></script>
+    <script src="library.js?v=33"></script>
+    <script src="community.js?v=33"></script>
+    <script src="groupchat.js?v=33"></script>
+    <script src="live.js?v=33"></script>
+    <script src="explore.js?v=33"></script>
+    <script src="call.js?v=33"></script>
+    <script src="notify.js?v=33"></script>
+    <script src="settings.js?v=33"></script>
+    <script src="transcribe.js?v=33"></script>
+    <script src="ai.js?v=33"></script>
+    <script src="photoedit.js?v=33"></script>
+    <script src="speak.js?v=33"></script>
+    <script src="zoom.js?v=33"></script>
+    <script src="location.js?v=33"></script>
     <script>
         // Lift the splash once the first screen is drawn — after its intro has had time to play, never longer than 4s
         (function () {

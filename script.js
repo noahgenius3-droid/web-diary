@@ -1,5 +1,5 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const COLORS = ['yellow', 'pink', 'blue', 'green', 'purple'];
+    const COLORS = ['yellow', 'pink', 'blue', 'green', 'purple', 'orange', 'coral', 'teal', 'sky', 'lime', 'gray'];
     const MOODS = { happy: '😊', calm: '😌', thoughtful: '🤔', sad: '😔', stressed: '😤' };
     const MOOD_LABELS = { happy: 'Happy', calm: 'Calm', thoughtful: 'Thoughtful', sad: 'Sad', stressed: 'Stressed' };
     const EMOTIONS = ['Grateful', 'Joyful', 'Excited', 'Proud', 'Loved', 'Hopeful', 'Content', 'Relaxed',
@@ -71,10 +71,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const askDialog = $('ask');
     const askInput = $('ask-input');
 
-    let notes = [].concat(load('diaryNotes', [])).map(migrateNote).filter(Boolean);
-    let folders = [].concat(load('diaryFolders', []))
+    // Each account keeps its own notes on this device ("diaryNotes:<user id>"); notes written while signed out
+    // live under "diaryNotes". Start with whoever was signed in last, so nobody else's notes flash on screen.
+    let owner = load('diaryOwner', null) || null;
+    const noteKey = () => (owner ? `diaryNotes:${owner}` : 'diaryNotes');
+    const folderKey = () => (owner ? `diaryFolders:${owner}` : 'diaryFolders');
+    const cleanFolders = list => [].concat(list || [])
         .filter(f => f && f.id && typeof f.name === 'string')
         .map((f, i) => ({ ...f, color: COLORS.includes(f.color) ? f.color : COLORS[i % COLORS.length] }));
+    let notes = [].concat(load(noteKey(), [])).map(migrateNote).filter(Boolean);
+    let folders = cleanFolders(load(folderKey(), []));
     let userName = String(load('diaryUser', ''));
     sortNotes();
 
@@ -213,7 +219,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 { cmd: 'file', label: 'Attach a file', icon: 'i-paperclip', run: () => pickAndAdd('') },
                 { cmd: 'voice', label: 'Record a voice note', icon: 'i-mic', run: recordVoiceNote },
                 { cmd: 'dictate', label: 'Speak to type', icon: 'i-wave', run: () => window.diaryTranscribe && window.diaryTranscribe.open('insert') },
-                { cmd: 'draw', label: 'Handwrite or draw', icon: 'i-draw', run: drawNote }
+                { cmd: 'draw', label: 'Handwrite or draw', icon: 'i-draw', run: drawNote },
+                // Read the note aloud (female or male voice — see Settings → Appearance)
+                { cmd: 'listen', label: 'Listen: read this note aloud', icon: 'i-volume', run: () => {
+                    if (!window.Speak || !window.Speak.supported) return showToast('Reading aloud isn’t supported in this browser');
+                    if (window.Speak.isSpeaking()) return window.Speak.stop();
+                    const text = [edTitle.value, Rich.toText(edBody.innerHTML)].filter(s => s && s.trim()).join('. ');
+                    if (!text.trim()) return showToast('Write something first');
+                    window.Speak.read(text, { title: edTitle.value || 'Your note' });
+                } }
             ]
         });
 
@@ -349,27 +363,19 @@ document.addEventListener('DOMContentLoaded', () => {
             const p = e.touches[0];
             const dx = p.clientX - t.x;
             const dy = p.clientY - t.y;
-            if (!t.axis && (Math.abs(dx) > 12 || Math.abs(dy) > 12)) t.axis = Math.abs(dx) > Math.abs(dy) * 1.4 ? 'x' : 'y';
+            // Decide once, and only for a clearly sideways swipe: any vertical movement means you're scrolling,
+            // and the page stays exactly where it is (it never drifts or tilts under your finger)
+            if (!t.axis && (Math.abs(dx) > 24 || Math.abs(dy) > 10)) t.axis = Math.abs(dx) > 24 && Math.abs(dx) > Math.abs(dy) * 2.2 ? 'x' : 'y';
             if (t.axis !== 'x') return;
-            const i = ORDER.indexOf(state.view);
-            const edge = (dx > 0 && i === 0) || (dx < 0 && i === ORDER.length - 1);
             t.dx = dx;
-            // The page follows your finger a little (and resists at the first / last tab)
-            content.style.transition = 'none';
-            content.style.transform = `translateX(${dx * (edge ? 0.08 : 0.22)}px)`;
-            content.style.opacity = String(1 - Math.min(0.35, Math.abs(dx) / 900));
         }, { passive: true });
         const end = () => {
             if (!t) return;
             const { axis, dx, at } = t;
             t = null;
-            content.style.transition = 'transform 220ms var(--ease-out), opacity 220ms';
-            content.style.transform = '';
-            content.style.opacity = '';
-            setTimeout(() => { content.style.transition = ''; }, 240);
             if (axis !== 'x') return;
-            const fast = Math.abs(dx) / Math.max(1, Date.now() - at) > 0.5;
-            if (Math.abs(dx) < 80 && !(fast && Math.abs(dx) > 40)) return;
+            const fast = Math.abs(dx) / Math.max(1, Date.now() - at) > 0.6;
+            if (Math.abs(dx) < 90 && !(fast && Math.abs(dx) > 50)) return;
             const next = ORDER[ORDER.indexOf(state.view) + (dx < 0 ? 1 : -1)];
             if (!next) return;
             if (navigator.vibrate) navigator.vibrate(6);
@@ -968,7 +974,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Photo memories ----------
     // ---------- Highlights ----------
-    const HL_COLOURS = { yellow: 'Yellow', green: 'Green', pink: 'Pink', blue: 'Blue' };
+    const HL_COLOURS = { yellow: 'Yellow', green: 'Green', pink: 'Pink', blue: 'Blue', orange: 'Orange', purple: 'Purple' };
 
     // Every highlighted passage across your notes, plus the "Daily highlights" you wrote in evening entries
     function allHighlights() {
@@ -2619,6 +2625,10 @@ document.addEventListener('DOMContentLoaded', () => {
         render, setView, setTitle, showToast, ask, askLink, openPopover, closePopover, setPin, exportData, isDark,
         pushRoute, onRoute: fn => routeListeners.push(fn),
         onRefresh: (view, fn) => { refreshers[view] = fn; }, refresh: refreshView,
+        // Accounts and backup (sync.js)
+        switchAccount, looseNotes, adoptLooseNotes, importNotes,
+        getFolders: () => folders,
+        owner: () => owner,
         escapeHTML, initials, shortDate, dayLabel, dayKey, renameUser, fullText,
         // The AI assistant reads and writes the open entry through this
         editorApi: {
@@ -2647,11 +2657,63 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function persist() {
         try {
-            localStorage.setItem('diaryNotes', JSON.stringify(notes));
-            localStorage.setItem('diaryFolders', JSON.stringify(folders));
+            localStorage.setItem(noteKey(), JSON.stringify(notes));
+            localStorage.setItem(folderKey(), JSON.stringify(folders));
         } catch (e) {
             showToast('Could not save — storage unavailable');
         }
+        emit('saved');
+    }
+
+    // ---------- Accounts on this device ----------
+    // Signing in shows that account's notes; signing out hides them again (they stay backed up and on this device)
+    function switchAccount(uid) {
+        uid = uid || null;
+        if (uid === owner) return false;
+        persist();
+        owner = uid;
+        try { localStorage.setItem('diaryOwner', JSON.stringify(owner)); } catch (e) {}
+        notes = [].concat(load(noteKey(), [])).map(migrateNote).filter(Boolean);
+        folders = cleanFolders(load(folderKey(), []));
+        sortNotes();
+        privateUnlocked = false;
+        render();
+        return true;
+    }
+
+    // Notes written on this device before signing in (not yet part of any account)
+    function looseNotes() {
+        return owner ? [].concat(load('diaryNotes', [])).map(migrateNote).filter(Boolean) : [];
+    }
+
+    function adoptLooseNotes() {
+        if (!owner) return 0;
+        const loose = looseNotes();
+        const have = new Set(notes.map(n => n.id));
+        const added = loose.filter(n => !have.has(n.id));
+        notes.push(...added);
+        const folderIds = new Set(folders.map(f => f.id));
+        folders.push(...cleanFolders(load('diaryFolders', [])).filter(f => !folderIds.has(f.id)));
+        try {
+            localStorage.removeItem('diaryNotes');
+            localStorage.removeItem('diaryFolders');
+        } catch (e) {}
+        sortNotes();
+        persist();
+        render();
+        return added.length;
+    }
+
+    // The backup brings notes from the account: add or replace some, remove others
+    function importNotes({ upserts = [], removeIds = [], folderList = null } = {}) {
+        const byId = new Map(notes.map(n => [n.id, n]));
+        upserts.map(migrateNote).filter(Boolean).forEach(n => byId.set(n.id, n));
+        removeIds.forEach(id => byId.delete(id));
+        notes = [...byId.values()];
+        if (folderList) folders = cleanFolders(folderList);
+        sortNotes();
+        persist();
+        render();
     }
 
     // Upgrades entries saved by earlier versions (plain text, no journal fields)

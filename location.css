@@ -1,0 +1,481 @@
+/* ============================================================
+   Cordial — live location sharing (location.js)
+   ============================================================ */
+
+.ll-i { width: 16px; height: 16px; flex-shrink: 0; }
+
+/* ---------- chat card ---------- */
+.ll-card {
+    width: 260px;
+    max-width: 100%;
+    border-radius: 14px;
+    overflow: hidden;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    text-align: left;
+    isolation: isolate;
+}
+
+.ll-map {
+    position: relative;
+    height: 140px;
+    overflow: hidden;
+    background: var(--input);
+    /* faint street-grid while tiles load */
+    background-image:
+        linear-gradient(var(--border) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 32px 32px;
+}
+
+.ll-tiles {
+    position: absolute;
+    width: 768px;
+    height: 512px;
+    transition: left 0.9s var(--ease-out, ease-out), top 0.9s var(--ease-out, ease-out);
+    will-change: left, top;
+}
+.ll-tiles.ll-jump { transition: none; }
+
+.ll-tile {
+    position: absolute;
+    width: 256px;
+    height: 256px;
+    max-width: none;
+    user-select: none;
+    -webkit-user-drag: none;
+    pointer-events: none;
+}
+
+.ll-map-hit {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    cursor: pointer;
+    z-index: 3;
+    -webkit-tap-highlight-color: transparent;
+}
+.ll-map-hit:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; border-radius: 14px 14px 0 0; }
+
+.ll-attrib {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    z-index: 4;
+    padding: 1px 6px;
+    font-size: 9.5px;
+    line-height: 1.5;
+    color: #333;
+    background: rgba(255, 255, 255, 0.78);
+    border-top-left-radius: 6px;
+    text-decoration: none;
+}
+
+/* ---------- avatar pin (centred on the map) ---------- */
+.ll-card .ll-pin {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    z-index: 2;
+    /* tip of the pin sits on the exact point */
+    transform: translate(-50%, -100%);
+}
+.ll-pin {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 44px;
+    height: 46px;           /* head 40 + diamond tip; bottom edge = the exact point */
+    pointer-events: none;
+}
+.ll-pin-head {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 3px var(--surface), 0 4px 12px rgba(0, 0, 0, 0.28);
+}
+.ll-pin-head .avatar { width: 34px; height: 34px; font-size: 0.72rem; margin: 0; }
+.ll-pin-head .avatar .presence-dot { display: none !important; }
+.ll-pin-dot { display: grid; place-items: center; color: var(--on-accent); }
+.ll-pin-dot .ll-i { width: 20px; height: 20px; }
+.ll-pin-tip {
+    width: 12px;
+    height: 12px;
+    margin-top: -8px;
+    background: var(--accent);
+    transform: rotate(45deg);
+    border-radius: 2px;
+    box-shadow: 2px 2px 0 1px var(--surface);
+}
+.ll-ring {
+    position: absolute;
+    left: 50%;
+    bottom: -14px;
+    width: 28px;
+    height: 28px;
+    margin-left: -14px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--accent) 30%, transparent);
+    border: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+    animation: ll-pulse 2.4s cubic-bezier(0.2, 0.7, 0.3, 1) infinite;
+    opacity: 0;
+}
+.ll-ring-2 { animation-delay: 1.2s; }
+
+@keyframes ll-pulse {
+    0% { transform: scale(0.35); opacity: 0.9; }
+    100% { transform: scale(2.6); opacity: 0; }
+}
+
+/* ---------- text ---------- */
+.ll-body { padding: 10px 12px 12px; }
+
+.ll-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    font-size: 0.9rem;
+    line-height: 1.3;
+}
+.ll-live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: #1f9d55;
+    box-shadow: 0 0 0 3px color-mix(in srgb, #1f9d55 22%, transparent);
+}
+.ll-title { font-weight: 700; white-space: nowrap; }
+.ll-until {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+.ll-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 6px;
+    margin-top: 2px;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+.ll-meta .ll-dist:not(:empty)::before { content: '·'; margin-right: 6px; color: var(--text-faint); }
+.ll-meta .ll-updated:empty + .ll-dist::before { content: none; }
+
+.ll-actions { display: flex; gap: 8px; margin-top: 10px; }
+.ll-actions .ll-btn { flex: 1 1 0; }
+
+/* ---------- buttons ---------- */
+.ll-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 44px;
+    padding: 0 14px;
+    border-radius: 12px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.86rem;
+    font-weight: 700;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: background-color 0.15s, border-color 0.15s, transform 0.12s var(--ease-out, ease-out);
+}
+.ll-card .ll-btn { min-height: 38px; padding: 0 10px; font-size: 0.82rem; border-radius: 10px; }
+.ll-btn:active { transform: scale(0.97); }
+.ll-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ll-btn[hidden] { display: none; }
+.ll-btn[aria-disabled="true"], .ll-btn:disabled { opacity: 0.55; pointer-events: none; }
+.ll-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.ll-btn-ghost { background: transparent; border-color: transparent; color: var(--text-muted); }
+.ll-btn-stop { color: var(--danger, #c0392b); border-color: color-mix(in srgb, var(--danger, #c0392b) 40%, var(--border)); }
+
+@media (hover: hover) and (pointer: fine) {
+    .ll-btn:hover { background: var(--panel); }
+    .ll-btn-primary:hover { background: var(--accent-hover, var(--accent)); filter: brightness(1.05); }
+    .ll-btn-ghost:hover { background: var(--input); color: var(--text); }
+    .ll-btn-stop:hover { background: color-mix(in srgb, var(--danger, #c0392b) 8%, var(--surface)); }
+    .ll-map-hit:hover { background: rgba(255, 255, 255, 0.06); }
+    .ll-option:hover { border-color: var(--border-strong); }
+    .ll-round:hover { background: var(--panel); }
+    .ll-attrib:hover { text-decoration: underline; }
+}
+
+/* ---------- ended ---------- */
+.ll-card.ll-ended .ll-tiles,
+.ll-card.ll-ended .ll-pin { filter: grayscale(1); opacity: 0.6; }
+.ll-card.ll-ended .ll-ring,
+.ll-full.ll-ended .ll-ring,
+.ll-leaf-icon.ll-ended .ll-ring { display: none; }
+.ll-card.ll-ended .ll-live-dot,
+.ll-full.ll-ended .ll-live-dot { background: var(--text-faint); box-shadow: none; }
+.ll-card.ll-ended .ll-title { color: var(--text-muted); }
+.ll-leaf-icon.ll-ended { filter: grayscale(1); opacity: 0.7; }
+
+/* ---------- dialogs: shared ---------- */
+dialog.ll-picker:not([open]),
+dialog.ll-full:not([open]) { display: none; }
+
+/* ---------- duration picker ---------- */
+dialog.ll-picker {
+    width: min(400px, calc(100vw - 32px));
+    max-height: calc(100dvh - 32px);
+    border-radius: var(--radius, 16px);
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: var(--shadow-lg);
+    padding: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+}
+.ll-picker-body { display: flex; flex-direction: column; padding: 24px 20px 20px; margin: 0; }
+.ll-picker-icon {
+    display: grid;
+    place-items: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    margin-bottom: 12px;
+}
+.ll-picker-icon .ll-i { width: 24px; height: 24px; }
+.ll-picker-title { margin: 0 0 6px; font-size: 1.15rem; line-height: 1.3; }
+.ll-picker-copy { margin: 0 0 16px; color: var(--text-muted); font-size: 0.9rem; line-height: 1.5; text-wrap: pretty; }
+
+.ll-options { display: grid; gap: 8px; }
+.ll-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 48px;
+    padding: 0 14px;
+    border-radius: 12px;
+    border: 1.5px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: border-color 0.15s, background-color 0.15s;
+}
+.ll-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ll-option[aria-checked="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.ll-option:disabled { opacity: 0.6; cursor: default; }
+.ll-check {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1.5px solid var(--border-strong);
+    color: transparent;
+}
+.ll-check .ll-i { width: 14px; height: 14px; stroke-width: 3; }
+.ll-option[aria-checked="true"] .ll-check { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+
+.ll-picker-status { margin: 12px 0 0; min-height: 1.3em; font-size: 0.85rem; color: var(--text-muted); }
+.ll-picker-status:empty { min-height: 0; margin: 0; }
+.ll-picker.ll-busy .ll-picker-status::before {
+    content: '';
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-right: 8px;
+    vertical-align: -1px;
+    border-radius: 50%;
+    border: 2px solid var(--border-strong);
+    border-top-color: var(--accent);
+    animation: ll-spin 0.8s linear infinite;
+}
+@keyframes ll-spin { to { transform: rotate(360deg); } }
+
+.ll-picker-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.ll-picker-actions .ll-btn-primary { min-width: 120px; }
+
+@media (max-width: 599px) {
+    /* bottom sheet on phones */
+    dialog.ll-picker {
+        width: 100%;
+        max-width: 100%;
+        margin: auto 0 0;
+        border-radius: 20px 20px 0 0;
+        max-height: calc(100dvh - 24px);
+    }
+    .ll-picker-body { padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px)); }
+    .ll-picker-actions .ll-btn { flex: 1 1 0; }
+}
+
+/* ---------- full map ---------- */
+dialog.ll-full {
+    width: min(1040px, calc(100vw - 48px));
+    height: min(760px, calc(100dvh - 48px));
+    max-width: none;
+    max-height: none;
+    padding: 0;
+    border-radius: 20px;
+    overflow: hidden;
+    background: var(--panel);
+    color: var(--text);
+    box-shadow: var(--shadow-lg);
+}
+dialog.ll-full[open] { display: block; }
+
+.ll-full-map { position: absolute; inset: 0; z-index: 0; background: var(--input); }
+.ll-full-fallback {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    text-align: center;
+    color: var(--text-muted);
+    z-index: 1;
+}
+.ll-full-fallback[hidden] { display: none; }
+
+.ll-full-top {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: calc(12px + env(safe-area-inset-top, 0px)) 0 0 calc(12px + env(safe-area-inset-left, 0px));
+}
+.ll-round {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: var(--shadow);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+.ll-round .ll-i { width: 20px; height: 20px; }
+.ll-round:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.ll-full-panel {
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 16px;
+    border-radius: 18px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-lg);
+    max-width: 640px;
+    margin: 0 auto;
+}
+.ll-full-who { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1 1 auto; }
+.ll-full-av { flex-shrink: 0; display: grid; place-items: center; color: var(--accent); }
+.ll-full-av .presence-dot { display: none !important; }
+.ll-full-text { min-width: 0; }
+.ll-full-title { margin: 0; font-size: 1rem; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ll-full-sub { margin: 2px 0 0; display: flex; align-items: center; gap: 6px; font-size: 0.85rem; font-weight: 600; }
+.ll-full-meta { margin: 2px 0 0; font-size: 0.8rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.ll-full-meta:empty { display: none; }
+.ll-full-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+@media (max-width: 599px) {
+    dialog.ll-full {
+        width: 100vw;
+        height: 100dvh;
+        max-width: 100vw;
+        max-height: 100dvh;
+        margin: 0;
+        inset: 0;
+        border-radius: 0;
+    }
+    .ll-full-panel {
+        left: 0;
+        right: 0;
+        bottom: 0;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+        border-radius: 20px 20px 0 0;
+        border-bottom: 0;
+        padding: 16px calc(16px + env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px));
+    }
+    .ll-full-actions .ll-btn { flex: 1 1 0; }
+}
+
+/* Leaflet bits */
+.ll-full .leaflet-container { font: inherit; background: var(--input); }
+.ll-full .leaflet-top.leaflet-right { top: env(safe-area-inset-top, 0px); right: env(safe-area-inset-right, 0px); }
+.ll-full .leaflet-control-zoom a { width: 36px; height: 36px; line-height: 36px; }
+.ll-full .leaflet-bottom.leaflet-right { bottom: auto; top: calc(96px + env(safe-area-inset-top, 0px)); }
+.ll-full .leaflet-control-attribution { font-size: 10px; border-radius: 6px 0 0 6px; }
+.ll-leaf-icon { background: none; border: 0; }
+.ll-leaf-icon .ll-pin { position: relative; }
+.ll-leaf-me { background: none; border: 0; }
+.ll-me-dot {
+    display: block;
+    width: 18px;
+    height: 18px;
+    margin: 2px;
+    border-radius: 50%;
+    background: #2f7cf6;
+    border: 3px solid #fff;
+    box-shadow: 0 0 0 6px rgba(47, 124, 246, 0.2), 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+.ll-full path.ll-acc { fill: var(--accent); fill-opacity: 0.12; stroke: var(--accent); stroke-opacity: 0.4; stroke-width: 1; }
+
+/* ---------- dark: dim the map tiles ---------- */
+:root[data-theme="dark"] .ll-tile,
+:root[data-theme="dark"] .ll-full .ll-osm {
+    filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.85) saturate(0.7);
+}
+:root[data-theme="dark"] .ll-attrib { color: #ddd; background: rgba(20, 22, 28, 0.78); }
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .ll-tile,
+    :root:not([data-theme="light"]) .ll-full .ll-osm {
+        filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.85) saturate(0.7);
+    }
+    :root:not([data-theme="light"]) .ll-attrib { color: #ddd; background: rgba(20, 22, 28, 0.78); }
+}
+
+/* ---------- reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+    .ll-ring { animation: none; opacity: 0.5; transform: scale(1.4); }
+    .ll-ring-2 { display: none; }
+    .ll-tiles { transition: none; }
+    .ll-picker.ll-busy .ll-picker-status::before { animation-duration: 2s; }
+}
+:root[data-motion="reduce"] .ll-ring { animation: none; opacity: 0.5; transform: scale(1.4); }
+:root[data-motion="reduce"] .ll-ring-2 { display: none; }
+:root[data-motion="reduce"] .ll-tiles { transition: none; }

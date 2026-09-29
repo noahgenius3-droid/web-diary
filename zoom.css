@@ -1,0 +1,312 @@
+/* ============================================================
+   Cordial — zoomable photo viewer (zoom.js)
+   Always dark: black stage, white controls. Every class is zv-*.
+   ============================================================ */
+
+dialog.zoom-viewer:not([open]) { display: none; }
+
+dialog.zoom-viewer {
+    --zv-ease: var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
+    --zv-fg: #fff;
+    --zv-chip: rgba(28, 28, 30, 0.62);
+    --zv-chip-hover: rgba(58, 58, 62, 0.78);
+    --zv-safe-t: env(safe-area-inset-top, 0px);
+    --zv-safe-b: env(safe-area-inset-bottom, 0px);
+    --zv-safe-l: env(safe-area-inset-left, 0px);
+    --zv-safe-r: env(safe-area-inset-right, 0px);
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--zv-fg);
+    overflow: hidden;
+    overscroll-behavior: contain;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    font-family: var(--font, system-ui, -apple-system, sans-serif);
+    color-scheme: dark;
+    outline: none;
+}
+/* Opt out of the app's generic dialog pop-in / shadow / blurred backdrop */
+dialog.zoom-viewer[open] { animation: none; transform: none; transition: none; box-shadow: none; }
+dialog.zoom-viewer::backdrop { background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; animation: none; }
+
+/* Black backdrop — opacity is driven from JS (open / drag-to-dismiss / close) */
+.zv-bg {
+    position: absolute;
+    inset: 0;
+    background: #000;
+    opacity: 0;
+    will-change: opacity;
+    pointer-events: none;
+}
+
+/* Full-viewport stage: nothing under it may scroll or zoom */
+.zv-stage {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    touch-action: none;
+    cursor: default;
+}
+.zv-stage.zv-can-pan { cursor: grab; }
+.zv-stage.zv-grabbing { cursor: grabbing; }
+
+.zv-track {
+    position: absolute;
+    inset: 0;
+    will-change: transform;
+}
+.zv-slide {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    contain: layout paint;
+}
+/* The single transformed wrapper per photo — translate3d + scale only */
+.zv-frame {
+    position: absolute;
+    left: 0;
+    top: 0;
+    transform-origin: 50% 50%;
+    will-change: transform;
+    backface-visibility: hidden;
+}
+.zv-img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    opacity: 0;
+    transition: opacity 0.22s linear;
+    -webkit-user-drag: none;
+    user-select: none;
+    pointer-events: none;
+}
+.zv-slide.zv-loaded .zv-img { opacity: 1; }
+.zv-slide.zv-instant .zv-img { transition: none; }
+
+/* Loading + error states */
+.zv-spinner {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 34px;
+    height: 34px;
+    margin: -17px 0 0 -17px;
+    border-radius: 50%;
+    border: 3px solid rgba(255, 255, 255, 0.18);
+    border-top-color: rgba(255, 255, 255, 0.9);
+    animation: zv-spin 0.8s linear infinite;
+    opacity: 0;
+    transition: opacity 0.2s linear 0.15s;
+    pointer-events: none;
+}
+.zv-slide.zv-loading .zv-spinner { opacity: 1; }
+@keyframes zv-spin { to { transform: rotate(360deg); } }
+
+.zv-error {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    width: min(280px, 80vw);
+    text-align: center;
+    font-size: 0.95rem;
+    line-height: 1.4;
+    color: rgba(255, 255, 255, 0.78);
+    pointer-events: none;
+}
+.zv-error svg { width: 40px; height: 40px; opacity: 0.7; }
+.zv-slide.zv-failed .zv-error { display: flex; }
+.zv-slide.zv-failed .zv-frame { visibility: hidden; }
+
+/* ---------- Chrome (toolbar, counter, arrows, caption, dots) ---------- */
+.zv-ui {
+    transition: opacity 0.25s linear, transform 0.3s var(--zv-ease);
+}
+dialog.zoom-viewer.zv-ui-hidden .zv-ui,
+dialog.zoom-viewer.zv-dragging .zv-ui,
+dialog.zoom-viewer.zv-intro .zv-ui {
+    opacity: 0;
+    pointer-events: none;
+}
+dialog.zoom-viewer.zv-ui-hidden .zv-top { transform: translate3d(0, -8px, 0); }
+dialog.zoom-viewer.zv-ui-hidden .zv-bottom { transform: translate3d(0, 8px, 0); }
+
+.zv-top {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: calc(var(--zv-safe-t) + 8px) calc(var(--zv-safe-r) + 8px) 24px calc(var(--zv-safe-l) + 8px);
+    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
+    pointer-events: none;
+}
+.zv-top > * { pointer-events: auto; }
+.zv-spacer { flex: 1; pointer-events: none !important; }
+
+.zv-counter {
+    position: absolute;
+    left: 50%;
+    top: calc(var(--zv-safe-t) + 8px);
+    height: 44px;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
+    color: #fff;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+    pointer-events: none !important;
+    white-space: nowrap;
+}
+
+.zv-btn {
+    appearance: none;
+    -webkit-appearance: none;
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    margin: 0;
+    border: 0;
+    border-radius: 50%;
+    background: var(--zv-chip);
+    color: #fff;
+    cursor: pointer;
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+    transition: background-color 0.15s linear, transform 0.15s var(--zv-ease), opacity 0.15s linear;
+    touch-action: manipulation;
+}
+.zv-btn svg { width: 22px; height: 22px; display: block; }
+.zv-btn:active { transform: scale(0.92); }
+.zv-btn:disabled { opacity: 0.35; cursor: default; }
+.zv-btn:disabled:active { transform: none; }
+.zv-btn:focus { outline: none; }
+.zv-btn:focus-visible { outline: 2px solid var(--accent, #9fb0ff); outline-offset: 2px; }
+
+/* Previous / next arrows (several photos, wide screens only) */
+.zv-nav {
+    position: absolute;
+    top: 50%;
+    margin-top: -26px;
+    width: 52px;
+    height: 52px;
+    display: none;
+}
+.zv-nav svg { width: 26px; height: 26px; }
+.zv-prev { left: calc(var(--zv-safe-l) + 14px); }
+.zv-next { right: calc(var(--zv-safe-r) + 14px); }
+dialog.zoom-viewer.zv-multi .zv-nav { display: inline-grid; }
+@media (hover: none) {
+    dialog.zoom-viewer.zv-multi .zv-nav { display: none; }
+}
+
+.zv-bottom {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 28px calc(var(--zv-safe-r) + 16px) calc(var(--zv-safe-b) + 14px) calc(var(--zv-safe-l) + 16px);
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0));
+    pointer-events: none;
+}
+.zv-bottom:empty,
+.zv-bottom.zv-none { display: none; }
+
+.zv-caption {
+    max-width: 640px;
+    width: 100%;
+    max-height: 30vh;
+    overflow: auto;
+    font-size: 0.95rem;
+    line-height: 1.45;
+    color: rgba(255, 255, 255, 0.92);
+    text-align: center;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+    overflow-wrap: anywhere;
+    white-space: pre-line;
+    transition: opacity 0.2s linear;
+}
+.zv-caption:empty { display: none; }
+dialog.zoom-viewer.zv-zoomed .zv-caption { opacity: 0; }
+
+.zv-dots {
+    display: flex;
+    gap: 6px;
+    justify-content: center;
+    flex-wrap: wrap;
+    max-width: 80vw;
+}
+.zv-dots:empty { display: none; }
+.zv-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.4);
+    transition: background-color 0.2s linear, transform 0.25s var(--zv-ease);
+}
+.zv-dot.zv-on { background: #fff; transform: scale(1.3); }
+
+/* Live region for screen readers */
+.zv-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .zv-btn:hover:not(:disabled) { background: var(--zv-chip-hover); }
+}
+
+/* Reduced motion: no springs / FLIP (handled in JS), keep only simple fades */
+@media (prefers-reduced-motion: reduce) {
+    .zv-ui, .zv-btn, .zv-dot { transition: opacity 0.15s linear; }
+    dialog.zoom-viewer.zv-ui-hidden .zv-top,
+    dialog.zoom-viewer.zv-ui-hidden .zv-bottom { transform: none; }
+    .zv-btn:active { transform: none; }
+    .zv-spinner { animation-duration: 1.6s; }
+}
+:root[data-motion="reduce"] .zv-ui,
+:root[data-motion="reduce"] .zv-btn,
+:root[data-motion="reduce"] .zv-dot { transition: opacity 0.15s linear; }
+:root[data-motion="reduce"] dialog.zoom-viewer.zv-ui-hidden .zv-top,
+:root[data-motion="reduce"] dialog.zoom-viewer.zv-ui-hidden .zv-bottom { transform: none; }
+:root[data-motion="reduce"] .zv-btn:active { transform: none; }
+
+/* Page under the viewer never scrolls while it is open (set by zoom.js) */
+html.zv-lock { overflow: hidden; }

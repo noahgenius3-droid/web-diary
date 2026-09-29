@@ -34,6 +34,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.diaryCommunities = {
         posts: () => c.posts,
+        // For the group chat (groupchat.js)
+        current: () => c.current,
+        role: id => roleOf(id),
+        members: () => c.members,
+        loadMembers: () => loadMembers(),
+        presenceChannel: () => (c.presence ? c.presence.channel : null),
+        joinCall: () => { if (window.diaryCalls && c.current) window.diaryCalls.joinCommunity(c.current); },
         canInteract: () => !!(c.current && c.memberships.has(c.current.id)),
         toggleLike, postMenu, onRemoteChange, reset,
         // For the note share sheet
@@ -56,7 +63,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const me = () => s.profile.id;
     const roleOf = id => c.memberships.get(id);
-    const isMod = id => ['owner', 'admin'].includes(roleOf(id));
+    const isMod = id => ['owner', 'admin'].includes(roleOf(id));          // can edit the community
+    const isStaff = id => ['owner', 'admin', 'moderator'].includes(roleOf(id)); // can moderate
+    const ROLE_LABEL = { owner: 'Owner', admin: 'Admin', moderator: 'Moderator', member: 'Member' };
     const memberCount = cm => (Array.isArray(cm.members) && cm.members[0] ? cm.members[0].count : 0);
     const inView = () => ['communities', 'community'].includes(app.state.view);
 
@@ -284,7 +293,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
                 <div class="cm-card-foot">
                     ${role
-                        ? `<span class="cm-role">${role === 'owner' ? 'Owner' : role === 'admin' ? 'Admin' : 'Member'}</span>`
+                        ? `<span class="cm-role">${ROLE_LABEL[role] || 'Member'}</span>`
                         : `<button class="chip accent" data-action="cm-join" data-id="${esc(cm.id)}">Join</button>`}
                 </div>
             </article>`;
@@ -325,8 +334,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         : `<button class="primary-btn" data-action="cm-join" data-id="${esc(cm.id)}">Join community</button>`}
                 </div>
             </header>
-            <div class="tabs" role="tablist">${tab('posts', 'Posts')}${tab('members', `Members · ${memberCount(cm)}`)}${tab('about', 'About')}</div>
-            ${c.tab === 'members' ? membersTab(cm) : c.tab === 'about' ? aboutTab(cm) : `<div class="cm-layout">${sideRail(cm)}${postsTab(cm)}</div>`}`;
+            <div class="tabs" role="tablist">${tab('posts', 'Posts')}${role && window.diaryGroupChat ? tab('chat', 'Chat') : ''}${tab('members', `Members · ${memberCount(cm)}`)}${tab('about', 'About')}</div>
+            ${c.tab === 'members' ? membersTab(cm) : c.tab === 'about' ? aboutTab(cm)
+                : c.tab === 'chat' && role && window.diaryGroupChat ? window.diaryGroupChat.html(cm)
+                : `<div class="cm-layout">${sideRail(cm)}${postsTab(cm)}</div>`}`;
     };
 
     function postsThisWeek() {
@@ -501,22 +512,51 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Who can do what to whom: owner > admin > moderator > member
+    const RANK = { owner: 3, admin: 2, moderator: 1, member: 0 };
+    function canManageMember(cm, m) {
+        const mine = roleOf(cm.id);
+        if (!mine || m.user_id === me() || m.role === 'owner') return false;
+        if (mine === 'owner') return true;
+        if (mine === 'admin') return RANK[m.role] < RANK.admin;
+        if (mine === 'moderator') return m.role === 'member';
+        return false;
+    }
+
     function membersTab(cm) {
         if (!c.members.length) return '<p class="muted">Loading members…</p>';
-        const canManage = isMod(cm.id);
-        return `<div class="cm-members">${c.members.map(m => {
+        const order = [...c.members].sort((a, b) => RANK[b.role] - RANK[a.role] || Date.parse(a.joined_at) - Date.parse(b.joined_at));
+        const staff = order.filter(m => m.role !== 'member').length;
+        return `
+            <p class="cm-members-note muted small">${staff} ${staff === 1 ? 'person runs' : 'people run'} this community. ${isStaff(cm.id) ? 'Tap ⋯ next to someone to change their role, mute or remove them.' : ''}</p>
+            <div class="cm-members">${order.map(m => {
             const p = m.profile || { id: m.user_id, display_name: 'Member', username: '' };
-            const removable = canManage && m.role !== 'owner' && m.user_id !== me();
             return `
                 <div class="contact-row">
                     ${avatar(p, 'md')}
                     <span class="contact-name"><strong>${m.user_id === me() ? 'You' : esc(p.display_name)}</strong><small>@${esc(p.username)} · joined ${timeAgo(m.joined_at)}</small></span>
-                    ${m.role !== 'member' ? `<span class="cm-role">${m.role === 'owner' ? 'Owner' : 'Admin'}</span>` : ''}
+                    ${m.role !== 'member' ? `<span class="cm-role role-${m.role}">${ROLE_LABEL[m.role]}</span>` : ''}
                     ${I.followButton({ ...p, id: m.user_id })}
                     ${m.user_id !== me() && roleOf(cm.id) && window.diaryCalls ? `<button class="icon-btn ghost accent" data-action="cm-call-member" data-id="${esc(m.user_id)}" aria-label="Call ${esc(p.display_name)}"><svg class="i"><use href="#i-phone"/></svg></button>` : ''}
-                    ${removable ? `<button class="icon-btn ghost" data-action="cm-remove-member" data-id="${esc(m.user_id)}" aria-label="Remove ${esc(p.display_name)}"><svg class="i"><use href="#i-close"/></svg></button>` : ''}
+                    ${canManageMember(cm, m) ? `<button class="icon-btn ghost" data-action="cm-member-menu" data-id="${esc(m.user_id)}" aria-label="Manage ${esc(p.display_name)}" aria-haspopup="menu"><svg class="i"><use href="#i-more"/></svg></button>` : ''}
                 </div>`;
         }).join('')}</div>`;
+    }
+
+    async function setRole(userId, role) {
+        const { error } = await client.rpc('diary_set_member_role', { cid: c.current.id, target: userId, new_role: role });
+        if (error) return app.showToast(error.message || 'Couldn’t change their role');
+        const m = c.members.find(x => x.user_id === userId);
+        if (m) m.role = role;
+        app.showToast(`${m && m.profile ? m.profile.display_name.split(' ')[0] : 'They'} ${role === 'member' ? 'is now a member' : `is now ${role === 'admin' ? 'an admin' : 'a moderator'}`}`);
+        app.render();
+    }
+
+    async function muteMember(userId, minutes) {
+        const { error } = await client.rpc('diary_mute_member', { cid: c.current.id, target: userId, minutes });
+        if (error) return app.showToast(error.message || 'Couldn’t mute them');
+        app.showToast(minutes ? `Muted in the chat for ${minutes >= 1440 ? `${minutes / 1440} day` : minutes >= 60 ? `${minutes / 60} hour${minutes > 60 ? 's' : ''}` : `${minutes} minutes`}` : 'Unmuted');
+        if (window.diaryGroupChat) window.diaryGroupChat.refreshMutes();
     }
 
     function aboutTab(cm) {
@@ -1047,10 +1087,54 @@ document.addEventListener('DOMContentLoaded', () => {
             const role = roleOf(cm.id);
             const items = [];
             if (isMod(cm.id)) items.push({ label: 'Edit community', icon: 'i-pencil', onClick: () => openDialog(cm) });
+            if (isMod(cm.id)) items.push({ label: 'Chat settings', icon: 'i-chat', onClick: () => { c.tab = 'chat'; app.render(); } });
+            if (isStaff(cm.id)) items.push({ label: 'Manage members & roles', icon: 'i-users', onClick: () => { c.tab = 'members'; if (!c.members.length) loadMembers(); app.render(); } });
             items.push({ label: 'Copy invite code', icon: 'i-link', onClick: () => copyCode(cm.invite_code) });
             items.push({ label: 'Leave community', icon: 'i-logout', danger: true, onClick: () => leave(cm) });
             if (role === 'owner') items.push({ label: 'Delete community', icon: 'i-trash', danger: true, onClick: () => destroy(cm) });
             app.openPopover(el, items);
+        },
+        'cm-member-menu': el => {
+            const cm = c.current;
+            const m = c.members.find(x => x.user_id === el.dataset.id);
+            if (!cm || !m) return;
+            const mine = roleOf(cm.id);
+            const name = m.profile ? m.profile.display_name.split(' ')[0] : 'them';
+            const items = [];
+            if (mine === 'owner' && m.role !== 'admin') items.push({ label: `Make ${name} an admin`, icon: 'i-lock', onClick: () => setRole(m.user_id, 'admin') });
+            if (['owner', 'admin'].includes(mine) && m.role !== 'moderator') items.push({ label: `Make ${name} a moderator`, icon: 'i-checks', onClick: () => setRole(m.user_id, 'moderator') });
+            if (['owner', 'admin'].includes(mine) && m.role !== 'member') items.push({ label: 'Change to member', icon: 'i-user', onClick: () => setRole(m.user_id, 'member') });
+            if (m.role === 'member') {
+                items.push({ label: 'Mute in chat for 1 hour', icon: 'i-volume-off', onClick: () => muteMember(m.user_id, 60) });
+                items.push({ label: 'Mute in chat for 1 day', icon: 'i-volume-off', onClick: () => muteMember(m.user_id, 1440) });
+                items.push({ label: 'Unmute', icon: 'i-volume', onClick: () => muteMember(m.user_id, 0) });
+            }
+            if (mine === 'owner') items.push({ label: `Hand ownership to ${name}`, icon: 'i-user-plus', onClick: async () => {
+                const ok = await app.ask({ title: `Make ${name} the owner?`, text: `${name} will own ${cm.name}. You’ll become an admin. This can’t be undone by you.`, ok: 'Hand over', danger: true });
+                if (!ok) return;
+                const { error } = await client.rpc('diary_transfer_community', { cid: cm.id, target: m.user_id });
+                if (error) return app.showToast(error.message || 'Couldn’t hand it over');
+                c.memberships.set(cm.id, 'admin');
+                await loadMembers();
+                app.showToast(`${name} now owns ${cm.name}`);
+                app.render();
+            } });
+            items.push({ label: `Remove ${name}`, icon: 'i-close', danger: true, onClick: () => app.actions['cm-remove-member']({ dataset: { id: m.user_id } }) });
+            app.openPopover(el, items);
+        },
+        'cm-chat-settings': el => {
+            const cm = c.current;
+            const staffOnly = cm.chat_mode === 'staff';
+            const set = async fields => {
+                const { error } = await client.from('diary_communities').update(fields).eq('id', cm.id);
+                if (error) return app.showToast('Couldn’t change the chat settings');
+                Object.assign(cm, fields);
+                app.render();
+            };
+            app.openPopover(el, [
+                { label: staffOnly ? 'Let everyone chat' : 'Announcements only (staff can post)', icon: staffOnly ? 'i-chat' : 'i-lock', onClick: () => set({ chat_mode: staffOnly ? 'everyone' : 'staff' }) },
+                { label: cm.slow_mode ? 'Turn off slow mode' : 'Slow mode: one message every 30s', icon: 'i-clock', onClick: () => set({ slow_mode: cm.slow_mode ? 0 : 30 }) }
+            ]);
         },
         'cm-remove-member': async el => {
             const m = c.members.find(x => x.user_id === el.dataset.id);

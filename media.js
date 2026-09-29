@@ -40,7 +40,19 @@ window.Media = (() => {
 
     async function get(id) {
         const value = await tx('readonly', s => s.get(id));
-        if (!value) return null;
+        if (!value) {
+            // Not on this device yet (e.g. a note restored from your account backup): fetch it once and keep it
+            const remote = window.Media && window.Media.remote;
+            if (!remote) return null;
+            try {
+                const blob = await remote(id);
+                if (!blob) return null;
+                await put(id, blob);
+                return blob;
+            } catch (e) {
+                return null;
+            }
+        }
         if (value instanceof Blob) return value; // saved by an earlier version
         if (value.buf) return new Blob([value.buf], { type: value.type });
         return null;
@@ -408,7 +420,9 @@ window.Media = (() => {
     }
 
     // ---------- Lightbox ----------
-    function lightbox(src, caption = '') {
+    // Full-screen photo; pinch, double-tap and wheel to zoom when the zoom viewer is loaded (zoom.js)
+    function lightbox(src, caption = '', opts = {}) {
+        if (window.ZoomViewer) return window.ZoomViewer.open(opts.sources || [src], { index: opts.index || 0, origin: opts.origin || null, caption });
         const dialog = $('lightbox');
         $('lightbox-img').src = src;
         $('lightbox-caption').textContent = caption;
@@ -460,5 +474,5 @@ window.Media = (() => {
         });
     }
 
-    return { put, get, bytes, del, url, hydrate, kindOf, formatSize, formatDuration, pickFiles, compressImage, squareImage, recordVoice, createRecorder, drawPad, lightbox, locate };
+    return { remote: null, put, get, bytes, del, url, hydrate, kindOf, formatSize, formatDuration, pickFiles, compressImage, squareImage, recordVoice, createRecorder, drawPad, lightbox, locate };
 })();
