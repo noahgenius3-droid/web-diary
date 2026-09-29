@@ -164,6 +164,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         : row('i-lock', 'Back up your notes', 'Sign in and your notes are saved to your account, so they come back on any device', go('sign-in', 'Sign in'))) : ''}
                     ${row('i-download', 'Export your notes', 'Download everything as a file', go('st-export', 'Export'))}
                     ${row('i-archive', 'Storage', `<span id="st-storage">${esc(storageText || 'Checking…')}</span>`, '')}
+                    ${row('i-refresh', 'Reload the app', 'Get the latest version of Cordial', go('st-reload', 'Reload'))}
                     ${row('i-trash', 'Clear this device', 'Remove notes, photos and settings stored in this browser', go('st-clear', 'Clear', true))}
                 </section>
 
@@ -263,6 +264,7 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         'st-remove-photo': () => I && I.removeAvatar(),
         'st-pin': () => app.setPin().then(() => app.render()),
+        'st-reload': () => location.reload(),
         'st-export': () => { app.exportData(); app.showToast('Your notes are downloading'); },
         'st-signout': async () => {
             const ok = await app.ask({ title: 'Sign out?', text: 'Your notes stay on this device.', ok: 'Sign out' });

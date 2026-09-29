@@ -11202,3 +11202,14 @@ body { background: var(--bg); }
     :root:not([data-theme="light"]) .mk-safety .i { color: #fbbf24; }
 }
 :root[data-theme="dark"] .mk-safety .i { color: #fbbf24; }
+
+/* More menu on phones: a compact grid of tiles, grouped, with Refresh / Settings as rows underneath */
+.pop-head { padding: 8px 8px 4px; font-size: 0.7rem; font-weight: 800; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-muted); }
+@media (max-width: 760px) {
+    .popover.pop-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; width: min(360px, calc(100vw - 16px)); padding: 8px; border-radius: 20px; }
+    .popover.pop-grid > :not(.pop-tile) { grid-column: 1 / -1; }
+    .popover.pop-grid .pop-sep { margin: 4px; }
+    .pop-item.pop-tile { flex-direction: column; justify-content: center; gap: 6px; min-height: 68px; padding: 8px 2px; border-radius: 14px; font-size: 0.72rem; text-align: center; line-height: 1.15; touch-action: manipulation; }
+    .pop-item.pop-tile .i { width: 22px; height: 22px; color: var(--accent); }
+    .pop-item.pop-tile:active { background: var(--panel); transform: scale(0.96); }
+}

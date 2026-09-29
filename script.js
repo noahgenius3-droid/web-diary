@@ -2361,32 +2361,20 @@ document.addEventListener('DOMContentLoaded', () => {
         return t ? t === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
     }
 
+    // More: a tidy grid of the pages that aren't in the tab bar, grouped. Account, theme, PIN, export and
+    // sign-out live in Settings (one place for preferences), so this stays short.
     function openMainMenu(anchor) {
-        const nav = [['home', 'Notes', 'i-notes'], ['calendar', 'Calendar', 'i-calendar'], ['insights', 'Insights', 'i-chart'],
-            ['photos', 'Photos', 'i-image'], ['highlights', 'Highlights', 'i-marker'], ['feed', 'Feed', 'i-feed'], ['explore', 'Explore', 'i-compass'], ['reels', 'Reels', 'i-reel'], ['library', 'Library', 'i-book'], ['market', 'Marketplace', 'i-store'], ['communities', 'Communities', 'i-users'], ['messages', 'Messages', 'i-chat'],
-            ['archive', 'Archive', 'i-archive'], ['trash', 'Trash', 'i-trash']]
-            .map(([view, label, icon]) => ({ label, icon, cls: 'mobile-only', onClick: () => setView(view) }));
+        const tile = ([view, label, icon]) => ({ label, icon, tile: true, cls: 'mobile-only', onClick: () => setView(view) });
         openPopover(anchor, [
-            ...nav,
-            { label: 'Voice to note', icon: 'i-wave', cls: 'mobile-only', onClick: () => window.diaryTranscribe && window.diaryTranscribe.open() },
+            { heading: 'Your notes', cls: 'mobile-only' },
+            ...[['calendar', 'Calendar', 'i-calendar'], ['insights', 'Insights', 'i-chart'], ['photos', 'Photos', 'i-image'], ['highlights', 'Highlights', 'i-marker']].map(tile),
+            { label: 'Voice note', icon: 'i-wave', tile: true, cls: 'mobile-only', onClick: () => window.diaryTranscribe && window.diaryTranscribe.open() },
+            ...[['archive', 'Archive', 'i-archive'], ['trash', 'Trash', 'i-trash']].map(tile),
+            { heading: 'Discover', cls: 'mobile-only' },
+            ...[['reels', 'Reels', 'i-reel'], ['library', 'Library', 'i-book'], ['market', 'Market', 'i-store']].map(tile),
             { sep: true, cls: 'mobile-only' },
             ...(hooks.menuItems ? hooks.menuItems() : []),
-            {
-                label: isDark() ? 'Light mode' : 'Dark mode',
-                icon: isDark() ? 'i-sun' : 'i-moon',
-                onClick: () => {
-                    const next = isDark() ? 'light' : 'dark';
-                    document.documentElement.dataset.theme = next;
-                    document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute('content', next === 'dark' ? '#09090b' : '#ffffff'));
-                    try { localStorage.setItem('diaryTheme', next); } catch (e) {}
-                }
-            },
-            { label: load('diaryPin', null) ? 'Change private PIN' : 'Set private PIN', icon: 'i-lock', onClick: setPin },
-            { label: 'Change name', icon: 'i-user', onClick: renameUser },
-            { label: 'Export entries', icon: 'i-download', onClick: exportData },
-            { sep: true },
-            { label: 'Refresh page', icon: 'i-refresh', onClick: () => refreshView() },
-            ...(refreshers[state.view] ? [{ label: 'Reload the app', icon: 'i-refresh', onClick: () => location.reload() }] : []),
+            { label: 'Refresh', icon: 'i-refresh', onClick: () => refreshView() },
             { label: 'Settings', icon: 'i-settings', onClick: () => setView('settings') }
         ]);
     }
@@ -2411,7 +2399,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const host = anchor.closest('dialog') || document.body;
         if (popover.parentElement !== host) host.append(popover);
 
+        popover.classList.toggle('pop-grid', items.some(i => i.tile));
         items.forEach(item => {
+            if (item.heading) {
+                const h = document.createElement('div');
+                h.className = 'pop-head' + (item.cls ? ` ${item.cls}` : '');
+                h.setAttribute('role', 'presentation');
+                h.textContent = item.heading;
+                popover.append(h);
+                return;
+            }
             if (item.sep) {
                 const s = document.createElement('div');
                 s.className = 'pop-sep' + (item.cls ? ` ${item.cls}` : '');
@@ -2420,7 +2417,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const b = document.createElement('button');
             b.type = 'button';
-            b.className = 'pop-item' + (item.danger ? ' danger' : '') + (item.cls ? ` ${item.cls}` : '');
+            b.className = 'pop-item' + (item.tile ? ' pop-tile' : '') + (item.danger ? ' danger' : '') + (item.cls ? ` ${item.cls}` : '');
             b.setAttribute('role', 'menuitem');
             b.innerHTML = `<svg class="i"><use href="#${item.icon}"/></svg><span></span>`;
             b.querySelector('span').textContent = item.label;

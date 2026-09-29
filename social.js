@@ -189,12 +189,8 @@ document.addEventListener('DOMContentLoaded', () => {
         app.showToast('Photo removed');
     }
 
-    app.hooks.menuItems = () => signedIn()
-        ? [
-            { label: s.profile.avatar_path ? 'Change profile photo' : 'Add profile photo', icon: 'i-camera', onClick: changeAvatar },
-            { label: 'Sign out', icon: 'i-logout', onClick: signOut }
-        ]
-        : [{ label: 'Sign in', icon: 'i-user', onClick: () => openAuth() }];
+    // Profile photo and Sign out are in Settings; the menu only offers Sign in when you're signed out
+    app.hooks.menuItems = () => signedIn() ? [] : [{ label: 'Sign in', icon: 'i-user', onClick: () => openAuth() }];
 
     // Friend avatars on the Notes page header
     app.hooks.friendAvatars = () => {

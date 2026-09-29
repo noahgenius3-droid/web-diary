@@ -3,7 +3,7 @@
 import Anthropic from "npm:@anthropic-ai/sdk";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const MODEL = "claude-sonnet-5";
+const MODEL = "claude-sonnet-5-5";
 const API_KEY = Deno.env.get("ANTHROPIC_API_KEY")?.trim();
 const anthropic = API_KEY ? new Anthropic({ apiKey: API_KEY }) : null;
 
