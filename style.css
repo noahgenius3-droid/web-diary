@@ -8281,3 +8281,32 @@ button, [role="button"], .tab, .tab-item, .chip, .pill, .nav-item, .story, .reel
         min-height: 0;
     }
 }
+
+/* Phone top bar: one even row — search · companion · notifications · you */
+@media (max-width: 760px) {
+    .topbar { flex-wrap: wrap; align-items: center; column-gap: 2px; row-gap: 8px; }
+    .topbar h1 { order: 0; flex: 1 1 0; min-width: 0; margin-right: 6px; }
+    .topbar .search-toggle { order: 1; }
+    .topbar .companion-btn { order: 2; }
+    .topbar .bell-btn { order: 3; }
+    .topbar .profile { order: 4; }
+    .topbar .search { order: 5; flex: 1 1 100%; }
+
+    .topbar .icon-btn,
+    .topbar .profile {
+        width: 40px;
+        height: 40px;
+        min-width: 40px;
+        min-height: 40px;
+        padding: 0;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+    }
+
+    .topbar .icon-btn .i { width: 23px; height: 23px; }
+    .topbar .companion-btn .i { width: 22px; height: 22px; }
+    .topbar .profile { gap: 0; margin-left: 4px; }
+    .topbar .profile .avatar { width: 34px; height: 34px; font-size: 0.8rem; box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--border); }
+    .topbar .bell-count:not(:empty) { top: 2px; right: 2px; }
+}
