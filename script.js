@@ -80,6 +80,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const state = {
         pour: loadPour(),   // strength of note previews on the Notes page: 100 | 50 | 10
+        noteLayout: (() => { try { return localStorage.getItem('diaryNoteLayout') === 'list' ? 'list' : 'grid'; } catch (e) { return 'grid'; } })(),
         hlColor: 'all',     // Highlights page filter
         view: 'home',
         folderId: null,
@@ -293,14 +294,90 @@ document.addEventListener('DOMContentLoaded', () => {
         paintBack();
     }
 
+    const motionOK = () => document.documentElement.dataset.motion !== 'reduce' && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
     function setView(view, extra = {}, opts = {}) {
+        const changed = view !== state.view;
         Object.assign(state, { view }, extra);
-        render();
-        window.scrollTo({ top: 0 });
-        document.querySelector('.main-col').scrollTo({ top: 0 });
+        const paint = () => {
+            render();
+            window.scrollTo({ top: 0 });
+            document.querySelector('.main-col').scrollTo({ top: 0 });
+        };
+        // Pages slide in the direction you're going (back slides the other way); the rest of the frame stays put
+        if (changed && document.startViewTransition && motionOK() && !document.querySelector('dialog[open]')) {
+            document.documentElement.dataset.navDir = opts.dir || (opts.fromHistory ? 'back' : 'forward');
+            document.startViewTransition(paint);
+        } else {
+            paint();
+        }
         if (!opts.fromHistory) pushRoute({}, opts.replace);
         else paintBack();
     }
+
+    // Arriving on a page: its cards rise in, one after another (only on arrival, never on refreshes of the same page)
+    // (kept on the function: the first render runs before this part of the file)
+    function markArrival() {
+        if (state.view === markArrival.last) return;
+        markArrival.last = state.view;
+        if (!(document.documentElement.dataset.motion !== 'reduce' && !window.matchMedia('(prefers-reduced-motion: reduce)').matches)) return;
+        const items = content.querySelectorAll('.nh-hero, .nh-sec, .mcard, .post.ig, .ex-sec, .st-card, .cm-card, .convo, .book-card');
+        items.forEach((el, i) => { if (i < 18) el.style.setProperty('--i', i); });
+        content.classList.remove('arriving');
+        void content.offsetWidth;
+        content.classList.add('arriving');
+        clearTimeout(markArrival.t);
+        markArrival.t = setTimeout(() => content.classList.remove('arriving'), 1400);
+    }
+
+    // Phones: swipe left or right to move between the pages in the tab bar
+    (() => {
+        const col = document.querySelector('.main-col');
+        const ORDER = ['home', 'feed', 'explore', 'communities', 'messages'];
+        const SKIP = 'input, textarea, select, [contenteditable="true"], .carousel, .ex-row, .live-strip, .stories-bar, .nh-templates, .nh-tags, .folder-chips, .ex-tabs, .feed-tabs, .tabs, .pour, .nh-controls, .cm-filters, .chat-pane, .vc-bar, .templates, .trend-tags, .reel-post-media';
+        let t = null;
+        col.addEventListener('touchstart', e => {
+            t = null;
+            if (e.touches.length !== 1 || window.innerWidth > 760 || document.querySelector('dialog[open]')) return;
+            if (!ORDER.includes(state.view) || document.body.classList.contains('chat-open')) return;
+            if (e.target.closest(SKIP)) return;
+            const p = e.touches[0];
+            t = { x: p.clientX, y: p.clientY, at: Date.now(), axis: null, dx: 0 };
+        }, { passive: true });
+        col.addEventListener('touchmove', e => {
+            if (!t) return;
+            const p = e.touches[0];
+            const dx = p.clientX - t.x;
+            const dy = p.clientY - t.y;
+            if (!t.axis && (Math.abs(dx) > 12 || Math.abs(dy) > 12)) t.axis = Math.abs(dx) > Math.abs(dy) * 1.4 ? 'x' : 'y';
+            if (t.axis !== 'x') return;
+            const i = ORDER.indexOf(state.view);
+            const edge = (dx > 0 && i === 0) || (dx < 0 && i === ORDER.length - 1);
+            t.dx = dx;
+            // The page follows your finger a little (and resists at the first / last tab)
+            content.style.transition = 'none';
+            content.style.transform = `translateX(${dx * (edge ? 0.08 : 0.22)}px)`;
+            content.style.opacity = String(1 - Math.min(0.35, Math.abs(dx) / 900));
+        }, { passive: true });
+        const end = () => {
+            if (!t) return;
+            const { axis, dx, at } = t;
+            t = null;
+            content.style.transition = 'transform 220ms var(--ease-out), opacity 220ms';
+            content.style.transform = '';
+            content.style.opacity = '';
+            setTimeout(() => { content.style.transition = ''; }, 240);
+            if (axis !== 'x') return;
+            const fast = Math.abs(dx) / Math.max(1, Date.now() - at) > 0.5;
+            if (Math.abs(dx) < 80 && !(fast && Math.abs(dx) > 40)) return;
+            const next = ORDER[ORDER.indexOf(state.view) + (dx < 0 ? 1 : -1)];
+            if (!next) return;
+            if (navigator.vibrate) navigator.vibrate(6);
+            setView(next, {}, { dir: dx < 0 ? 'forward' : 'back' });
+        };
+        col.addEventListener('touchend', end);
+        col.addEventListener('touchcancel', end);
+    })();
 
     // Phones: a back arrow in the top bar on pages you reach from somewhere else
     function paintBack() {
@@ -525,6 +602,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.body.dataset.view = state.view;
         content.innerHTML = (views[state.view] || renderHome)();
         Media.hydrate(content);
+        markArrival();
         if (hooks.afterRender) hooks.afterRender(state.view);
     }
 
@@ -542,61 +620,113 @@ document.addEventListener('DOMContentLoaded', () => {
         setTitle('Cordial');
         if (state.query) return renderSearch();
 
-        const pinned = activeNotes().filter(n => n.pinned);
-        const list = activeNotes().filter(n => !n.pinned && inRange(n.createdAt, state.noteRange));
+        const live = activeNotes();
+        const pinned = live.filter(n => n.pinned);
+        const list = live.filter(n => !n.pinned && inRange(n.createdAt, state.noteRange));
         const folderList = [...folders].sort((a, b) => folderActivity(b) - folderActivity(a));
         const first = (displayName() || '').split(' ')[0];
         const friends = hooks.friendAvatars ? hooks.friendAvatars() : '';
+        const now = new Date();
+        const words = live.reduce((sum, n) => sum + countWords(fullText(n)), 0);
+        const streak = calcStreak();
+        const tagList = noteHashtags(live).slice(0, 14);
+
+        // The last seven days, oldest first: did you write that day?
+        const wrote = new Set(live.map(n => dayKey(new Date(n.createdAt))));
+        const week = Array.from({ length: 7 }, (_, i) => {
+            const d = new Date(now);
+            d.setDate(now.getDate() - (6 - i));
+            return { d, on: wrote.has(dayKey(d)), today: i === 6 };
+        });
 
         return `
-            <header class="notes-head">
-                <div>
-                    <h2 class="notes-title">My Notes</h2>
-                    <p class="muted">${greeting()}${first ? `, ${escapeHTML(first)}` : ''}. ${escapeHTML(dailyLine())}</p>
-                </div>
-                <div class="notes-meta">
-                    <div class="meta-block">
-                        <span class="meta-label">Visibility</span>
-                        <span class="meta-value"><svg class="i"><use href="#i-lock"/></svg>Private diary</span>
+            <div class="notes-home">
+                <header class="nh-hero">
+                    <div class="nh-intro">
+                        <h2 class="nh-title">${now.toLocaleDateString(undefined, { weekday: 'long' })}<span>${now.toLocaleDateString(undefined, { day: 'numeric', month: 'long' })}</span></h2>
+                        <p class="nh-greet">${greeting()}${first ? `, ${escapeHTML(first)}` : ''}. ${escapeHTML(dailyLine())}</p>
+                        <p class="nh-stats">
+                            <span><b>${live.length.toLocaleString()}</b> ${live.length === 1 ? 'entry' : 'entries'}</span>
+                            <span><b>${words.toLocaleString()}</b> words</span>
+                            <span class="nh-streak${streak ? ' on' : ''}"><svg class="i"><use href="#i-flame"/></svg><span><b>${streak}</b>-day streak</span></span>
+                        </p>
                     </div>
-                    ${friends ? `<div class="meta-block"><span class="meta-label">Friends</span>${friends}</div>` : ''}
-                </div>
-            </header>
+                    <div class="nh-week" role="img" aria-label="Days you wrote this week: ${week.filter(w => w.on).length} of 7">
+                        ${week.map(w => `
+                            <span class="nh-day${w.on ? ' on' : ''}${w.today ? ' today' : ''}">
+                                <i></i><small>${w.d.toLocaleDateString(undefined, { weekday: 'narrow' })}</small>
+                            </span>`).join('')}
+                    </div>
+                    <div class="nh-actions">
+                        <button class="primary-btn nh-write" data-action="new-note"><svg class="i"><use href="#i-plus"/></svg>New note</button>
+                        <button class="nh-voice" data-action="template" data-id="voice"><svg class="i"><use href="#i-wave"/></svg>Voice note</button>
+                        <span class="nh-private" title="Only you can read your notes unless you share one"><svg class="i"><use href="#i-lock"/></svg>Private diary</span>
+                        ${friends ? `<span class="nh-friends">${friends}</span>` : ''}
+                    </div>
+                </header>
 
-            <section class="section">
-                <div class="section-head"><h2>Templates</h2></div>
-                <div class="templates" role="list">
-                    ${TEMPLATES.map(t => `
-                        <button class="template-card" role="listitem" data-action="template" data-id="${t.id}">
-                            <span class="template-icon tone-${t.tone}" aria-hidden="true"><svg class="i"><use href="#${t.icon}"/></svg></span>
-                            <span class="template-text"><strong>${t.label}</strong><small>${t.desc}</small></span>
-                        </button>`).join('')}
-                </div>
-            </section>
+                <section class="nh-sec">
+                    <h3 class="nh-h">Start from a template</h3>
+                    <div class="nh-templates" role="list">
+                        ${TEMPLATES.map(t => `
+                            <button class="template-card nh-template" role="listitem" data-action="template" data-id="${t.id}">
+                                <span class="template-icon tone-${t.tone}" aria-hidden="true"><svg class="i"><use href="#${t.icon}"/></svg></span>
+                                <span class="template-text"><strong>${t.label}</strong><small>${t.desc}</small></span>
+                            </button>`).join('')}
+                    </div>
+                </section>
 
-            ${pinned.length ? `
-                <section class="section">
-                    <div class="section-head"><h2>📌 Pinned</h2></div>
-                    <div style="height:16px"></div>
-                    ${notesGrid(pinned, { newTile: false })}
-                </section>` : ''}
+                ${tagList.length ? `
+                    <section class="nh-sec">
+                        <h3 class="nh-h"><svg class="i"><use href="#i-hash"/></svg>Your tags</h3>
+                        <div class="nh-tags">
+                            ${tagList.map(([t, c]) => `<button class="nh-tag" data-action="note-tag" data-tag="${escapeHTML(t)}">#${escapeHTML(t)}<small>${c}</small></button>`).join('')}
+                        </div>
+                    </section>` : ''}
 
-            <section class="section">
-                <div class="section-head notes-bar">
-                    <h2>My drafts</h2>
-                    ${pourControl()}
-                    ${tabs('noteRange')}
-                </div>
-                <div class="folder-chips">
-                    ${folderList.map(f => `
-                        <button class="folder-chip c-${f.color}" data-action="open-folder" data-id="${escapeHTML(f.id)}">
-                            <span class="chip-dot"></span>${escapeHTML(f.name)}
-                            <span class="muted small">${activeNotes().filter(n => n.folderId === f.id).length}</span>
-                        </button>`).join('')}
-                    <button class="folder-chip add" data-action="new-folder"><svg class="i"><use href="#i-plus"/></svg>New folder</button>
-                </div>
-                ${notesGrid(list, { empty: activeNotes().length ? `No notes ${rangeText(state.noteRange)}.` : 'Your diary is empty — pick a template or write your first note.' })}
-            </section>`;
+                ${pinned.length ? `
+                    <section class="nh-sec">
+                        <h3 class="nh-h"><svg class="i"><use href="#i-pin-note"/></svg>Pinned</h3>
+                        <div class="nh-pinned">${pinned.map(n => noteCard(n, false)).join('')}</div>
+                    </section>` : ''}
+
+                <section class="nh-sec">
+                    <div class="nh-bar">
+                        <h3 class="nh-h">All notes <span class="nh-count">${list.length}</span></h3>
+                        <div class="nh-controls">
+                            ${tabs('noteRange')}
+                            ${pourControl()}
+                            <div class="nh-layout" role="group" aria-label="Layout">
+                                <button data-action="note-layout" data-layout="grid" aria-pressed="${state.noteLayout !== 'list'}" aria-label="Grid"><svg class="i"><use href="#i-grid"/></svg></button>
+                                <button data-action="note-layout" data-layout="list" aria-pressed="${state.noteLayout === 'list'}" aria-label="List"><svg class="i"><use href="#i-list"/></svg></button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="folder-chips">
+                        ${folderList.map(f => `
+                            <button class="folder-chip c-${f.color}" data-action="open-folder" data-id="${escapeHTML(f.id)}">
+                                <span class="chip-dot"></span>${escapeHTML(f.name)}
+                                <span class="muted small">${live.filter(n => n.folderId === f.id).length}</span>
+                            </button>`).join('')}
+                        <button class="folder-chip add" data-action="new-folder"><svg class="i"><use href="#i-plus"/></svg>New folder</button>
+                    </div>
+                    ${notesGrid(list, { empty: live.length ? `No notes ${rangeText(state.noteRange)}.` : 'Your diary is empty — pick a template or write your first note.' })}
+                </section>
+            </div>`;
+    }
+
+    // #tags written in your notes, most used first → [[tag, count], …]
+    function tagsIn(text) {
+        return [...new Set([...String(text || '').matchAll(/(^|[^\p{L}\p{N}_&#])#([\p{L}\p{N}_]{2,30})/gu)].map(m => m[2].toLowerCase()))];
+    }
+    function noteHashtags(list) {
+        const counts = new Map();
+        list.filter(n => !(n.private && !privateUnlocked)).forEach(n => tagsIn(fullText(n)).forEach(t => counts.set(t, (counts.get(t) || 0) + 1)));
+        return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    }
+    // Escaped text with its #tags coloured
+    function withTags(html) {
+        return html.replace(/(^|[^\p{L}\p{N}_&#;])#([\p{L}\p{N}_]{2,30})/gu, '$1<span class="hashtag-inline">#$2</span>');
     }
 
     // Full / Half / Essence: how much of each note the cards show
@@ -975,7 +1105,7 @@ document.addEventListener('DOMContentLoaded', () => {
             : '';
         return `
             ${list.length === 0 ? `<p class="grid-empty">${escapeHTML(empty)}</p>` : ''}
-            <div class="masonry">${tile}${list.map(n => noteCard(n, trash)).join('')}</div>`;
+            <div class="masonry${state.noteLayout === 'list' ? ' as-list' : ''}">${tile}${list.map(n => noteCard(n, trash)).join('')}</div>`;
     }
 
     // Pastel note card in the style of a notes app: tags, title, optional photo and excerpt, date + edit
@@ -1004,6 +1134,7 @@ document.addEventListener('DOMContentLoaded', () => {
             !hidden && n.attachments.some(a => a.kind === 'audio') ? 'Voice' : '',
             !hidden && n.goals.length ? `${n.goals.filter(g => g.done).length}/${n.goals.length} goals` : ''
         ].filter(Boolean).slice(0, 2);
+        const noteTags = hidden ? [] : tagsIn(fullText(n)).slice(0, 3);
         const photo = !hidden && (n.attachments.find(a => a.id === n.cover) || n.attachments.find(a => a.kind === 'image' || a.kind === 'drawing'));
 
         const openAttrs = trash ? '' : `data-action="open-note" data-id="${id}" tabindex="0" role="button" aria-label="Open ${escapeHTML(title)}"`;
@@ -1023,7 +1154,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${tags.length ? `<div class="mcard-tags">${tags.map(t => `<span>${t}</span>`).join('')}</div>` : ''}
                 <h3>${hidden ? '🔒 Private entry' : highlight(title, q)}</h3>
                 ${photo ? `<img class="mcard-photo" data-media="${escapeHTML(photo.id)}" alt="">` : ''}
-                ${body ? `<p class="mcard-body">${highlight(body, q)}</p>` : hidden ? '<p class="mcard-body">Open to read this entry.</p>' : ''}
+                ${body ? `<p class="mcard-body">${withTags(highlight(body, q))}</p>` : hidden ? '<p class="mcard-body">Open to read this entry.</p>' : ''}
+                ${noteTags.length && !trash ? `<div class="mcard-hashtags">${noteTags.map(t => `<button class="mcard-hashtag" data-action="note-tag" data-tag="${escapeHTML(t)}">#${escapeHTML(t)}</button>`).join('')}</div>` : ''}
                 <div class="mcard-foot">
                     <span class="mcard-date">${date.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}${n.mood && !hidden ? ` · ${MOODS[n.mood]}` : ''}</span>
                     ${actions}
@@ -1038,6 +1170,20 @@ document.addEventListener('DOMContentLoaded', () => {
         const { action, id } = el.dataset;
 
         switch (action) {
+            case 'note-tag': {
+                // Show every note with this #tag (it's a search, so clearing the box brings everything back)
+                const tag = `#${el.dataset.tag}`;
+                searchInput.value = tag;
+                state.query = tag.toLowerCase();
+                document.body.classList.add('search-open');
+                setView(['home', 'folder', 'archive'].includes(state.view) ? state.view : 'home');
+                break;
+            }
+            case 'note-layout':
+                state.noteLayout = el.dataset.layout;
+                try { localStorage.setItem('diaryNoteLayout', state.noteLayout); } catch (err) {}
+                render();
+                break;
             case 'pour':
                 state.pour = Number(el.dataset.level);
                 try { localStorage.setItem('diaryPour', String(state.pour)); } catch (err) {}
@@ -2289,6 +2435,50 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!e.target.closest || !e.target.closest('#popover')) closePopover();
     }, { passive: true, capture: true });
 
+    // ---------- Show password ----------
+    // An eye button inside every password box, so you can check what you typed before confirming
+    function passwordEye(input) {
+        if (input.dataset.eye) return input.parentElement.querySelector('.pw-eye');
+        input.dataset.eye = '1';
+        const wrap = document.createElement('span');
+        wrap.className = 'pw-wrap';
+        input.replaceWith(wrap);
+        wrap.append(input);
+        const eye = document.createElement('button');
+        eye.type = 'button';
+        eye.className = 'pw-eye';
+        eye.setAttribute('aria-pressed', 'false');
+        eye.setAttribute('aria-label', 'Show password');
+        eye.innerHTML = '<svg class="i"><use href="#i-eye"/></svg>';
+        eye.addEventListener('pointerdown', e => e.preventDefault()); // keep the keyboard open
+        eye.addEventListener('click', () => {
+            const show = input.type === 'password';
+            input.type = show ? 'text' : 'password';
+            eye.setAttribute('aria-pressed', String(show));
+            eye.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+            eye.innerHTML = `<svg class="i"><use href="#${show ? 'i-eye-off' : 'i-eye'}"/></svg>`;
+            input.focus();
+        });
+        wrap.append(eye);
+        return eye;
+    }
+
+    function showPasswordToggle(input, on) {
+        const eye = passwordEye(input);
+        eye.hidden = !on;
+        eye.setAttribute('aria-pressed', 'false');
+        eye.setAttribute('aria-label', 'Show password');
+        eye.innerHTML = '<svg class="i"><use href="#i-eye"/></svg>';
+    }
+
+    // Every password box that's already on the page (sign in, sign up)
+    document.querySelectorAll('input[type="password"]').forEach(passwordEye);
+    // Hide what you typed again whenever a dialog closes, so it's never left showing
+    document.addEventListener('close', e => {
+        if (!(e.target instanceof HTMLDialogElement)) return;
+        e.target.querySelectorAll('.pw-eye[aria-pressed="true"]').forEach(b => b.click());
+    }, true);
+
     // ---------- Prompt / confirm dialog ----------
     function ask({ title, text = '', value = null, placeholder = '', color = null, ok = 'OK', danger = false, allowEmpty = false, inputType = 'text' }) {
         return new Promise(resolve => {
@@ -2297,6 +2487,8 @@ document.addEventListener('DOMContentLoaded', () => {
             $('ask-text').hidden = !text;
             askInput.hidden = value === null;
             askInput.type = inputType;
+            askInput.dataset.pw = inputType === 'password' ? '1' : '';
+            showPasswordToggle(askInput, inputType === 'password');
             askInput.value = value || '';
             askInput.placeholder = placeholder;
             askInput.dataset.allowEmpty = allowEmpty ? '1' : '';
@@ -2326,7 +2518,8 @@ document.addEventListener('DOMContentLoaded', () => {
     $('ask-form').addEventListener('submit', e => {
         e.preventDefault();
         if (askInput.hidden) return finishAsk(true);
-        const value = askInput.value.trim();
+        // Passwords and PINs are taken exactly as typed (spaces count)
+        const value = askInput.dataset.pw ? askInput.value : askInput.value.trim();
         if (!value && !askInput.dataset.allowEmpty) return askInput.focus();
         finishAsk({ value, color: askColor });
     });

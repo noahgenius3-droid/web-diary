@@ -644,6 +644,7 @@ document.addEventListener('DOMContentLoaded', () => {
         box.innerHTML = c.draft.photos.map(p => `
             <figure class="pc-thumb">
                 <img src="${p.preview}" alt="">
+                ${window.PhotoEditor && p.file.type !== 'image/gif' ? `<button type="button" class="pc-edit" data-action="cm-edit-photo" data-id="${p.id}" aria-label="Edit photo with filters"><svg class="i"><use href="#i-wand"/></svg>Edit</button>` : ''}
                 <button type="button" class="att-remove" data-action="cm-remove-photo" data-id="${p.id}" aria-label="Remove photo"><svg class="i"><use href="#i-close"/></svg></button>
             </figure>`).join('');
     }
@@ -1063,6 +1064,16 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         'cm-add-photos': async () => addDraftPhotos(await Media.pickFiles('image/*')),
         'cm-camera': async () => addDraftPhotos(await Media.pickFiles('image/*', false, 'environment')),
+        'cm-edit-photo': async el => {
+            const photo = c.draft.photos.find(p => p.id === el.dataset.id);
+            if (!photo || !window.PhotoEditor) return;
+            const edited = await window.PhotoEditor.open(photo.file, { title: 'Edit photo', done: 'Use photo' });
+            if (!edited) return;
+            URL.revokeObjectURL(photo.preview);
+            photo.file = edited;
+            photo.preview = URL.createObjectURL(edited);
+            renderDraftPhotos();
+        },
         'cm-remove-photo': el => {
             const photo = c.draft.photos.find(p => p.id === el.dataset.id);
             if (photo) URL.revokeObjectURL(photo.preview);

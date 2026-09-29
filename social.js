@@ -52,6 +52,7 @@ document.addEventListener('DOMContentLoaded', () => {
         urls: new Map(),   // storage path -> { url, expires }
         remoteIds: new Set(), // local ids of my entries that exist in the feed
         remotePhotos: new Map(), // local id -> [{ id, path, name }] uploaded for the feed
+        remoteAudio: new Map(),  // local id -> { id, path, name, duration } the post's audio
         feedSort: 'latest',
         feedFilter: 'all',   // all | mine | saved | tag:<name>
         saved: new Set(),       // entry ids you've saved (synced to your account)
@@ -352,6 +353,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!name) return showAuthMessage('Tell us your name.', true);
             if (!USERNAME_RE.test(username)) return showAuthMessage('Usernames are 3–20 lowercase letters, numbers or _.', true);
             if (password.length < 6) return showAuthMessage('Use at least 6 characters for your password.', true);
+            if ($('auth-password2').value !== password) {
+                $('auth-password2').focus();
+                return showAuthMessage('The two passwords don’t match — tap the eye to check what you typed.', true);
+            }
         }
 
         const submit = $('auth-submit');
@@ -1382,7 +1387,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Feed ----------
     const FEED_SELECT = `
-        id, author, local_id, title, body, html, color, mood, photos, written_at, shared_at, allow_reposts,
+        id, author, local_id, title, body, html, color, mood, photos, audio, written_at, shared_at, allow_reposts,
         author_profile:diary_profiles!diary_shared_entries_author_fkey(username, display_name, avatar_path),
         likes:diary_entry_likes(user_id),
         comments:diary_comments(count),
@@ -1620,9 +1625,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Sharing ----------
     async function loadRemoteIds() {
-        const { data } = await client.from('diary_shared_entries').select('local_id, photos').eq('author', s.profile.id);
+        const { data } = await client.from('diary_shared_entries').select('local_id, photos, audio').eq('author', s.profile.id);
         s.remoteIds = new Set((data || []).map(r => r.local_id));
         s.remotePhotos = new Map((data || []).map(r => [r.local_id, r.photos || []]));
+        s.remoteAudio = new Map((data || []).filter(r => r.audio).map(r => [r.local_id, r.audio]));
     }
 
     function syncAllShared() {
@@ -1675,12 +1681,114 @@ document.addEventListener('DOMContentLoaded', () => {
         return photos;
     }
 
+    // ---------- Audio on posts and stories ----------
+    const POST_AUDIO = 'diary-post-audio';
+    const AUDIO_ACCEPT = 'audio/*,.mp3,.m4a,.aac,.wav,.ogg,.webm,.flac';
+    const MAX_POST_AUDIO = 20 * 1048576;
+
+    function audioExt(type) {
+        return { 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/x-m4a': 'm4a', 'audio/aac': 'aac', 'audio/wav': 'wav', 'audio/ogg': 'ogg', 'audio/flac': 'flac' }[type] || 'webm';
+    }
+
+    // How long a picked audio file is (the browser reads just the header)
+    function audioDuration(file) {
+        return new Promise(resolve => {
+            const a = document.createElement('audio');
+            const url = URL.createObjectURL(file);
+            const done = d => { URL.revokeObjectURL(url); resolve(Number.isFinite(d) && d > 0 ? d : 0); };
+            a.preload = 'metadata';
+            a.onloadedmetadata = () => done(a.duration);
+            a.onerror = () => done(0);
+            setTimeout(() => done(a.duration), 4000);
+            a.src = url;
+        });
+    }
+
+    // Record something or choose a song / audio file. Resolves { file, duration, name } or null.
+    function pickAudio(anchor) {
+        return new Promise(resolve => {
+            let picked = false;
+            app.openPopover(anchor, [
+                { label: 'Record audio', icon: 'i-mic', onClick: async () => {
+                    picked = true;
+                    const rec = await Media.recordVoice();
+                    if (!rec) return resolve(null);
+                    if (rec.error) { app.showToast(rec.error); return resolve(null); }
+                    const file = new File([rec.blob], `Recording.${audioExt(rec.type)}`, { type: rec.type });
+                    resolve({ file, duration: Math.max(1, Math.round(rec.duration)), name: 'Recording' });
+                } },
+                { label: 'Choose a song or audio file', icon: 'i-music', onClick: async () => {
+                    picked = true;
+                    const [file] = await Media.pickFiles(AUDIO_ACCEPT, false);
+                    if (!file) return resolve(null);
+                    const type = (file.type || '').split(';')[0] || 'audio/mpeg';
+                    if (!type.startsWith('audio/')) { app.showToast('Pick an audio file (MP3, M4A, WAV…)'); return resolve(null); }
+                    if (file.size > MAX_POST_AUDIO) { app.showToast('That audio is over 20 MB — try a shorter clip'); return resolve(null); }
+                    const duration = Math.round(await audioDuration(file));
+                    if (duration > 600) { app.showToast('Audio can be up to 10 minutes'); return resolve(null); }
+                    resolve({ file, duration: duration || 1, name: String(file.name || 'Audio').replace(/\.[a-z0-9]+$/i, '').slice(0, 80) });
+                } }
+            ]);
+            // Closing the menu without choosing
+            setTimeout(() => {
+                const check = () => {
+                    if (picked) return;
+                    if (document.getElementById('popover').hidden) resolve(null);
+                    else setTimeout(check, 300);
+                };
+                check();
+            }, 300);
+        });
+    }
+
+    async function uploadAudio(folder, file) {
+        const type = (file.type || 'audio/webm').split(';')[0];
+        const path = `${s.profile.id}/${folder}/${randomId()}.${audioExt(type)}`;
+        const { error } = await client.storage.from(POST_AUDIO).upload(path, await file.arrayBuffer(), { contentType: type, upsert: false });
+        return error ? null : path;
+    }
+
+    // The note's first audio attachment rides along with the post
+    async function syncAudio(note) {
+        const clip = (note.attachments || []).find(a => a.kind === 'audio');
+        const previous = s.remoteAudio.get(note.id) || null;
+        if (!clip) {
+            if (previous) client.storage.from(POST_AUDIO).remove([previous.path]);
+            return null;
+        }
+        if (previous && previous.id === clip.id) return previous;
+        const source = freshFiles.get(clip.id) || await Media.get(clip.id);
+        if (!source) return previous;
+        const file = source instanceof File ? source : new File([source], clip.name || 'audio', { type: clip.type || source.type || 'audio/webm' });
+        const path = await uploadAudio(note.id, file);
+        freshFiles.delete(clip.id);
+        if (!path) return previous;
+        if (previous) client.storage.from(POST_AUDIO).remove([previous.path]);
+        return { id: clip.id, path, name: String(clip.name || 'Audio').replace(/\.[a-z0-9]+$/i, '').slice(0, 80), duration: Math.round(clip.duration || 0) || null };
+    }
+
+    function audioCardHTML(audio) {
+        if (!audio || !audio.path) return '';
+        return `
+            <div class="post-audio">
+                <span class="pa-art" aria-hidden="true"><svg class="i"><use href="#i-music"/></svg></span>
+                <div class="pa-main">
+                    <strong class="pa-name">${esc(audio.name || 'Audio')}</strong>
+                    ${voiceHTML({ path: audio.path, duration: audio.duration || 0 }, POST_AUDIO)}
+                </div>
+            </div>`;
+    }
+
     async function upsertShared(note) {
         let html = Rich.sanitize(note.html || '');
         if (html.length > 60000) html = Rich.textToHTML(note.text.slice(0, 20000));
         const photos = await syncPhotos(note);
         s.remotePhotos.set(note.id, photos);
+        const audio = await syncAudio(note);
+        if (audio) s.remoteAudio.set(note.id, audio);
+        else s.remoteAudio.delete(note.id);
         const { error } = await client.from('diary_shared_entries').upsert({
+            audio,
             photos,
             author: s.profile.id,
             local_id: note.id,
@@ -1708,6 +1816,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const photos = (s.remotePhotos.get(note.id) || []).map(p => p.path);
         if (photos.length) await client.storage.from(FEED_BUCKET).remove(photos);
         s.remotePhotos.delete(note.id);
+        const audio = s.remoteAudio.get(note.id);
+        if (audio) client.storage.from(POST_AUDIO).remove([audio.path]);
+        s.remoteAudio.delete(note.id);
         s.remoteIds.delete(note.id);
         s.feed = null;
     }
@@ -1832,9 +1943,11 @@ document.addEventListener('DOMContentLoaded', () => {
                             <button type="button" class="pc-quick" data-action="feed-add-photos" aria-label="Add photos"><svg class="i"><use href="#i-image"/></svg></button>
                         </div>
                         <div class="pc-photos" id="feed-photos" hidden></div>
+                        <div class="pc-audio" id="feed-audio" hidden></div>
                         <div class="pc-foot">
                             <button type="button" class="pc-tool" data-action="feed-add-photos"><svg class="i"><use href="#i-image"/></svg>Photo</button>
                             <button type="button" class="pc-tool camera" data-action="feed-camera"><svg class="i"><use href="#i-camera"/></svg>Camera</button>
+                            <button type="button" class="pc-tool audio" data-action="feed-audio" aria-haspopup="menu"><svg class="i"><use href="#i-music"/></svg>Audio</button>
                             <button type="button" class="pc-tool video" data-action="feed-video"><svg class="i"><use href="#i-reel"/></svg>Video</button>
                             <button type="button" class="pc-tool live" data-action="live-start"><svg class="i"><use href="#i-live"/></svg>Live</button>
                             <button type="button" class="pc-tool story-toggle" data-action="feed-story-toggle" aria-pressed="${s.feedStory}" title="Also add this post to your story"><span class="pc-story-ring" aria-hidden="true"></span>Story</button>
@@ -1935,19 +2048,36 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!box) return;
         const photos = s.feedDraft.photos;
         box.hidden = !photos.length;
-        box.closest('.post-composer')?.classList.toggle('open', photos.length > 0 || !!s.feedDraft.text);
+        box.closest('.post-composer')?.classList.toggle('open', photos.length > 0 || !!s.feedDraft.text || !!s.feedDraft.audio);
         box.innerHTML = photos.map(p => `
             <figure class="pc-thumb">
                 <img src="${p.preview}" alt="">
+                ${window.PhotoEditor && p.file.type !== 'image/gif' ? `<button type="button" class="pc-edit" data-action="feed-edit-photo" data-id="${p.id}" aria-label="Edit photo with filters"><svg class="i"><use href="#i-wand"/></svg>Edit</button>` : ''}
                 <button type="button" class="att-remove" data-action="feed-remove-photo" data-id="${p.id}" aria-label="Remove photo"><svg class="i"><use href="#i-close"/></svg></button>
             </figure>`).join('');
+        renderFeedAudio();
+    }
+
+    function renderFeedAudio() {
+        const box = $('feed-audio');
+        if (!box) return;
+        const a = s.feedDraft.audio;
+        box.hidden = !a;
+        box.closest('.post-composer')?.classList.toggle('open', !!a || s.feedDraft.photos.length > 0 || !!s.feedDraft.text);
+        box.innerHTML = a ? `
+            <span class="pa-art small" aria-hidden="true"><svg class="i"><use href="#i-music"/></svg></span>
+            <span class="pc-audio-text"><strong>${esc(a.name)}</strong><small>${Media.formatDuration(a.duration)} · plays with your post</small></span>
+            <button type="button" class="pc-audio-play" data-action="feed-audio-play" aria-label="Play preview"><svg class="i"><use href="#i-play"/></svg></button>
+            <audio preload="metadata" src="${a.preview}" hidden></audio>
+            <button type="button" class="att-remove" data-action="feed-remove-audio" aria-label="Remove audio"><svg class="i"><use href="#i-close"/></svg></button>` : '';
     }
 
     async function postToFeed() {
         if (s.posting) return;
         const text = s.feedDraft.text.trim();
         const photos = s.feedDraft.photos;
-        if (!text && !photos.length) {
+        const audio = s.feedDraft.audio;
+        if (!text && !photos.length && !audio) {
             app.showToast('Write something or add a photo first');
             $('feed-text')?.focus();
             return;
@@ -1959,8 +2089,14 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.disabled = true;
         }
         try {
-            const note = await app.createEntry({ text, shared: true }, photos.map(p => p.file));
-            note.attachments.forEach((att, i) => { if (photos[i]) freshFiles.set(att.id, photos[i].file); });
+            const files = photos.map(p => p.file);
+            if (audio) {
+                audio.file.duration = audio.duration;
+                files.push(audio.file);
+            }
+            const note = await app.createEntry({ text, shared: true }, files);
+            note.attachments.forEach((att, i) => { if (files[i]) freshFiles.set(att.id, files[i]); });
+            if (audio) URL.revokeObjectURL(audio.preview);
             // Share right away instead of waiting for the autosave debounce
             clearTimeout(shareTimers.get(note.id));
             const result = await new Promise(resolve => queue(async () => {
@@ -1973,7 +2109,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }));
             photos.forEach(p => URL.revokeObjectURL(p.preview));
             if (result.ok && s.feedStory && window.diaryStories) window.diaryStories.shareEntry(note.id, text);
-            s.feedDraft = { text: '', photos: [] };
+            s.feedDraft = { text: '', photos: [], audio: null };
             s.feed = null;
             if (!result.ok) return; // upsertShared already explained; the entry is still saved in the diary
             if (result.photos < photos.length) app.showToast(`Posted, but ${photos.length - result.photos} photo(s) couldn’t upload`);
@@ -2029,6 +2165,7 @@ document.addEventListener('DOMContentLoaded', () => {
             html: p.html,
             mood: p.mood,
             photos: p.photos,
+            audio: p.audio,
             bucket: FEED_BUCKET,
             likes: p.likes,
             commentCount: commentCount(p),
@@ -2084,9 +2221,70 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>`;
     }
 
+    // ---------- Hashtags ----------
+    // Every #tag in a post, comment or caption is a link to all posts with that tag
+    const TAG_RE = /(^|[^\p{L}\p{N}_&#])#([\p{L}\p{N}_]{2,30})/gu;
+    const tagButton = t => `<button type="button" class="hashtag" data-action="ex-tag" data-tag="${esc(t.toLowerCase())}">#${esc(t)}</button>`;
+
+    function linkTags(html) {
+        if (!html || !html.includes('#')) return html;
+        const tpl = document.createElement('template');
+        tpl.innerHTML = html;
+        const walker = document.createTreeWalker(tpl.content, NodeFilter.SHOW_TEXT);
+        const hits = [];
+        while (walker.nextNode()) {
+            const node = walker.currentNode;
+            if (node.parentElement && node.parentElement.closest('a, button, code, pre')) continue;
+            if (/#[\p{L}\p{N}_]{2,}/u.test(node.nodeValue)) hits.push(node);
+        }
+        hits.forEach(node => {
+            const span = document.createElement('span');
+            span.innerHTML = esc(node.nodeValue).replace(TAG_RE, (m, pre, tag) => `${pre}${tagButton(tag)}`);
+            node.replaceWith(...span.childNodes);
+        });
+        return tpl.innerHTML;
+    }
+
+    // While typing "#wo…" in a composer, offer tags people already use
+    const STARTER_TAGS = ['today', 'grateful', 'weekend', 'goals', 'mood', 'throwback', 'family', 'faith', 'work', 'food', 'music', 'travel'];
+    function suggestTags(textarea) {
+        const form = textarea.closest('form');
+        if (!form) return;
+        let box = form.querySelector('.tag-suggest');
+        const before = textarea.value.slice(0, textarea.selectionStart || 0);
+        const m = before.match(/(?:^|\s)#([\p{L}\p{N}_]{0,30})$/u);
+        if (!m) { if (box) box.hidden = true; return; }
+        const typed = m[1].toLowerCase();
+        const pool = [...new Set([...trendingTags().map(([t]) => t), ...STARTER_TAGS])];
+        const picks = pool.filter(t => t.startsWith(typed) && t !== typed).slice(0, 6);
+        if (!box) {
+            box = document.createElement('div');
+            box.className = 'tag-suggest';
+            box.setAttribute('role', 'listbox');
+            box.setAttribute('aria-label', 'Hashtag suggestions');
+            (textarea.closest('.pc-row') || textarea).after(box);
+        }
+        box.hidden = !picks.length;
+        box.innerHTML = picks.map(t => `<button type="button" role="option" data-action="tag-insert" data-tag="${esc(t)}">#${esc(t)}</button>`).join('');
+    }
+
+    function insertTag(button) {
+        const form = button.closest('form');
+        const textarea = form && form.querySelector('textarea');
+        if (!textarea) return;
+        const pos = textarea.selectionStart || textarea.value.length;
+        const before = textarea.value.slice(0, pos).replace(/#([\p{L}\p{N}_]{0,30})$/u, `#${button.dataset.tag} `);
+        textarea.value = before + textarea.value.slice(pos);
+        textarea.focus();
+        textarea.setSelectionRange(before.length, before.length);
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        const box = form.querySelector('.tag-suggest');
+        if (box) box.hidden = true;
+    }
+
     function postCaptionHTML(o, photos, full) {
         const { name } = postPerson(o);
-        const body = o.html ? Rich.sanitize(o.html) : esc(o.body || '');
+        const body = linkTags(o.html ? Rich.sanitize(o.html) : esc(o.body || ''));
         const long = !full && ((o.body || '').length > 280 || (o.body || '').split('\n').length > 5);
         return `
             <div class="post-caption${photos.length && !full ? '' : ' text-only'}">
@@ -2140,6 +2338,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <button class="more-btn" data-action="post-menu" data-kind="${o.kind}" data-id="${esc(o.id)}" aria-label="Post options"><svg class="i"><use href="#i-more"/></svg></button>
                 </header>
                 ${photos.length ? postMediaHTML(o, photos) : postCaptionHTML(o, photos, false)}
+                ${audioCardHTML(o.audio)}
                 ${o.bodyExtra || ''}
                 <div class="post-actions">${postActionsHTML(o)}</div>
                 ${o.likes.length ? likedBy(o.likes) : ''}
@@ -2182,7 +2381,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="comment full" data-comment="${esc(c.id)}">
                             ${avatar({ id: c.author, display_name: author.display_name, avatar_path: author.avatar_path }, 'sm')}
                             <div class="c-main">
-                                <div class="c-bubble${c.audio_path ? ' has-voice' : ''}"><strong>${who(c)}</strong> ${c.body ? esc(c.body) : ''}
+                                <div class="c-bubble${c.audio_path ? ' has-voice' : ''}"><strong>${who(c)}</strong> ${c.body ? linkTags(esc(c.body)) : ''}
                                     ${c.audio_path ? voiceHTML({ path: c.audio_path, duration: c.audio_duration }, COMMENT_AUDIO) : ''}</div>
                                 <span class="comment-meta">
                                     <time datetime="${esc(c.created_at)}" title="${esc(fullDate(c.created_at))}">${timeAgo(c.created_at)}</time>
@@ -2210,7 +2409,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="comments" data-comments="${key}" data-mode="card">
                 ${total ? `<button type="button" class="link-btn muted-link" data-action="post-open" data-key="${key}">View ${total === 1 ? '1 comment' : `all ${total} comments`}</button>` : ''}
                 ${recent.length ? `<div class="comment-preview">${recent.map(c => `
-                    <p class="cp-line" data-action="post-open" data-key="${key}"><strong>${who(c)}</strong> ${esc(c.body)}${c.audio_path ? `<span class="cp-voice"><svg class="i"><use href="#i-mic"/></svg>Voice comment · ${Media.formatDuration(c.audio_duration || 0)}</span>` : ''}</p>`).join('')}</div>` : ''}
+                    <p class="cp-line" data-action="post-open" data-key="${key}"><strong>${who(c)}</strong> ${linkTags(esc(c.body))}${c.audio_path ? `<span class="cp-voice"><svg class="i"><use href="#i-mic"/></svg>Voice comment · ${Media.formatDuration(c.audio_duration || 0)}</span>` : ''}</p>`).join('')}</div>` : ''}
                 ${canComment ? `
                     <form class="comment-form" data-form="comment" data-key="${key}">
                         <input name="body" maxlength="2000" placeholder="Add a comment…" autocomplete="off" enterkeyhint="send" aria-label="Add a comment">
@@ -2481,10 +2680,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const photos = postPhotos(o);
         const { profile, person, name } = postPerson(o);
         const first = o.mine ? '' : esc(profile.display_name.split(' ')[0]);
+        // Where "back" goes, named after the page underneath
+        const backTo = { feed: 'Feed', explore: 'Explore', community: 'Community', communities: 'Groups', messages: 'Chats', settings: 'Settings' }[app.state.view] || 'Back';
         return `
             <header class="pv-top">
-                <button type="button" class="icon-btn pv-close" data-pv="close" aria-label="Close post">
-                    <svg class="i pv-ic-back"><use href="#i-back"/></svg><svg class="i pv-ic-close"><use href="#i-close"/></svg>
+                <button type="button" class="pv-close pv-back" data-pv="close" aria-label="Back to ${backTo === 'Back' ? 'where you were' : backTo}" title="Back (Esc)">
+                    <svg class="i"><use href="#i-back"/></svg><span>${backTo}</span>
                 </button>
                 <div class="pv-top-who">
                     ${avatar(person, 'sm')}
@@ -2498,6 +2699,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${o.pinned ? '<p class="repost-line pinned-line"><svg class="i"><use href="#i-pin-note"/></svg>Pinned by the admins</p>' : ''}
                     ${o.repostedBy ? `<p class="repost-line"><svg class="i"><use href="#i-repost"/></svg>${esc(o.repostedBy)} ${o.reshared ? 'reshared this' : 'reposted'}</p>` : ''}
                     ${postCaptionHTML(o, photos, true)}
+                    ${audioCardHTML(o.audio)}
                     <div data-pd="bodyextra">${o.bodyExtra || ''}</div>
                     <div data-pd="extra">${o.extraHTML || ''}</div>
                     <p class="pv-date">${esc(fullDate(o.createdAt))}</p>
@@ -2652,7 +2854,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             const el = e.target.closest('[data-action]');
-            if (el && pv.contains(el) && app.actions[el.dataset.action]) app.actions[el.dataset.action](el, e);
+            if (el && pv.contains(el) && app.actions[el.dataset.action]) {
+                if (['ex-tag', 'feed-tag'].includes(el.dataset.action)) closePost(); // a #tag takes you to the feed
+                app.actions[el.dataset.action](el, e);
+            }
         });
         pv.addEventListener('submit', async e => {
             const form = e.target.closest('form[data-form="comment"]');
@@ -2675,6 +2880,44 @@ document.addEventListener('DOMContentLoaded', () => {
             if (e.target.id === 'pv-input') e.target.form.querySelector('.pv-send').disabled = !e.target.value.trim();
         });
         pv.addEventListener('cancel', e => { e.preventDefault(); closePost(); });
+
+        // Phones: swipe right from the left edge to go back, like any app page (the sheet follows your finger)
+        let edge = null;
+        pv.addEventListener('touchstart', e => {
+            const t = e.touches[0];
+            if (e.touches.length !== 1 || t.clientX > 28 || window.innerWidth >= 720) return;
+            edge = { x: t.clientX, y: t.clientY, dx: 0, shell: $('pv-shell') };
+        }, { passive: true });
+        pv.addEventListener('touchmove', e => {
+            if (!edge) return;
+            const t = e.touches[0];
+            const dx = t.clientX - edge.x;
+            if (Math.abs(t.clientY - edge.y) > Math.abs(dx) && edge.dx === 0) { edge = null; return; } // a scroll, not a swipe
+            edge.dx = Math.max(0, dx);
+            edge.shell.style.transition = 'none';
+            edge.shell.style.transform = `translateX(${edge.dx}px)`;
+        }, { passive: true });
+        const endEdge = () => {
+            if (!edge) return;
+            const { shell, dx } = edge;
+            edge = null;
+            shell.style.transition = 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)';
+            if (dx > window.innerWidth * 0.3) {
+                pv.classList.add('swiped'); // it's already sliding out — skip the usual closing animation
+                shell.style.transform = 'translateX(100%)';
+                setTimeout(() => {
+                    shell.style.transition = '';
+                    shell.style.transform = '';
+                    pv.classList.remove('swiped');
+                }, 400);
+                closePost();
+            } else {
+                shell.style.transform = '';
+                setTimeout(() => { shell.style.transition = ''; }, 240);
+            }
+        };
+        pv.addEventListener('touchend', endEdge);
+        pv.addEventListener('touchcancel', endEdge);
         pv.addEventListener('keydown', e => {
             if (e.target.closest('input, textarea, [contenteditable="true"]')) return;
             if (e.key === 'ArrowRight' || e.key === 'j') { e.preventDefault(); stepPost(1); }
@@ -2706,7 +2949,7 @@ document.addEventListener('DOMContentLoaded', () => {
     content.addEventListener('click', e => {
         const card = e.target.closest('.post.ig[data-post]');
         if (!card || !content.contains(card)) return;
-        if (e.target.closest('button, a, input, textarea, select, label, form, video, [data-action], .comments, .cm-poll, .cm-reacts')) return;
+        if (e.target.closest('button, a, input, textarea, select, label, form, video, audio, [data-action], .comments, .cm-poll, .cm-reacts, .post-audio')) return;
         if (window.getSelection && String(window.getSelection()).length) return;
         openPost(card.dataset.post);
     });
@@ -2737,6 +2980,7 @@ document.addEventListener('DOMContentLoaded', () => {
         renderPost, commentCount, openComments, repaintComments, MOOD_EMOJI: () => MOOD_EMOJI,
         respond, openChat, focusPost, commentsBlock, addComment, deleteComment, toggleSaved, postsFor,
         changeAvatar, removeAvatar, signOut, openAuth, hashtags, commentCount, followButton, toggleFollow, loadFollows,
+        pickAudio, uploadAudio, voiceHTML, POST_AUDIO, linkTags,
         loadFeed: () => { if (s.feed === null) loadFeed(); },
         // Open a feed post in the post view from anywhere (Explore, notifications), even if its card isn't on screen
         openEntry(id, opts) {
@@ -3096,6 +3340,37 @@ document.addEventListener('DOMContentLoaded', () => {
             renderFeedPhotos();
         },
         'save-post': el => toggleSaved('entry', el.dataset.id),
+        'feed-audio': async el => {
+            const picked = await pickAudio(el);
+            if (!picked) return;
+            if (s.feedDraft.audio) URL.revokeObjectURL(s.feedDraft.audio.preview);
+            s.feedDraft.audio = { ...picked, preview: URL.createObjectURL(picked.file) };
+            renderFeedAudio();
+        },
+        'feed-audio-play': el => {
+            const audio = el.parentElement.querySelector('audio');
+            if (!audio) return;
+            const icon = name => { el.innerHTML = `<svg class="i"><use href="#${name}"/></svg>`; };
+            audio.onended = audio.onpause = () => { icon('i-play'); el.setAttribute('aria-label', 'Play preview'); };
+            audio.onplay = () => { icon('i-pause'); el.setAttribute('aria-label', 'Pause preview'); };
+            if (audio.paused) audio.play().catch(() => app.showToast('Couldn’t play that audio'));
+            else audio.pause();
+        },
+        'feed-remove-audio': () => {
+            if (s.feedDraft.audio) URL.revokeObjectURL(s.feedDraft.audio.preview);
+            s.feedDraft.audio = null;
+            renderFeedAudio();
+        },
+        'feed-edit-photo': async el => {
+            const photo = s.feedDraft.photos.find(p => p.id === el.dataset.id);
+            if (!photo || !window.PhotoEditor) return;
+            const edited = await window.PhotoEditor.open(photo.file, { title: 'Edit photo', done: 'Use photo' });
+            if (!edited) return;
+            URL.revokeObjectURL(photo.preview);
+            photo.file = edited;
+            photo.preview = URL.createObjectURL(edited);
+            renderFeedPhotos();
+        },
         'feed-story-toggle': el => {
             s.feedStory = !s.feedStory;
             el.setAttribute('aria-pressed', String(s.feedStory));
@@ -3218,6 +3493,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (form) startVoiceComment(form);
         },
         'follow': el => toggleFollow(el.dataset.id, el.dataset.name),
+        'tag-insert': el => insertTag(el),
         'chat-refresh': () => refreshChat(),
         'vc-send': () => finishVoiceComment(true),
         'vc-cancel': () => finishVoiceComment(false),
@@ -3403,6 +3679,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (Rich.toText(e.target.innerHTML)) sendTyping();
             else sendTyping(true);
         }
+        if (e.target.id === 'feed-text' || e.target.id === 'cm-text') suggestTags(e.target);
         if (e.target.id === 'feed-text') {
             s.feedDraft.text = e.target.value;
             e.target.closest('.post-composer')?.classList.toggle('open', !!e.target.value || s.feedDraft.photos.length > 0);

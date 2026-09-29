@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const MAX_REEL = 180;
     const MAX_BYTES = 50 * 1048576;
     const PROFILE = 'username, display_name, avatar_path';
+    const STORY_AUDIO_MAX = 30; // a photo story with music stays up as long as the song plays, up to this
 
     const st = {
         userId: null,
@@ -74,6 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
         st.storiesLoading = true;
         const { data } = await client.from('diary_stories')
             .select(`id, author, media_path, media_type, bucket, caption, duration, created_at, expires_at,
+                audio_path, audio_duration, audio_name,
                 author_profile:diary_profiles!diary_stories_author_fkey(${PROFILE})`)
             .order('created_at')
             .limit(200);
@@ -324,11 +326,39 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // The compose sheet: preview, caption, Share. Resolves with { caption, alsoStory } or null if cancelled.
-    function compose({ title, file, isVideo, maxCaption, note, offerStory = false, storyDefault = false }) {
+    // allowAudio: offer "Add music" (photo stories). Photos can always be edited with filters first.
+    function compose({ title, file, isVideo, maxCaption, note, offerStory = false, storyDefault = false, allowAudio = false }) {
         const dialog = $('media-compose');
         const preview = $('mc-preview');
         const caption = $('mc-caption');
-        const url = URL.createObjectURL(file);
+        let url = URL.createObjectURL(file);
+        let current = file;
+        let audio = null;
+        const canEdit = !isVideo && window.PhotoEditor && file.type !== 'image/gif';
+        $('mc-edit').hidden = !canEdit;
+        $('mc-audio').hidden = !(allowAudio && !isVideo && I.pickAudio);
+        const paintAudio = () => {
+            const chip = $('mc-audio-chip');
+            chip.hidden = !audio;
+            chip.innerHTML = audio ? `<svg class="i"><use href="#i-music"/></svg><span>${esc(audio.name)} · ${Media.formatDuration(Math.min(audio.duration, STORY_AUDIO_MAX))}</span><button type="button" class="mc-audio-x" aria-label="Remove music"><svg class="i"><use href="#i-close"/></svg></button>` : '';
+            $('mc-audio').innerHTML = `<svg class="i"><use href="#i-music"/></svg>${audio ? 'Change music' : 'Add music'}`;
+        };
+        paintAudio();
+        $('mc-edit').onclick = async () => {
+            const edited = await window.PhotoEditor.open(current, { title: 'Edit photo', done: 'Use photo' });
+            if (!edited) return;
+            current = edited;
+            URL.revokeObjectURL(url);
+            url = URL.createObjectURL(edited);
+            preview.innerHTML = `<img src="${url}" alt="">`;
+        };
+        $('mc-audio').onclick = async e => {
+            const picked = await I.pickAudio(e.currentTarget);
+            if (picked) { audio = picked; paintAudio(); }
+        };
+        $('mc-audio-chip').onclick = e => {
+            if (e.target.closest('.mc-audio-x')) { audio = null; paintAudio(); }
+        };
         $('mc-title').textContent = title;
         $('mc-share').disabled = false;
         $('mc-share').textContent = 'Share';
@@ -349,6 +379,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (dialog.open) dialog.close();
                 preview.innerHTML = '';
                 URL.revokeObjectURL(url);
+                $('mc-edit').onclick = $('mc-audio').onclick = $('mc-audio-chip').onclick = null;
                 resolve(value);
             };
             $('mc-form').onsubmit = e => {
@@ -356,7 +387,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 $('mc-share').disabled = true;
                 $('mc-share').textContent = 'Sharing…';
                 // Keep the sheet up (showing progress) until the caller is done
-                resolve({ caption: caption.value.trim(), alsoStory: offerStory && $('mc-story').checked, done: () => cleanup(undefined) });
+                resolve({ caption: caption.value.trim(), alsoStory: offerStory && $('mc-story').checked, file: current, audio, done: () => cleanup(undefined) });
             };
             $('mc-cancel').onclick = () => cleanup(null);
             dialog.onclose = () => cleanup(null);
@@ -472,28 +503,35 @@ document.addEventListener('DOMContentLoaded', () => {
             return app.showToast('Pick a photo or a video');
         }
 
-        const result = await compose({ title: 'New story', file, isVideo, maxCaption: 300, note: 'Friends only · disappears after 24 hours' });
+        const result = await compose({ title: 'New story', file, isVideo, maxCaption: 300, note: 'Friends only · disappears after 24 hours', allowAudio: true });
         if (!result) return;
 
         st.busy = true;
         paintStrip();
+        let audioPath = null;
         try {
             let path;
-            let upload = file;
+            let upload = result.file || file;
             if (isVideo) {
                 upload = await prepareVideo(file, MAX_STORY_VIDEO);
                 if (!upload) throw new Error('too big');
                 path = await uploadVideo(STORY_BUCKET, upload, videoType(upload) || type);
             } else {
-                path = await uploadImage(STORY_BUCKET, `${s.profile.id}/${randomId()}`, file);
+                path = await uploadImage(STORY_BUCKET, `${s.profile.id}/${randomId()}`, upload);
             }
             if (!path) throw new Error('upload');
+            if (result.audio) {
+                audioPath = await I.uploadAudio('stories', result.audio.file);
+                if (!audioPath) app.showToast('Couldn’t add the music — posting the story without it');
+            }
             const { error } = await client.from('diary_stories').insert({
                 media_path: path, media_type: isVideo ? 'video' : 'image', caption: result.caption,
-                duration: info && info.duration ? Math.min(60, Math.max(1, Math.round(info.duration * 10) / 10)) : null
+                duration: info && info.duration ? Math.min(60, Math.max(1, Math.round(info.duration * 10) / 10)) : null,
+                ...(audioPath ? { audio_path: audioPath, audio_duration: Math.min(600, Math.max(1, result.audio.duration)), audio_name: result.audio.name.slice(0, 120) } : {})
             });
             if (error) {
                 client.storage.from(STORY_BUCKET).remove([path]);
+                if (audioPath) client.storage.from(I.POST_AUDIO).remove([audioPath]);
                 throw error;
             }
             app.showToast('Added to your story ✨');
@@ -530,13 +568,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function show() {
         clearTimeout(view.timer);
+        viewer.querySelectorAll('.story-audio').forEach(a => a.pause()); // the last story's song stops here
         const group = view.groups[view.gi];
         const item = current();
         s.seenStories.add(item.id);
         try { localStorage.setItem('diarySeenStories', JSON.stringify([...s.seenStories].slice(-400))); } catch (e) {}
 
         const mine = group.author === s.profile.id;
-        const seconds = item.media_type === 'video' ? Math.min(item.duration || 15, MAX_STORY_VIDEO) : IMAGE_SECONDS;
+        const withMusic = item.media_type !== 'video' && !!item.audio_path;
+        const seconds = item.media_type === 'video' ? Math.min(item.duration || 15, MAX_STORY_VIDEO)
+            : withMusic ? Math.min(STORY_AUDIO_MAX, Math.max(IMAGE_SECONDS, item.audio_duration || IMAGE_SECONDS)) : IMAGE_SECONDS;
         $('story-bars').innerHTML = group.items.map((x, i) =>
             `<span class="${i < view.ii ? 'done' : i === view.ii ? 'active' : ''}"><i style="animation-duration:${seconds}s"></i></span>`).join('');
         $('story-avatar').outerHTML = avatar(group.person, 'sm').replace('<span class="avatar', '<span id="story-avatar" class="avatar');
@@ -563,6 +604,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 ? `<video class="story-media" data-path="${esc(item.media_path)}" data-bucket="${esc(item.bucket || STORY_BUCKET)}" playsinline autoplay></video>`
                 : `<img class="story-media" data-path="${esc(item.media_path)}" data-bucket="${esc(item.bucket || STORY_BUCKET)}" alt="">`}
             ${item.caption ? `<p class="story-caption">${esc(item.caption)}</p>` : ''}
+            ${withMusic ? `
+                <div class="story-music" aria-label="Music: ${esc(item.audio_name || 'Audio')}">
+                    <span class="sm-bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                    <span class="sm-name">${esc(item.audio_name || 'Audio')}</span>
+                    <audio class="story-audio" data-path="${esc(item.audio_path)}" data-bucket="${I.POST_AUDIO}" preload="auto"></audio>
+                </div>` : ''}
             ${mine ? `<button type="button" class="story-seen" id="story-seen" data-id="${esc(item.id)}"><svg class="i"><use href="#i-eye"/></svg><span>Seen by …</span></button>` : ''}`;
         if (mine) paintSeen(item.id);
         else recordView(item.id);
@@ -573,6 +620,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     media.muted = true;
                     media.play().catch(() => {});
                 });
+            }
+            const music = card.querySelector('.story-audio');
+            if (music && current() === item && !view.paused) {
+                music.play().catch(() => card.querySelector('.story-music').classList.add('blocked'));
             }
         });
         if (item.media_type === 'video') {
@@ -650,6 +701,8 @@ document.addEventListener('DOMContentLoaded', () => {
         viewer.classList.add('paused');
         const video = viewer.querySelector('video.story-media');
         if (video) video.pause();
+        const music = viewer.querySelector('.story-audio');
+        if (music) music.pause();
     }
 
     function resume() {
@@ -658,6 +711,8 @@ document.addEventListener('DOMContentLoaded', () => {
         viewer.classList.remove('paused');
         const video = viewer.querySelector('video.story-media');
         if (video) video.play().catch(() => {});
+        const music = viewer.querySelector('.story-audio');
+        if (music) music.play().catch(() => {});
         run(view.remaining);
     }
 
@@ -689,6 +744,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         // Only files made for the story are deleted — a shared post or reel keeps its media
         if ((item.bucket || STORY_BUCKET) === STORY_BUCKET) client.storage.from(STORY_BUCKET).remove([item.media_path]);
+        if (item.audio_path) client.storage.from(I.POST_AUDIO).remove([item.audio_path]);
         st.stories = (st.stories || []).filter(x => x.id !== item.id);
         const group = view.groups[view.gi];
         group.items = group.items.filter(x => x.id !== item.id);
@@ -738,6 +794,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (view) clearTimeout(view.timer);
         const video = viewer.querySelector('video');
         if (video) video.pause();
+        viewer.querySelectorAll('audio').forEach(a => a.pause());
         $('story-card').innerHTML = '';
         view = null;
         paintStrip();
@@ -812,7 +869,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <svg class="i"><use href="#${saved ? 'i-bookmark-fill' : 'i-bookmark'}"/></svg><span class="sr-only">${saved ? 'Saved' : 'Save'}</span>
                     </button>
                 </div>
-                ${r.caption ? `<div class="post-caption"><strong class="cap-name">${r.author === me ? 'You' : esc(p.display_name)}</strong> <span class="post-text">${esc(r.caption)}</span></div>` : ''}
+                ${r.caption ? `<div class="post-caption"><strong class="cap-name">${r.author === me ? 'You' : esc(p.display_name)}</strong> <span class="post-text">${I.linkTags(esc(r.caption))}</span></div>` : ''}
             </article>`;
     }
 
@@ -907,7 +964,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <span class="burst" aria-hidden="true"><svg class="i"><use href="#i-heart-fill"/></svg></span>
                 <div class="reel-info">
                     <div class="reel-who">${avatar(person, 'sm')}<strong>${r.author === me ? 'You' : esc(p.display_name)}</strong><span>· ${timeAgo(r.created_at)}</span></div>
-                    ${r.caption ? `<p class="reel-caption${long ? ' clamped' : ''}"${long ? ' data-action="reel-caption"' : ''}>${esc(r.caption)}</p>` : ''}
+                    ${r.caption ? `<p class="reel-caption${long ? ' clamped' : ''}"${long ? ' data-action="reel-caption"' : ''}>${I.linkTags(esc(r.caption))}</p>` : ''}
                 </div>
                 <div class="reel-side">
                     <button class="reel-act" data-action="reel-like" data-id="${esc(r.id)}" aria-pressed="${liked}" aria-label="${liked ? 'Unlike' : 'Like'}">
