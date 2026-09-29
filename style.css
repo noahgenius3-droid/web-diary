@@ -9466,7 +9466,7 @@ form.sending { opacity: 0.6; pointer-events: none; }
 .pc-tool.live, .pc-quick.live { color: #ef4444; }
 
 /* ---------- Live video dialog ---------- */
-.live {
+dialog.live {
     position: fixed;
     inset: 0;
     width: 100%;
@@ -9480,7 +9480,7 @@ form.sending { opacity: 0.6; pointer-events: none; }
     color: #fff;
     overflow: hidden;
 }
-.live::backdrop { background: #000; }
+dialog.live::backdrop { background: #000; }
 .lv-stage { position: relative; width: 100%; height: 100%; }
 #lv-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #0b0b0f; }
 #lv-video.mirror { transform: scaleX(-1); }
@@ -9576,7 +9576,7 @@ form.sending { opacity: 0.6; pointer-events: none; }
 .lv-btn .i { width: 20px; height: 20px; }
 .lv-btn[aria-pressed="true"] { background: #fff; color: #000; }
 .lv-end { flex: none; min-height: 44px; padding: 0 18px; border: 0; border-radius: 22px; background: #ef4444; color: #fff; font: inherit; font-weight: 800; cursor: pointer; }
-.live:not(.hosting) .host-only { display: none; }
+dialog.live:not(.hosting) .host-only { display: none; }
 .lv-setup {
     position: absolute;
     z-index: 3;
@@ -9734,3 +9734,4 @@ form.sending { opacity: 0.6; pointer-events: none; }
 .ex-tile.hot .ex-tile-text { top: 44px; }
 .ex-tile-text strong { display: block; margin-bottom: 4px; font-size: 1.02rem; }
 @media (max-width: 760px) { .ex-search { max-width: none; } }
+.pc-quick.live { background: color-mix(in srgb, #ef4444 14%, transparent); color: #ef4444; }
