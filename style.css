@@ -8258,3 +8258,26 @@ button, [role="button"], .tab, .tab-item, .chip, .pill, .nav-item, .story, .reel
 .cm-hero .call-chip { color: #15803d; }
 .cm-hero .icon-btn { background: rgba(255, 255, 255, 0.78); color: #111; }
 .cm-search { background: var(--surface); border: 1px solid var(--border); }
+
+/* Inbox fills the screen: one full-width column on phones, flexible panes on larger screens */
+@media (max-width: 760px) {
+    .inbox, .inbox.show-info { grid-template-columns: minmax(0, 1fr); width: 100%; }
+    .inbox-list, .chat-pane { width: 100%; min-width: 0; }
+}
+
+@media (min-width: 761px) {
+    .inbox { grid-template-columns: minmax(280px, 34%) minmax(0, 1fr); }
+    .inbox.show-info { grid-template-columns: minmax(280px, 30%) minmax(0, 1fr) minmax(260px, 26%); }
+}
+
+@media (min-width: 1400px) {
+    .inbox { grid-template-columns: 380px minmax(0, 1fr); }
+    .inbox.show-info { grid-template-columns: 380px minmax(0, 1fr) 320px; }
+}
+@media (max-width: 760px) {
+    body[data-view="messages"] .content { padding-bottom: 0 !important; }
+    body[data-view="messages"] .inbox:not(.has-active) {
+        height: calc(var(--vvh, 100dvh) - 86px - 72px - env(safe-area-inset-bottom, 0px));
+        min-height: 0;
+    }
+}
