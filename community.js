@@ -512,6 +512,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${avatar(p, 'md')}
                     <span class="contact-name"><strong>${m.user_id === me() ? 'You' : esc(p.display_name)}</strong><small>@${esc(p.username)} · joined ${timeAgo(m.joined_at)}</small></span>
                     ${m.role !== 'member' ? `<span class="cm-role">${m.role === 'owner' ? 'Owner' : 'Admin'}</span>` : ''}
+                    ${I.followButton({ ...p, id: m.user_id })}
                     ${m.user_id !== me() && roleOf(cm.id) && window.diaryCalls ? `<button class="icon-btn ghost accent" data-action="cm-call-member" data-id="${esc(m.user_id)}" aria-label="Call ${esc(p.display_name)}"><svg class="i"><use href="#i-phone"/></svg></button>` : ''}
                     ${removable ? `<button class="icon-btn ghost" data-action="cm-remove-member" data-id="${esc(m.user_id)}" aria-label="Remove ${esc(p.display_name)}"><svg class="i"><use href="#i-close"/></svg></button>` : ''}
                 </div>`;

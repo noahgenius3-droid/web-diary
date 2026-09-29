@@ -9735,3 +9735,71 @@ dialog.live:not(.hosting) .host-only { display: none; }
 .ex-tile-text strong { display: block; margin-bottom: 4px; font-size: 1.02rem; }
 @media (max-width: 760px) { .ex-search { max-width: none; } }
 .pc-quick.live { background: color-mix(in srgb, #ef4444 14%, transparent); color: #ef4444; }
+
+/* Sheets that are closed never take up the page, even in browsers with patchy <dialog> support */
+dialog:not([open]) { display: none !important; }
+
+/* ---------- Following ---------- */
+.follow-btn { flex: none; min-height: 34px; padding: 0 14px; border-radius: 999px; font-weight: 700; }
+.follow-btn[aria-pressed="false"] { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+.follow-btn[aria-pressed="true"] { background: transparent; color: var(--text); border: 1px solid var(--border-strong); }
+.lv-follow.follow-btn { margin-left: 4px; min-height: 30px; padding: 0 12px; border: 0; font: inherit; font-size: 0.8rem; font-weight: 700; cursor: pointer; }
+.lv-follow.follow-btn[aria-pressed="false"] { background: #fff; color: #000; }
+.lv-follow.follow-btn[aria-pressed="true"] { background: rgba(255, 255, 255, 0.18); color: #fff; border: 0; }
+.st-pad { margin: 0 0 8px; }
+.st-fold { border-top: 1px solid var(--border); }
+.st-fold > summary { display: flex; align-items: center; gap: 6px; min-height: 48px; cursor: pointer; list-style: none; font-size: 0.92rem; }
+.st-fold > summary::-webkit-details-marker { display: none; }
+.st-fold > summary::after { content: ''; margin-left: auto; width: 8px; height: 8px; border-right: 2px solid var(--text-muted); border-bottom: 2px solid var(--text-muted); transform: rotate(45deg); transition: transform 150ms var(--ease-out); }
+.st-fold[open] > summary::after { transform: rotate(-135deg); }
+.st-people { display: grid; gap: 4px; padding-bottom: 10px; }
+.st-person { display: flex; align-items: center; gap: 12px; min-height: 52px; }
+
+/* ---------- Refresh: pull-to-refresh bubble and spinning refresh buttons ---------- */
+.ptr {
+    position: fixed;
+    z-index: 30;
+    top: calc(64px + env(safe-area-inset-top, 0px));
+    left: 50%;
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--text-muted);
+    box-shadow: var(--shadow-lg);
+    border: 1px solid var(--border);
+    opacity: 0;
+    transform: translate(-50%, -48px);
+    pointer-events: none;
+    transition: transform 280ms var(--ease-out), opacity 200ms, color 150ms;
+}
+.ptr .i { width: 20px; height: 20px; }
+.ptr.pulling { transition: none; }
+.ptr.ready { color: var(--accent); }
+.ptr.spinning .i { animation: ptr-spin 700ms linear infinite; color: var(--accent); }
+@keyframes ptr-spin { to { transform: rotate(1turn); } }
+@media (hover: hover) and (pointer: fine) { .ptr { display: none; } }
+
+.refresh-btn.spinning .i { animation: ptr-spin 700ms linear infinite; }
+.refresh-btn.spinning { pointer-events: none; color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .ptr.spinning .i, .refresh-btn.spinning .i { animation-duration: 2s; } }
+
+/* ---------- Post view: steady while you scroll ---------- */
+/* The feed behind stays put (it is the app's scroller, so locking <html> alone isn't enough) */
+html.pv-lock .main-col { overflow: hidden; touch-action: none; }
+/* No rubber-band bounce dragging the header and comment bar around, and no scroll leaking to the page */
+.post-view, .pv-shell, .pv-scroll { overscroll-behavior: none; }
+/* The scrollbar appearing when comments load mustn't nudge the layout sideways */
+.pv-shell, .pv-scroll { scrollbar-gutter: stable; }
+/* Keep the sheet on its own layer so scrolling doesn't repaint what's under it */
+.pv-shell { contain: layout paint; backface-visibility: hidden; }
+@media (max-width: 719px) {
+    /* Solid bars on phones: blurred sticky bars over moving content flicker on many Android phones */
+    .pv-top, .pv-foot { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
+    /* svh doesn't change as the browser's address bar slides away, so the photo doesn't resize mid-scroll */
+    .pv-media .slide, .pv-media .slide img { max-height: 70svh; }
+    .post-view, .pv-shell { height: 100%; }
+}
+@media (min-width: 1000px) { .pv-shell.has-media { scrollbar-gutter: auto; } }

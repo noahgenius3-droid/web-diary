@@ -64,6 +64,8 @@ document.addEventListener('DOMContentLoaded', () => {
         previews: new Map(),                  // "entry:<id>" -> the latest two comments, shown under each card
         rendered: new Map(),                  // "entry:<id>" | "post:<id>" -> the last data a card was drawn with (the post view reuses it)
         detail: null,                         // key of the post open in the post view
+        following: new Set(),                 // ids of people you follow
+        followerCount: 0,
         posting: false,
         rec: null,           // in-progress chat voice recording
         replyTo: {},         // friend id -> message id being replied to
@@ -409,7 +411,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!s.profile) return app.render();
 
         s.drafts = load(`diaryChatDrafts:${s.profile.id}`, {});
-        await Promise.all([loadFriends(), loadRecent(), loadRemoteIds(), loadSaved()]);
+        await Promise.all([loadFriends(), loadRecent(), loadRemoteIds(), loadSaved(), loadFollows()]);
         subscribe();
         syncAllShared();
         app.render();
@@ -425,7 +427,7 @@ document.addEventListener('DOMContentLoaded', () => {
             threads: {}, activeFriend: null, drafts: {}, pending: {}, online: new Set(), urls: new Map(),
             remoteIds: new Set(), channel: null, presence: null, comments: new Map(),
             saved: new Set(), savedReels: new Set(), savedExtra: [],
-            previews: new Map(), rendered: new Map()
+            previews: new Map(), rendered: new Map(), following: new Set(), followerCount: 0
         });
         closePost(true);
         if (window.diaryCommunities) window.diaryCommunities.reset();
@@ -614,6 +616,42 @@ document.addEventListener('DOMContentLoaded', () => {
         s.threads[friendId] = error ? [] : data.reverse();
         if (app.state.view === 'messages' && s.activeFriend === friendId) app.render();
     }
+
+    // Refresh: fetch the chat list, requests and the open conversation again, and reconnect live updates
+    // (handy after the phone slept or the network dropped)
+    async function refreshChat() {
+        if (!signedIn() || s.chatRefreshing) return;
+        s.chatRefreshing = true;
+        document.querySelectorAll('[data-action="chat-refresh"]').forEach(b => b.classList.add('spinning'));
+        try {
+            await Promise.all([loadFriends(), loadRecent(), loadFollows()]);
+            if (s.activeFriend) {
+                await loadThread(s.activeFriend);
+                markRead(s.activeFriend);
+            }
+            subscribe();
+            if (app.state.view === 'messages') app.render();
+            app.showToast('Chats are up to date');
+        } catch (e) {
+            app.showToast('Couldn’t refresh — check your connection');
+        } finally {
+            s.chatRefreshing = false;
+            document.querySelectorAll('[data-action="chat-refresh"]').forEach(b => b.classList.remove('spinning'));
+        }
+    }
+
+    // Pull-to-refresh (and the menu's Refresh) on these pages fetches fresh data instead of reloading the app
+    app.onRefresh('messages', refreshChat);
+    const refreshFeed = async () => {
+        if (!signedIn()) return location.reload();
+        s.feedStale = false;
+        s.feed = null;
+        await loadFeed();
+        if (window.diaryLive && window.diaryLive.refresh) window.diaryLive.refresh();
+        app.showToast('Up to date');
+    };
+    app.onRefresh('feed', refreshFeed);
+    app.onRefresh('explore', refreshFeed);
 
     async function markRead(friendId) {
         if (!s.unread[friendId]) return;
@@ -1406,6 +1444,50 @@ document.addEventListener('DOMContentLoaded', () => {
             .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
         p.latestRepost = latest || null;
         p.sortAt = Math.max(Date.parse(p.shared_at), latest ? Date.parse(latest.created_at) : 0);
+    }
+
+    // ---------- Following ----------
+    // A one-way follow (no approval needed): followers get told when you go live and can watch, like friends.
+    async function loadFollows() {
+        const me = s.profile.id;
+        const [mine, fans] = await Promise.all([
+            client.from('diary_follows').select('followee').eq('follower', me),
+            client.from('diary_follows').select('follower', { count: 'exact', head: true }).eq('followee', me)
+        ]);
+        s.following = new Set(mine.error ? [] : mine.data.map(r => r.followee));
+        s.followerCount = fans.error ? 0 : fans.count || 0;
+    }
+
+    async function toggleFollow(id, name = 'them') {
+        if (!signedIn() || id === s.profile.id) return;
+        const on = s.following.has(id);
+        if (on) s.following.delete(id);
+        else s.following.add(id);
+        paintFollowButtons(id);
+        const { error } = on
+            ? await client.from('diary_follows').delete().eq('follower', s.profile.id).eq('followee', id)
+            : await client.from('diary_follows').insert({ followee: id });
+        if (error) {
+            if (on) s.following.add(id);
+            else s.following.delete(id);
+            paintFollowButtons(id);
+            return app.showToast('Couldn’t update that — please try again');
+        }
+        app.showToast(on ? `Unfollowed ${name}` : `Following ${name} — you’ll hear when they go live`);
+    }
+
+    function followButton(p, cls = 'chip') {
+        if (!p || !p.id || !s.profile || p.id === s.profile.id || s.friends.some(f => f.id === p.id)) return '';
+        const on = s.following.has(p.id);
+        return `<button type="button" class="${cls} follow-btn" data-action="follow" data-id="${esc(p.id)}" data-name="${esc((p.display_name || '').split(' ')[0] || 'them')}" aria-pressed="${on}">${on ? 'Following' : 'Follow'}</button>`;
+    }
+
+    function paintFollowButtons(id) {
+        const on = s.following.has(id);
+        document.querySelectorAll(`.follow-btn[data-id="${CSS.escape(id)}"]`).forEach(b => {
+            b.setAttribute('aria-pressed', String(on));
+            b.textContent = on ? 'Following' : 'Follow';
+        });
     }
 
     // ---------- Saved posts and reels (a private list on your account) ----------
@@ -2654,7 +2736,7 @@ document.addEventListener('DOMContentLoaded', () => {
         client, state: s, esc, avatar, avatarUrl, timeAgo, gate, extFor, randomId, uploadImage, hydrateStorage,
         renderPost, commentCount, openComments, repaintComments, MOOD_EMOJI: () => MOOD_EMOJI,
         respond, openChat, focusPost, commentsBlock, addComment, deleteComment, toggleSaved, postsFor,
-        changeAvatar, removeAvatar, signOut, openAuth, hashtags, commentCount,
+        changeAvatar, removeAvatar, signOut, openAuth, hashtags, commentCount, followButton, toggleFollow, loadFollows,
         loadFeed: () => { if (s.feed === null) loadFeed(); },
         // Open a feed post in the post view from anywhere (Explore, notifications), even if its card isn't on screen
         openEntry(id, opts) {
@@ -2713,6 +2795,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <h2>Messages</h2>
                             <p class="inbox-sub">${inboxSummary()}</p>
                         </div>
+                        <button class="compose-btn refresh-btn" data-action="chat-refresh" aria-label="Refresh chats" title="Refresh chats"><svg class="i"><use href="#i-refresh"/></svg></button>
                         <button class="compose-btn" data-action="toggle-add" aria-pressed="${s.addOpen}" aria-label="Add a friend by username" title="Add a friend"><svg class="i"><use href="#i-user-plus"/></svg></button>
                     </div>
                     <form class="add-friend" data-form="add-friend"${s.addOpen ? '' : ' hidden'}>
@@ -2831,6 +2914,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${avatar(friend, 'sm')}
                 <div class="friend-name">${esc(friend.display_name)}<small data-status="${esc(friend.id)}" data-away="@${esc(friend.username)}">${s.online.has(friend.id) ? 'Active now' : `@${esc(friend.username)}`}</small></div>
                 ${window.diaryCalls ? `<button class="icon-btn accent" data-action="call-friend" data-id="${esc(friend.id)}" aria-label="Voice call ${esc(friend.display_name)}" title="Voice call"><svg class="i"><use href="#i-phone"/></svg></button>` : ''}
+                <button class="icon-btn refresh-btn" data-action="chat-refresh" aria-label="Refresh this chat" title="Refresh"><svg class="i"><use href="#i-refresh"/></svg></button>
                 <button class="icon-btn" data-action="toggle-info" aria-pressed="${s.showInfo}" aria-label="Contact details" title="Contact details"><svg class="i"><use href="#i-info"/></svg></button>
             </header>
             <div class="chat-thread" id="chat-thread">${body}</div>
@@ -3133,6 +3217,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const form = el.closest('form[data-form="comment"]');
             if (form) startVoiceComment(form);
         },
+        'follow': el => toggleFollow(el.dataset.id, el.dataset.name),
+        'chat-refresh': () => refreshChat(),
         'vc-send': () => finishVoiceComment(true),
         'vc-cancel': () => finishVoiceComment(false),
         'comment-delete': el => deleteComment(el.dataset.key, el.dataset.id),

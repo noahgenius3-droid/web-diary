@@ -135,6 +135,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="ex-person">
                 ${avatar(p, 'md')}
                 <span class="ex-person-text"><strong>${esc(p.display_name)}</strong><small>${p.mutual ? `${p.mutual} mutual friend${p.mutual === 1 ? '' : 's'}` : `@${esc(p.username)}`}</small></span>
+                ${I.followButton(p)}
                 <button type="button" class="primary-btn small" data-action="suggest-add" data-username="${esc(p.username)}"><svg class="i"><use href="#i-user-plus"/></svg>Add</button>
             </div>`;
     }

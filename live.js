@@ -47,7 +47,8 @@ document.addEventListener('DOMContentLoaded', () => {
         watch: id => watch(id),
         strip: liveStrip,
         list: () => L.list || [],
-        ensure: () => { if (L.list === null) loadLive(); }
+        ensure: () => { if (L.list === null) loadLive(); },
+        refresh: () => loadLive()
     };
 
     // ---------- Who's live ----------
@@ -134,7 +135,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function paintHost(profile, title) {
         const p = profile || s.profile;
-        $('lv-host').innerHTML = `${avatar({ id: p.id, ...p }, 'sm')}<span><strong>${esc(p.display_name)}</strong><small id="lv-sub">${esc(title || '')}</small></span>`;
+        // Watching someone you're not friends with: follow them to hear next time they go live
+        const follow = p.id && p.id !== me() && I.followButton ? I.followButton(p, 'lv-follow') : '';
+        $('lv-host').innerHTML = `${avatar({ id: p.id, ...p }, 'sm')}<span><strong>${esc(p.display_name)}</strong><small id="lv-sub">${esc(title || '')}</small></span>${follow}`;
         I.hydrateStorage($('lv-host'));
     }
 
@@ -192,6 +195,8 @@ document.addEventListener('DOMContentLoaded', () => {
         video.play().catch(() => {});
         $('lv-chat').innerHTML = '';
         $('lv-title').value = '';
+        const fans = s.followerCount || 0;
+        $('lv-reach').textContent = `Your ${s.friends.length} ${s.friends.length === 1 ? 'friend' : 'friends'}${fans ? ` and ${fans} ${fans === 1 ? 'follower' : 'followers'}` : ''} will get a notification and can watch, chat and send hearts. Best with up to 15 people watching.`;
         paintHost(s.profile, 'Preview — only you can see this');
         dialog.classList.add('hosting');
         setMode('setup');
@@ -216,7 +221,7 @@ document.addEventListener('DOMContentLoaded', () => {
         startClock();
         L.viewers = 0;
         paintViewers();
-        status('<span class="lv-wait">You’re live. Your friends have been told — waiting for someone to join…</span>');
+        status('<span class="lv-wait">You’re live. Your friends and followers have been told — waiting for someone to join…</span>');
         joinChannel(true);
         L.beat = setInterval(() => {
             client.from('diary_live_streams').update({ last_seen: new Date().toISOString() }).eq('id', L.stream.id).then(() => {});
@@ -480,6 +485,10 @@ document.addEventListener('DOMContentLoaded', () => {
         input.value = '';
         addChat('You', text, 'mine');
         send('chat', { name: s.profile.display_name.split(' ')[0], text });
+    });
+    $('lv-host').addEventListener('click', e => {
+        const b = e.target.closest('[data-action="follow"]');
+        if (b) I.toggleFollow(b.dataset.id, b.dataset.name);
     });
     $('lv-status').addEventListener('click', e => {
         if (e.target.closest('#lv-unmute')) {

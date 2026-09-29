@@ -74,7 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
         community_post: ['group', 'i-users'], community_join: ['group', 'i-users'],
         call_started: ['call', 'i-phone'], missed_call: ['missed', 'i-phone-off'],
         entry_repost: ['group', 'i-repost'], reel_like: ['like', 'i-heart-fill'], reel_comment: ['comment', 'i-chat'], library_like: ['like', 'i-heart-fill'],
-        live_started: ['call', 'i-live']
+        live_started: ['call', 'i-live'], new_follower: ['group', 'i-user-plus']
     };
 
     // plain=true gives text for toasts and device alerts
@@ -100,6 +100,7 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'reel_comment': return `${who} commented on your reel:${quote}`;
             case 'library_like': return `${who} loved your writing${quote}`;
             case 'live_started': return `${who} is live now${quote}`;
+            case 'new_follower': return `${who} started following you`;
             default: return `${who} did something`;
         }
     }
@@ -119,6 +120,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 break;
             case 'live_started':
                 if (window.diaryLive) window.diaryLive.watch(d.stream_id);
+                break;
+            case 'new_follower':
+                I.loadFollows().then(() => app.render());
+                app.setView('settings');
                 break;
             case 'library_like':
                 app.setView('library');

@@ -14,6 +14,23 @@ document.addEventListener('DOMContentLoaded', () => {
     const SIZES = [['small', 'Small'], ['default', 'Default'], ['large', 'Large']];
 
     let storageText = '';
+    const F = { loaded: false, loading: false, followers: [], following: [] };
+    const PROFILE = 'id, username, display_name, avatar_path';
+
+    async function loadFollowLists() {
+        if (F.loading || !I || !signedIn()) return;
+        F.loading = true;
+        const me = profile().id;
+        const [fans, mine] = await Promise.all([
+            I.client.from('diary_follows').select(`created_at, person:diary_profiles!diary_follows_follower_fkey(${PROFILE})`).eq('followee', me).order('created_at', { ascending: false }).limit(100),
+            I.client.from('diary_follows').select(`created_at, person:diary_profiles!diary_follows_followee_fkey(${PROFILE})`).eq('follower', me).order('created_at', { ascending: false }).limit(100)
+        ]);
+        F.followers = fans.error ? [] : fans.data.map(r => r.person).filter(Boolean);
+        F.following = mine.error ? [] : mine.data.map(r => r.person).filter(Boolean);
+        F.loaded = true;
+        F.loading = false;
+        if (app.state.view === 'settings') app.render();
+    }
 
     function setTheme(mode) {
         if (mode === 'system') {
@@ -129,6 +146,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${row('i-trash', 'Clear this device', 'Remove notes, photos and settings stored in this browser', go('st-clear', 'Clear', true))}
                 </section>
 
+                ${signedIn() ? followSection() : ''}
+
                 ${signedIn() ? `
                     <section class="st-card st-danger">
                         <h3>Account</h3>
@@ -138,6 +157,40 @@ document.addEventListener('DOMContentLoaded', () => {
                 <p class="st-foot muted small">Cordial · your diary, your people.</p>
             </div>`;
     };
+
+    // Fresh lists every time you come back to Settings
+    const previousAfter = app.hooks.afterRender;
+    app.hooks.afterRender = view => {
+        if (previousAfter) previousAfter(view);
+        if (view !== 'settings') F.loaded = false;
+        else I && I.hydrateStorage(document.getElementById('content'));
+    };
+
+    function followSection() {
+        if (!F.loaded) loadFollowLists();
+        const person = (p, action, label) => `
+            <div class="st-person">
+                ${I.avatar(p, 'sm')}
+                <span class="st-text"><strong>${esc(p.display_name)}</strong><small>@${esc(p.username)}</small></span>
+                <button class="st-btn" data-action="${action}" data-id="${esc(p.id)}" data-name="${esc(p.display_name.split(' ')[0])}">${label}</button>
+            </div>`;
+        const list = (items, action, label, empty) => !F.loaded
+            ? '<p class="muted small st-pad">Loading…</p>'
+            : items.length ? `<div class="st-people">${items.map(p => person(p, action, label)).join('')}</div>` : `<p class="muted small st-pad">${empty}</p>`;
+        return `
+            <section class="st-card">
+                <h3>Followers</h3>
+                <p class="muted small st-pad">People who follow you get a notification when you go live, just like your friends, and can watch.</p>
+                <details class="st-fold"${F.followers.length && F.followers.length <= 5 ? ' open' : ''}>
+                    <summary><strong>${F.loaded ? F.followers.length : '…'}</strong> ${F.followers.length === 1 ? 'follower' : 'followers'}</summary>
+                    ${list(F.followers, 'st-remove-follower', 'Remove', 'No followers yet. People can follow you from Explore or a community.')}
+                </details>
+                <details class="st-fold">
+                    <summary><strong>${F.loaded ? F.following.length : '…'}</strong> following</summary>
+                    ${list(F.following, 'st-unfollow', 'Unfollow', 'You’re not following anyone yet. Find people in Explore.')}
+                </details>
+            </section>`;
+    }
 
     // ---------- Actions ----------
     Object.assign(app.actions, {
@@ -149,6 +202,21 @@ document.addEventListener('DOMContentLoaded', () => {
             app.render();
         },
         'st-rename': () => app.renameUser(),
+        'st-unfollow': async el => {
+            await I.toggleFollow(el.dataset.id, el.dataset.name);
+            F.following = F.following.filter(p => p.id !== el.dataset.id);
+            app.render();
+        },
+        'st-remove-follower': async el => {
+            const ok = await app.ask({ title: `Remove ${el.dataset.name} as a follower?`, text: 'They won’t be told. They’ll stop getting your live notifications, but can follow you again.', ok: 'Remove', danger: true });
+            if (!ok) return;
+            const { error } = await I.client.from('diary_follows').delete().eq('follower', el.dataset.id).eq('followee', profile().id);
+            if (error) return app.showToast('Couldn’t remove that follower');
+            F.followers = F.followers.filter(p => p.id !== el.dataset.id);
+            I.state.followerCount = F.followers.length;
+            app.render();
+            app.showToast('Follower removed');
+        },
         'st-remove-photo': () => I && I.removeAvatar(),
         'st-pin': () => app.setPin().then(() => app.render()),
         'st-export': () => { app.exportData(); app.showToast('Your notes are downloading'); },

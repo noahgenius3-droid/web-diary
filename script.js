@@ -369,6 +369,93 @@ document.addEventListener('DOMContentLoaded', () => {
         else paintBack();
     });
 
+    // ---------- Refresh ----------
+    // Pages that load from the server register a refresher (Chats, Feed, Explore…); anywhere else a refresh
+    // reloads the whole app, which reopens the same page thanks to the address above.
+    const refreshers = {};
+    let refreshing = false;
+
+    async function refreshView() {
+        if (refreshing) return;
+        const fn = refreshers[state.view];
+        if (!fn) return location.reload();
+        refreshing = true;
+        try {
+            await fn();
+        } catch (e) {
+            showToast('Couldn’t refresh — check your connection');
+        } finally {
+            refreshing = false;
+        }
+    }
+
+    // Pull down from the top of a page on a phone to refresh (the browser's own pull-to-refresh can't reach
+    // inside the app's scrolling area)
+    (() => {
+        const col = document.querySelector('.main-col');
+        const ptr = $('ptr');
+        if (!col || !ptr) return;
+        const THRESHOLD = 72;
+        let startY = 0;
+        let pull = 0;
+        let tracking = false;
+
+        // Only when everything under the finger is already scrolled to the top
+        const atTop = target => {
+            for (let el = target; el && el !== document.body; el = el.parentElement) {
+                if (el.scrollTop > 0 && el.scrollHeight > el.clientHeight) return false;
+                if (el === col) break;
+            }
+            return col.scrollTop <= 0;
+        };
+        const paint = () => {
+            const d = Math.min(pull, THRESHOLD * 1.6);
+            ptr.style.transform = `translate(-50%, ${d * 0.6 - 48}px) rotate(${d * 3}deg)`;
+            ptr.style.opacity = String(Math.min(1, d / THRESHOLD));
+            ptr.classList.toggle('ready', pull >= THRESHOLD);
+        };
+        const reset = () => {
+            pull = 0;
+            tracking = false;
+            ptr.classList.remove('ready');
+            ptr.style.transform = '';
+            ptr.style.opacity = '';
+        };
+
+        col.addEventListener('touchstart', e => {
+            if (e.touches.length !== 1 || refreshing || document.querySelector('dialog[open]')) return;
+            if (e.target.closest('input, textarea, [contenteditable="true"], .carousel, .ex-row, .live-strip, .stories-bar')) return;
+            if (!atTop(e.target)) return;
+            startY = e.touches[0].clientY;
+            tracking = true;
+            pull = 0;
+        }, { passive: true });
+
+        col.addEventListener('touchmove', e => {
+            if (!tracking) return;
+            const dy = e.touches[0].clientY - startY;
+            if (dy <= 0) { reset(); return; }
+            pull = dy * 0.55; // resistance, like a rubber band
+            ptr.classList.add('pulling');
+            paint();
+        }, { passive: true });
+
+        col.addEventListener('touchend', async () => {
+            if (!tracking) return;
+            ptr.classList.remove('pulling');
+            if (pull < THRESHOLD) return reset();
+            tracking = false;
+            ptr.classList.add('spinning');
+            ptr.style.opacity = '1';
+            ptr.style.transform = 'translate(-50%, 16px)';
+            if (navigator.vibrate) navigator.vibrate(10);
+            await refreshView();
+            ptr.classList.remove('spinning');
+            reset();
+        });
+        col.addEventListener('touchcancel', reset);
+    })();
+
     // Open the page in the address bar (after every script has added its pages)
     setTimeout(() => {
         const r = parseHash();
@@ -2121,6 +2208,8 @@ document.addEventListener('DOMContentLoaded', () => {
             { label: 'Change name', icon: 'i-user', onClick: renameUser },
             { label: 'Export entries', icon: 'i-download', onClick: exportData },
             { sep: true },
+            { label: 'Refresh page', icon: 'i-refresh', onClick: () => refreshView() },
+            ...(refreshers[state.view] ? [{ label: 'Reload the app', icon: 'i-refresh', onClick: () => location.reload() }] : []),
             { label: 'Settings', icon: 'i-settings', onClick: () => setView('settings') }
         ]);
     }
@@ -2311,6 +2400,7 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         render, setView, setTitle, showToast, ask, askLink, openPopover, closePopover, setPin, exportData, isDark,
         pushRoute, onRoute: fn => routeListeners.push(fn),
+        onRefresh: (view, fn) => { refreshers[view] = fn; }, refresh: refreshView,
         escapeHTML, initials, shortDate, dayLabel, dayKey, renameUser, fullText,
         // The AI assistant reads and writes the open entry through this
         editorApi: {

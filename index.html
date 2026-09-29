@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=25">
     <script>
         // Apply saved theme before paint to avoid a flash
         try {
@@ -217,6 +217,7 @@
                 </button>
             </header>
 
+            <div class="ptr" id="ptr" aria-hidden="true"><svg class="i"><use href="#i-refresh"/></svg></div>
             <main class="content" id="content"></main>
         </div>
     </div>
@@ -529,7 +530,7 @@
                 <p class="lv-kicker"><svg class="i"><use href="#i-live"/></svg>Go live to your friends</p>
                 <input id="lv-title" maxlength="120" placeholder="What’s this live about?" aria-label="Title" autocomplete="off" enterkeyhint="go">
                 <button type="button" class="lv-go" id="lv-go"><span class="lv-go-dot" aria-hidden="true"></span>Go live</button>
-                <p class="lv-note">Friends get a notification and can watch, chat and send hearts. Best with up to 15 people watching.</p>
+                <p class="lv-note" id="lv-reach">Your friends and followers get a notification and can watch, chat and send hearts. Best with up to 15 people watching.</p>
             </div>
             <footer class="lv-bar" id="lv-bar" hidden>
                 <form class="lv-say" id="lv-say"><input id="lv-say-input" maxlength="200" placeholder="Say something…" aria-label="Chat" autocomplete="off" enterkeyhint="send"></form>
@@ -656,22 +657,22 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
-    <script src="config.js"></script>
-    <script src="rich.js"></script>
-    <script src="media.js"></script>
-    <script src="dilute.js"></script>
-    <script src="script.js"></script>
-    <script src="social.js"></script>
-    <script src="stories.js"></script>
-    <script src="library.js"></script>
-    <script src="community.js"></script>
-    <script src="live.js"></script>
-    <script src="explore.js"></script>
-    <script src="call.js"></script>
-    <script src="notify.js"></script>
-    <script src="settings.js"></script>
-    <script src="transcribe.js"></script>
-    <script src="ai.js"></script>
+    <script src="config.js?v=25"></script>
+    <script src="rich.js?v=25"></script>
+    <script src="media.js?v=25"></script>
+    <script src="dilute.js?v=25"></script>
+    <script src="script.js?v=25"></script>
+    <script src="social.js?v=25"></script>
+    <script src="stories.js?v=25"></script>
+    <script src="library.js?v=25"></script>
+    <script src="community.js?v=25"></script>
+    <script src="live.js?v=25"></script>
+    <script src="explore.js?v=25"></script>
+    <script src="call.js?v=25"></script>
+    <script src="notify.js?v=25"></script>
+    <script src="settings.js?v=25"></script>
+    <script src="transcribe.js?v=25"></script>
+    <script src="ai.js?v=25"></script>
     <script>
         // Lift the splash once the first screen is drawn — after its intro has had time to play, never longer than 4s
         (function () {
