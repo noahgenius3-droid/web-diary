@@ -949,7 +949,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------- Friends ----------
     async function loadFriends() {
         const { data, error } = await client.from('diary_friendships').select(`
-            id, status, requester, addressee, created_at,
+            id, status, requester, addressee, created_at, note,
             requester_profile:diary_profiles!diary_friendships_requester_fkey(id, username, display_name, avatar_path),
             addressee_profile:diary_profiles!diary_friendships_addressee_fkey(id, username, display_name, avatar_path)
         `).order('created_at');
@@ -962,7 +962,7 @@ document.addEventListener('DOMContentLoaded', () => {
         data.forEach(f => {
             const other = f.requester === me ? f.addressee_profile : f.requester_profile;
             if (!other) return;
-            const item = { friendshipId: f.id, since: f.created_at, ...other };
+            const item = { friendshipId: f.id, since: f.created_at, note: f.note || '', ...other };
             if (f.status === 'accepted') s.friends.push(item);
             else if (f.addressee === me) s.incoming.push(item);
             else s.outgoing.push(item);
@@ -3513,7 +3513,8 @@ document.addEventListener('DOMContentLoaded', () => {
                             <div class="request-row">
                                 <button type="button" class="row-av" data-profile="${esc(f.id)}" aria-label="${esc(f.display_name)}’s profile">${avatar(f, 'md')}</button>
                                 <div>
-                                    <p><button type="button" class="name-link" data-profile="${esc(f.id)}">${esc(f.display_name)}</button> wants to add you to friends</p>
+                                    <p><button type="button" class="name-link" data-profile="${esc(f.id)}">${esc(f.display_name)}</button> ${f.note ? 'said hello and wants to be friends' : 'wants to add you to friends'}</p>
+                                    ${f.note ? `<span class="req-note">“${esc(f.note)}”</span>` : ''}
                                     <div class="request-actions">
                                         <button class="link-btn accent" data-action="accept-request" data-id="${esc(f.friendshipId)}">Accept</button>
                                         <button class="link-btn" data-action="decline-request" data-id="${esc(f.friendshipId)}">Decline</button>
@@ -4797,7 +4798,7 @@ document.addEventListener('DOMContentLoaded', () => {
             rows = [
                 ...s.incoming.map(f => `
                     <div class="convo static">${avatar(f, 'md')}
-                        <span class="convo-main"><strong>${esc(f.display_name)}</strong><span class="convo-preview">@${esc(f.username)} wants to be friends</span>
+                        <span class="convo-main"><strong>${esc(f.display_name)}</strong><span class="convo-preview">@${esc(f.username)} wants to be friends</span>${f.note ? `<span class="req-note">“${esc(f.note)}”</span>` : ''}
                             <span class="row-actions">
                                 <button class="chip accent" data-action="accept-request" data-id="${esc(f.friendshipId)}">Accept</button>
                                 <button class="chip" data-action="decline-request" data-id="${esc(f.friendshipId)}">Decline</button>

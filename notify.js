@@ -130,7 +130,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const group = d.community_name ? (plain ? `${d.emoji || ''} ${d.community_name}`.trim() : `<strong>${esc(d.emoji || '')} ${esc(d.community_name)}</strong>`) : '';
         const quote = d.snippet ? (plain ? ` “${d.snippet}”` : ` <span class="notif-quote">“${esc(d.snippet)}”</span>`) : '';
         switch (x.type) {
-            case 'friend_request': return `${who} sent you a friend request`;
+            case 'friend_request': return d.note ? `${who} said hello and wants to be friends:${plain ? ` “${d.note}”` : ` <span class="notif-quote">“${esc(d.note)}”</span>`}` : `${who} sent you a friend request`;
             case 'friend_accepted': return `${who} accepted your friend request — say hi!`;
             case 'entry_like': return `${who} reacted ${d.emoji || '👍'} to your post${quote}`;
             case 'entry_comment': return `${who} commented:${quote}`;
@@ -201,7 +201,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 break;
             case 'new_follower':
                 I.loadFollows().then(() => app.render());
-                app.setView('settings');
+                if (window.diaryProfile && x.actor) window.diaryProfile.open(x.actor);
+                else app.setView('profile', { profileId: x.actor });
                 break;
             case 'new_login':
                 app.setView('settings');
@@ -281,15 +282,11 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'verification_update':
                 app.setView('settings');
                 break;
-            case 'new_follower':
-            case 'friend_accepted':
-                if (window.diaryProfile && x.actor) window.diaryProfile.open(x.actor);
-                break;
             case 'post_like':
             case 'post_comment':
             case 'community_post':
-                app.setView('community', { communityId: d.community_id });
-                I.focusPost(`post:${d.post_id}`, { open: x.type === 'post_comment' });
+                if (d.post_id) app.setView('post', { postId: `g-${d.post_id}` });
+                else app.setView('community', { communityId: d.community_id });
                 break;
             case 'community_join':
             case 'call_started':
@@ -670,7 +667,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Missed calls are logged by the callee's own device (call.js calls this)
     window.diaryNotify = {
-        alertStatus, enableAlerts, disableAlerts, unsubscribePush, pushSupported, showLivePopup, close,
+        alertStatus, enableAlerts, disableAlerts, unsubscribePush, pushSupported, showLivePopup, close, navigate,
         logMissedCall(callerId) {
             if (!s.profile || !callerId) return;
             client.from('diary_notifications').insert({ actor: callerId, type: 'missed_call', data: {} }).then(() => {});

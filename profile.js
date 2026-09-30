@@ -194,7 +194,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (p.id !== me()) {
             const rel = relationOf(p.id);
             const action = rel === 'friend' ? '<button type="button" class="pf-btn primary" data-pf="message"><svg class="i"><use href="#i-chat"/></svg><span>Say hello</span></button>'
-                : rel === 'none' ? '<button type="button" class="pf-btn primary" data-pf="add"><svg class="i"><use href="#i-user-plus"/></svg><span>Add friend</span></button>' : '';
+                : rel === 'incoming' ? '<button type="button" class="pf-btn primary" data-pf="accept"><svg class="i"><use href="#i-user-plus"/></svg><span>Accept request</span></button>'
+                : '<button type="button" class="pf-btn primary" data-pf="hello"><svg class="i"><use href="#i-chat"/></svg><span>' + (rel === 'requested' ? 'Edit your hello' : 'Say hello') + '</span></button>';
             return `
                 <section class="pf-new">
                     <span class="pf-new-ic" aria-hidden="true"><svg class="i"><use href="#i-sparkle"/></svg></span>
@@ -508,6 +509,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 try { await navigator.share({ title: `${p.display_name} on Cordial`, url }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
             }
             I.copyText(url, 'Profile link copied');
+        } else if (what === 'hello') {
+            const pending = (s.outgoing || []).find(f => f.id === p.id);
+            const r = await app.ask({
+                title: `Say hello to ${first}`,
+                text: `${first} gets your note with a friend request. When they accept, it’s the first message in your chat.`,
+                value: (pending && pending.note) || `Welcome to Cordial, ${first}! 👋`,
+                placeholder: 'Write a short hello', ok: 'Send hello'
+            });
+            if (!r) return;
+            const { data, error } = await client.rpc('diary_say_hello', { p_user: p.id, p_note: r.value.slice(0, 300) });
+            if (error) return app.showToast(error.message || 'Couldn’t send your hello');
+            if (I.loadFriends) await I.loadFriends();
+            app.showToast(data && data.friends ? (data.sent ? `You and ${first} are friends — your hello is in your chat` : `You’re already friends — say hi in your chat`) : `Hello sent — you can chat once ${first} accepts`);
+            if (data && data.friends) { app.setView('messages'); if (I.openChat) I.openChat(p.id); } else refresh();
         } else if (what === 'go-feed') {
             app.setView('feed');
             setTimeout(() => document.getElementById('feed-text')?.focus(), 400);
