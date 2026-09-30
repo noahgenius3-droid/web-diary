@@ -343,7 +343,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${window.diaryGames ? `<section class="pl-section" aria-labelledby="pl-games-h">
                     <header class="pl-sec-head"><h3 id="pl-games-h">Puzzles & games</h3><p class="pl-note">A new puzzle in each every day</p></header>
                     <div class="gm-tiles">${window.diaryGames.tilesHTML()}</div>
-                </section>` : ''}
+                </section>${window.diaryGames.matchesHTML ? window.diaryGames.matchesHTML() : ''}` : ''}
                 ${topicsHTML()}
                 ${boardHTML()}
                 ${badgesHTML()}

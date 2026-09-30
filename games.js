@@ -667,19 +667,25 @@ document.addEventListener('DOMContentLoaded', () => {
         const bingo = P.length === 7 ? 50 : 0;
         return { words: scored, total: total + bingo, bingo };
     }
-    function paintWordplay() {
+    function wpPaintTiles() {
         const st = W.state;
-        const move = st.pending.length ? wpMove() : null;
+        const last = st.last || new Set();
         W.dlg.querySelector('.wp-board').innerHTML = st.board.map((row, r) => row.map((ch, c) => {
             const p = st.pending.find(x => x.r === r && x.c === c);
             const letter = p ? p.ch : ch;
             const b = WP_BONUS[`${r},${c}`];
-            if (letter) return `<button type="button" class="wp-cell tile${p ? ' new' : ''}" data-wc="${r},${c}" aria-label="${letter}${p ? ', tap to take back' : ''}"${p ? '' : ' tabindex="-1"'}>${letter}<sub>${WP_VAL[letter]}</sub></button>`;
+            if (letter) return `<button type="button" class="wp-cell tile${p ? ' new' : ''}${!p && last.has(`${r},${c}`) ? ' last' : ''}" data-wc="${r},${c}" aria-label="${letter}${p ? ', tap to take back' : ''}"${p ? '' : ' tabindex="-1"'}>${letter}<sub>${WP_VAL[letter]}</sub></button>`;
             return `<button type="button" class="wp-cell${b ? ` ${b}` : ''}" data-wc="${r},${c}" aria-label="Empty${b ? `, ${WP_BONUS_LABEL[b]}` : ''}">${b ? WP_BONUS_LABEL[b] : ''}</button>`;
         }).join('')).join('');
         W.dlg.querySelector('.wp-rack').innerHTML = st.rack.map((ch, i) => (ch
             ? `<button type="button" class="wp-tile${st.sel === i ? ' sel' : ''}" data-wr="${i}" aria-label="${ch}, ${WP_VAL[ch]} points" aria-pressed="${st.sel === i}">${ch}<sub>${WP_VAL[ch]}</sub></button>`
             : '<span class="wp-tile empty" aria-hidden="true"></span>')).join('');
+    }
+    function paintWordplay() {
+        if (W.match) return paintMatch();
+        const st = W.state;
+        const move = st.pending.length ? wpMove() : null;
+        wpPaintTiles();
         W.dlg.querySelector('.wp-score').innerHTML = `<b>${st.score}</b> points`;
         W.dlg.querySelector('.wp-turn').textContent = `Turn ${Math.min(st.turn, WP_TURNS)} of ${WP_TURNS} · ${st.bag.length} in the bag`;
         const playBtn = W.dlg.querySelector('[data-wp="play"]');
@@ -704,6 +710,7 @@ document.addEventListener('DOMContentLoaded', () => {
         paintWordplay();
     }
     async function wpAction(act) {
+        if (W.match) return matchAction(act);
         const st = W.state;
         if (st.busy) return;
         startClock();
@@ -763,12 +770,14 @@ document.addEventListener('DOMContentLoaded', () => {
     function wordplayTapRack(i) {
         const st = W.state;
         if (st.busy || !st.rack[i]) return;
+        if (W.match && st.locked) return hint('Wait for your turn');
         st.sel = st.sel === i ? null : i;
         paintWordplay();
     }
     function wordplayTapCell(r, c) {
         const st = W.state;
         if (st.busy) return;
+        if (W.match && st.locked) return hint(st.m && st.m.status === 'active' ? 'Wait for your turn' : 'This match is over');
         const k = st.pending.findIndex(p => p.r === r && p.c === c);
         if (k >= 0) { // take a letter back
             const [p] = st.pending.splice(k, 1);
@@ -779,7 +788,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (st.board[r][c]) return;
         const i = st.sel;
         if (i === null || !st.rack[i]) return hint('Tap one of your letters first');
-        startClock();
+        if (!W.match) startClock();
         st.pending.push({ r, c, ch: st.rack[i] });
         st.rack[i] = '';
         st.sel = null;
@@ -791,6 +800,318 @@ document.addEventListener('DOMContentLoaded', () => {
         finish({ won: st.score > 0, moves: st.score, summary: `${st.score} points in ${st.log.length} ${st.log.length === 1 ? 'turn' : 'turns'}${best}`,
             share: `🔤 Wordplay on Cordial${W.daily ? ` · ${utcDay()}` : ''}: ${st.score} points${best}\n${st.log.join('')}\n#playnote` });
     }
+
+    // =====================================================================
+    // Wordplay with friends: 2 to 4 players take turns on one board. The server deals, checks and scores every move.
+    // =====================================================================
+    const MX = { list: null, people: {}, loading: false, channel: null, t: 0 };
+    const myId = () => s.profile && s.profile.id;
+    const who = id => MX.people[id] || { id, display_name: 'Someone', username: '' };
+    const firstName = id => (id === myId() ? 'You' : String(who(id).display_name || 'Someone').split(' ')[0]);
+    async function loadPeople(ids) {
+        (s.friends || []).forEach(f => { MX.people[f.id] = f; });
+        if (s.profile) MX.people[s.profile.id] = s.profile;
+        const need = [...new Set(ids)].filter(id => id && !MX.people[id]);
+        if (!need.length) return;
+        const { data } = await client.from('diary_profiles').select('id, username, display_name, avatar_path').in('id', need);
+        (data || []).forEach(p => { MX.people[p.id] = p; });
+    }
+    async function loadMatches() {
+        if (!myId() || MX.loading) return;
+        MX.loading = true;
+        const { data } = await client.from('diary_wp_matches').select('id, players, out_players, status, turn, scores, bag_count, winner, last_move, updated_at')
+            .order('updated_at', { ascending: false }).limit(30);
+        MX.list = data || [];
+        await loadPeople(MX.list.flatMap(m => m.players));
+        MX.loading = false;
+        subscribeMatches();
+        if (window.diaryPlay && window.diaryPlay.repaint && app.state.view === 'play') window.diaryPlay.repaint();
+    }
+    // Live: a move by anyone in your matches updates the list and the open board
+    function subscribeMatches() {
+        if (MX.channel || !myId()) return;
+        MX.channel = client.channel(`wp-matches-${myId()}-${Date.now()}`)
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_wp_matches' }, payload => {
+                const m = payload.new || {};
+                clearTimeout(MX.t);
+                MX.t = setTimeout(loadMatches, 250);
+                if (W && W.match && W.match === m.id) refreshMatch();
+            })
+            .subscribe();
+    }
+    const isMyTurn = m => m.status === 'active' && m.players[m.turn] === myId() && !m.out_players.includes(myId());
+    function statusText(m) {
+        if (m.status === 'active') return isMyTurn(m) ? 'Your turn' : `${firstName(m.players[m.turn])}’s turn`;
+        return m.winner === myId() ? 'You won' : m.winner ? `${firstName(m.winner)} won` : 'Draw';
+    }
+    function matchRow(m) {
+        const others = m.players.filter(p => p !== myId());
+        const mine = isMyTurn(m);
+        return `
+            <button type="button" class="wpm-row${mine ? ' mine' : ''}${m.status !== 'active' ? ' over' : ''}" data-wpm="open" data-id="${esc(m.id)}">
+                <span class="wpm-avs">${others.slice(0, 3).map(p => I.avatar(who(p), 'sm')).join('')}</span>
+                <span class="wpm-text"><strong>${esc(others.map(p => who(p).display_name || 'Someone').join(', '))}</strong>
+                    <small>${m.players.map(p => `${esc(firstName(p))} ${Number(m.scores[p] || 0)}`).join(' · ')}</small></span>
+                <span class="wpm-status">${esc(statusText(m))}</span>
+            </button>`;
+    }
+    function matchesHTML() {
+        if (!myId() || G.off.has('wordplay')) return '';
+        if (MX.list === null) loadMatches();
+        const list = MX.list || [];
+        const active = list.filter(m => m.status === 'active').sort((a, b) => isMyTurn(b) - isMyTurn(a));
+        const done = list.filter(m => m.status !== 'active').slice(0, 4);
+        return `
+            <section class="pl-section wpm" aria-labelledby="wpm-h">
+                <header class="pl-sec-head"><h3 id="wpm-h">Wordplay with friends</h3><p class="pl-note">One board, up to four players — take your turn whenever you like</p></header>
+                <div class="wpm-list">
+                    <button type="button" class="wpm-new" data-wpm="new">
+                        <span class="wpm-new-ic">${ic('i-plus')}</span>
+                        <span class="wpm-text"><strong>New match</strong><small>Challenge one, two or three friends</small></span>
+                    </button>
+                    ${MX.list === null ? '<div class="wpm-skel" aria-busy="true"></div>' : active.map(matchRow).join('')}
+                    ${done.length ? `<p class="wpm-sub">Finished</p>${done.map(matchRow).join('')}` : ''}
+                </div>
+            </section>`;
+    }
+
+    // ---------- Starting a match ----------
+    function newMatchDialog() {
+        const friends = (s.friends || []).slice().sort((a, b) => String(a.display_name).localeCompare(String(b.display_name)));
+        if (!friends.length) return app.showToast('Add some friends first — then you can challenge them');
+        const dlg = document.createElement('dialog');
+        dlg.className = 'gm wpm-pick';
+        dlg.setAttribute('aria-label', 'New Wordplay match');
+        dlg.innerHTML = `
+            <form class="gm-card" method="dialog">
+                <header class="gm-head">
+                    <button type="button" class="icon-btn" data-x aria-label="Close">${ic('i-close')}</button>
+                    <div class="gm-title"><strong>${ic('i-g-tiles')}New match</strong><small>Pick one, two or three friends</small></div>
+                </header>
+                <div class="gm-body wpm-pick-body">
+                    ${friends.length > 8 ? '<input type="search" class="wpm-find" placeholder="Search friends" aria-label="Search friends">' : ''}
+                    <div class="wpm-friends">${friends.map(f => `
+                        <label class="wpm-friend" data-name="${esc(String(f.display_name || '').toLowerCase())} ${esc(String(f.username || '').toLowerCase())}">
+                            <input type="checkbox" value="${esc(f.id)}">
+                            ${I.avatar(f, 'sm')}
+                            <span><strong>${esc(f.display_name || 'Friend')}</strong><small>@${esc(f.username || '')}</small></span>
+                            <span class="wpm-check" aria-hidden="true">${ic('i-check')}</span>
+                        </label>`).join('')}</div>
+                </div>
+                <footer class="wpm-pick-foot"><button type="submit" class="primary-btn" disabled>Start match</button></footer>
+            </form>`;
+        document.body.append(dlg);
+        const btn = dlg.querySelector('[type="submit"]');
+        const picked = () => [...dlg.querySelectorAll('input[type="checkbox"]:checked')].map(i => i.value);
+        dlg.addEventListener('change', () => {
+            const ids = picked();
+            dlg.querySelectorAll('input[type="checkbox"]').forEach(i => { i.disabled = !i.checked && ids.length >= 3; });
+            btn.disabled = !ids.length;
+            btn.textContent = ids.length ? `Start a ${ids.length + 1}-player match` : 'Start match';
+        });
+        dlg.addEventListener('input', e => {
+            if (!e.target.classList.contains('wpm-find')) return;
+            const q = e.target.value.trim().toLowerCase();
+            dlg.querySelectorAll('.wpm-friend').forEach(l => { l.hidden = !!q && !l.dataset.name.includes(q); });
+        });
+        dlg.addEventListener('click', e => { if (e.target.closest('[data-x]')) dlg.close(); });
+        dlg.addEventListener('close', () => dlg.remove());
+        dlg.addEventListener('submit', async e => {
+            e.preventDefault();
+            btn.disabled = true;
+            btn.textContent = 'Dealing the letters…';
+            const ok = await startMatch(picked());
+            if (ok) dlg.close(); else { btn.disabled = false; btn.textContent = 'Start match'; }
+        });
+        dlg.showModal();
+    }
+    async function startMatch(ids) {
+        for (let tries = 0; tries < 3; tries++) {
+            const { data, error } = await client.rpc('diary_wp_new', { p_opponents: ids, p_start: pick(FIVE, Math.random).toUpperCase() });
+            if (!error) { loadMatches(); openMatch(data); return true; }
+            if (!/starting word/i.test(error.message || '')) { app.showToast(error.message || 'Couldn’t start the match'); return false; }
+        }
+        app.showToast('Couldn’t start the match — try again');
+        return false;
+    }
+
+    // ---------- Playing a match ----------
+    async function openMatch(id) {
+        if (!id) return;
+        if (!myId()) { // opened from a link before sign-in finished: try again shortly
+            let n = 0;
+            const again = setInterval(() => { if (myId() || ++n > 40) { clearInterval(again); if (myId()) openMatch(id); } }, 250);
+            return;
+        }
+        closeWin();
+        const dlg = document.createElement('dialog');
+        dlg.className = 'gm';
+        dlg.setAttribute('aria-label', 'Wordplay match');
+        document.body.append(dlg);
+        W = { game: 'wordplay', match: id, dlg, daily: false, started: 0, timer: null, done: false, state: { board: [], rack: [], pending: [], sel: null, busy: false, last: new Set() } };
+        dlg.addEventListener('close', () => { dlg.remove(); if (W && W.dlg === dlg) W = null; loadMatches(); });
+        dlg.innerHTML = '<div class="gm-card"><div class="gm-body"><p class="gm-hint">Opening the board…</p></div></div>';
+        dlg.showModal();
+        await refreshMatch(true);
+    }
+    const sortedLetters = arr => arr.filter(Boolean).sort().join('');
+    async function refreshMatch(first = false) {
+        if (!W || !W.match) return;
+        const id = W.match;
+        const [{ data: m, error }, { data: rk }] = await Promise.all([
+            client.from('diary_wp_matches').select('*').eq('id', id).maybeSingle(),
+            client.from('diary_wp_racks').select('rack').eq('match_id', id).eq('user_id', myId()).maybeSingle()
+        ]);
+        if (!W || W.match !== id) return;
+        if (error || !m) { W.dlg.querySelector('.gm-body').innerHTML = '<p class="gm-hint">This match isn’t available any more.</p><button type="button" class="ghost-btn" data-gm="close">Close</button>'; return; }
+        await loadPeople(m.players);
+        if (!W || W.match !== id) return;
+        const st = W.state;
+        const moved = !st.m || st.m.board !== m.board || st.m.turn !== m.turn;
+        st.m = m;
+        st.board = Array.from({ length: WP_N }, (_, r) => [...m.board.slice(r * WP_N, r * WP_N + WP_N)].map(ch => (ch === '.' ? '' : ch)));
+        const letters = (rk && rk.rack) || '';
+        // Keep the letters you're arranging unless the board moved on or your rack changed
+        const mine = sortedLetters([...st.rack, ...st.pending.map(p => p.ch)]);
+        if (first || moved || mine !== sortedLetters([...letters])) { st.rack = [...letters]; st.pending = []; st.sel = null; }
+        st.last = new Set(((m.last_move && m.last_move.cells) || []).map(x => `${Math.floor(x / WP_N)},${x % WP_N}`));
+        if (!W.dlg.querySelector('.wpm-game')) matchFrame();
+        paintMatch();
+    }
+    function matchFrame() {
+        W.dlg.innerHTML = `
+            <div class="gm-card gm-wordplay wpm-game">
+                <header class="gm-head">
+                    <button type="button" class="icon-btn" data-gm="close" aria-label="Close">${ic('i-close')}</button>
+                    <div class="gm-title"><strong>${ic('i-g-tiles')}Wordplay</strong><small class="wpm-bag"></small></div>
+                </header>
+                <div class="gm-body">
+                    <div class="wpm-players" role="list" aria-label="Players"></div>
+                    <div class="wp-board" role="grid" aria-label="Board"></div>
+                    <p class="gm-hint" aria-live="polite"></p>
+                    <div class="wp-rack" aria-label="Your letters"></div>
+                    <div class="wp-actions wpm-actions">
+                        <button type="button" class="ghost-btn" data-wp="shuffle">Shuffle</button>
+                        <button type="button" class="ghost-btn" data-wp="swap">Swap</button>
+                        <button type="button" class="ghost-btn" data-wp="pass">Pass</button>
+                        <button type="button" class="primary-btn" data-wp="play">Play</button>
+                    </div>
+                    <div class="wpm-foot"></div>
+                </div>
+            </div>`;
+    }
+    function lastText(m) {
+        const lm = m.last_move;
+        if (!lm) return '';
+        const n = firstName(lm.user);
+        if (lm.kind === 'play') return `${n} played ${(lm.words || []).map(w => w.word).join(', ')} for ${lm.points}${lm.bingo ? ' (all seven!)' : ''}.`;
+        if (lm.kind === 'pass') return `${n} passed.`;
+        if (lm.kind === 'swap') return `${n} swapped letters.`;
+        if (lm.kind === 'resign') return `${n} left the match.`;
+        return '';
+    }
+    function paintMatch() {
+        const st = W.state, m = st.m, me = myId();
+        const active = m.status === 'active';
+        const out = m.out_players.includes(me);
+        const mine = isMyTurn(m);
+        st.locked = !mine;
+        wpPaintTiles();
+        W.dlg.querySelector('.wp-board').classList.toggle('locked', !mine);
+        W.dlg.querySelector('.wpm-players').innerHTML = m.players.map((p, i) => `
+            <span class="wpm-p${active && i === m.turn ? ' turn' : ''}${m.out_players.includes(p) ? ' out' : ''}${!active && m.winner === p ? ' won' : ''}" role="listitem"
+                aria-label="${esc(who(p).display_name || 'Player')}: ${Number(m.scores[p] || 0)} points${active && i === m.turn ? ', playing now' : ''}">
+                ${I.avatar(who(p), 'sm')}<span><strong>${esc(firstName(p))}</strong><b>${Number(m.scores[p] || 0)}</b></span>
+                ${!active && m.winner === p ? ic('i-trophy', 'wpm-crown') : ''}
+            </span>`).join('');
+        W.dlg.querySelector('.wpm-bag').textContent = active ? `${m.bag_count} ${m.bag_count === 1 ? 'letter' : 'letters'} left in the bag` : 'Match over';
+        const move = mine && st.pending.length ? wpMove() : null;
+        const play = W.dlg.querySelector('[data-wp="play"]');
+        play.disabled = !mine || !move || !!move.error || st.busy;
+        play.textContent = move && !move.error ? `Play · ${move.total}` : 'Play';
+        W.dlg.querySelector('[data-wp="swap"]').disabled = !mine || st.busy || m.bag_count < 1;
+        W.dlg.querySelector('[data-wp="pass"]').disabled = !mine || st.busy;
+        W.dlg.querySelector('.wpm-actions').hidden = !active || out;
+        W.dlg.querySelector('.wp-rack').hidden = !active || out;
+        W.dlg.querySelector('.wpm-foot').innerHTML = !active
+            ? `<button type="button" class="primary-btn" data-wp="rematch">${ic('i-refresh')}Rematch</button><button type="button" class="ghost-btn" data-wp="share">${ic('i-share')}Share</button>`
+            : out ? '<small class="muted">You left this match — the others play on</small>'
+            : '<button type="button" class="link-btn" data-wp="resign">Resign</button>';
+        const last = lastText(m);
+        if (st.busy) return;
+        if (move) hint(move.error || move.words.map(w => `${w.word} ${w.points}`).join(' + ') + (move.bingo ? ' + 50 for all seven!' : ''));
+        else if (!active) hint(m.winner === me ? `You won with ${Number(m.scores[me] || 0)} points!` : m.winner ? `${who(m.winner).display_name || 'Someone'} won this one.` : 'It’s a draw!');
+        else if (out) hint(last);
+        else if (mine) hint(last ? `${last} Your turn.` : 'Your turn — build off the word in the middle.');
+        else hint(`${last ? `${last} ` : ''}Waiting for ${firstName(m.players[m.turn])}…`);
+    }
+    async function matchCall(name, args, done) {
+        const st = W.state, id = W.match;
+        st.busy = true;
+        paintMatch();
+        hint(name === 'diary_wp_play' ? 'Checking your words…' : 'One moment…');
+        const { data, error } = await client.rpc(name, args);
+        if (!W || W.match !== id) return;
+        st.busy = false;
+        if (error) {
+            paintMatch();
+            if (name === 'diary_wp_play') {
+                const b = W.dlg.querySelector('.wp-board');
+                b.classList.add('shake');
+                setTimeout(() => b.classList.remove('shake'), 400);
+            }
+            return hint(error.message || 'That didn’t work — try again');
+        }
+        if (navigator.vibrate) navigator.vibrate(12);
+        st.pending = [];
+        await refreshMatch(true);
+        if (done) done(data);
+    }
+    async function matchAction(act) {
+        const st = W.state, m = st.m, id = W.match;
+        if (!m || st.busy) return;
+        if (act === 'shuffle') { wpRecall(); st.rack = shuffle(st.rack, Math.random); return paintMatch(); }
+        if (act === 'recall') { wpRecall(); return paintMatch(); }
+        if (act === 'share') {
+            const line = m.players.map(p => `${who(p).display_name || 'Someone'} ${Number(m.scores[p] || 0)}`).join(' · ');
+            if (window.diaryPlay && window.diaryPlay.share) window.diaryPlay.share(`🔤 A game of Wordplay on Cordial: ${line}${m.winner ? ` — ${m.winner === myId() ? 'I' : (who(m.winner).display_name || 'they')} won!` : ''} #playnote`);
+            return;
+        }
+        if (act === 'rematch') { const others = m.players.filter(p => p !== myId() && !m.out_players.includes(p)); return others.length ? startMatch(others) : newMatchDialog(); }
+        if (act === 'resign') {
+            const left = m.players.length - m.out_players.length;
+            const ok = await app.ask({ title: 'Resign from this match?', text: left <= 2 ? 'Your opponent wins the match.' : 'The others carry on without you.', ok: 'Resign' });
+            if (ok && W && W.match === id) matchCall('diary_wp_resign', { p_match: id });
+            return;
+        }
+        if (!isMyTurn(m)) return hint('Wait for your turn');
+        if (act === 'pass') {
+            const ok = await app.ask({ title: 'Pass this turn?', text: 'If every player passes twice in a row, the match ends.', ok: 'Pass' });
+            if (ok && W && W.match === id) { wpRecall(); matchCall('diary_wp_pass', { p_match: id }); }
+            return;
+        }
+        if (act === 'swap') {
+            const ok = await app.ask({ title: 'Swap your letters?', text: 'You get new letters from the bag, but it uses up your turn.', ok: 'Swap' });
+            if (!ok || !W || W.match !== id) return;
+            wpRecall();
+            const letters = st.rack.filter(Boolean).slice(0, Math.min(7, m.bag_count)).join('');
+            return matchCall('diary_wp_swap', { p_match: id, p_letters: letters });
+        }
+        if (act === 'play') {
+            const move = wpMove();
+            if (move.error) return hint(move.error);
+            return matchCall('diary_wp_play', { p_match: id, p_tiles: st.pending.map(p => ({ r: p.r, c: p.c, ch: p.ch })) });
+        }
+    }
+
+    // Entry points: the Playnote list, and links from notifications (#/play/m/<match>)
+    document.addEventListener('click', e => {
+        const b = e.target.closest('[data-wpm]');
+        if (!b || !document.getElementById('content').contains(b)) return;
+        if (b.dataset.wpm === 'new') newMatchDialog();
+        else if (b.dataset.wpm === 'open') openMatch(b.dataset.id);
+    });
+    if (app.onRoute) app.onRoute(r => { if (r.view === 'play' && r.msg) openMatch(r.msg); });
 
     const BUILD = { wordplay: buildWordplay, five: buildFive, wordsearch: buildWordsearch, sudoku: buildSudoku, memory: buildMemory, maths: buildMaths, slide: buildSlide };
 
@@ -843,5 +1164,5 @@ document.addEventListener('DOMContentLoaded', () => {
         if (t && document.getElementById('content').contains(t)) open(t.dataset.game);
     });
 
-    window.diaryGames = { open, tilesHTML, GAMES, refresh: loadToday, current: () => W };
+    window.diaryGames = { open, tilesHTML, GAMES, refresh: loadToday, current: () => W, matchesHTML, openMatch, newMatch: newMatchDialog, loadMatches };
 });
