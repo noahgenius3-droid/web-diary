@@ -3537,6 +3537,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <button type="button" class="pc-tool camera" data-action="feed-camera"><svg class="i"><use href="#i-camera"/></svg>Camera</button>
                             <button type="button" class="pc-tool audio" data-action="feed-audio" aria-haspopup="menu"><svg class="i"><use href="#i-music"/></svg>Audio</button>
                             <button type="button" class="pc-tool video" data-action="feed-video"><svg class="i"><use href="#i-reel"/></svg>Video</button>
+                            <button type="button" class="pc-tool note-media" data-action="note-media" aria-haspopup="menu" title="Turn one of your notes into a video or audio post"><svg class="i"><use href="#i-sparkle"/></svg>Note → video</button>
                             <button type="button" class="pc-tool live" data-action="live-start"><svg class="i"><use href="#i-live"/></svg>Live</button>
                             <button type="button" class="pc-tool story-toggle" data-action="feed-story-toggle" aria-pressed="${s.feedStory}" title="Also add this post to your story"><span class="pc-story-ring" aria-hidden="true"></span>Story</button>
                             <button type="button" class="pc-audience" data-action="feed-audience" aria-haspopup="menu" title="Who can see this post — it’s also saved to your diary">${s.feedAudience === 'public'

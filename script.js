@@ -227,6 +227,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     const text = [edTitle.value, Rich.toText(edBody.innerHTML)].filter(s => s && s.trim()).join('. ');
                     if (!text.trim()) return showToast('Write something first');
                     window.Speak.read(text, { title: edTitle.value || 'Your note' });
+                } },
+                // Share the note on the Feed as an animated video or as your voice reading it
+                { cmd: 'remix', label: 'Share as a video or audio', icon: 'i-reel', run: () => {
+                    if (!window.diaryNoteMedia) return;
+                    window.diaryNoteMedia.open({ title: edTitle.value, text: Rich.toText(edBody.innerHTML), color: editing && editing.color, createdAt: editing && editing.createdAt });
                 } }
             ]
         });
