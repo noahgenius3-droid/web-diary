@@ -347,17 +347,37 @@ document.addEventListener('DOMContentLoaded', () => {
         markArrival.t = setTimeout(() => content.classList.remove('arriving'), 1400);
     }
 
+    // The top bar's real height (it grows with the notch, the back row and the search row), so bars that stick
+    // under it — the feed's For you / Following tabs, profile tabs — sit exactly beneath it instead of jumping
+    (() => {
+        const bar = document.querySelector('.topbar');
+        if (!bar || !window.ResizeObserver) return;
+        const set = () => document.documentElement.style.setProperty('--topbar-h', `${Math.round(bar.getBoundingClientRect().height)}px`);
+        new ResizeObserver(set).observe(bar);
+        set();
+    })();
+
     // Phones: swipe left or right to move between the pages in the tab bar
     (() => {
         const col = document.querySelector('.main-col');
         const ORDER = ['home', 'feed', 'explore', 'communities', 'messages'];
         const SKIP = 'input, textarea, select, [contenteditable="true"], .carousel, .ex-row, .live-strip, .stories-bar, .nh-templates, .nh-tags, .folder-chips, .ex-tabs, .feed-tabs, .tabs, .pour, .nh-controls, .cm-filters, .chat-pane, .vc-bar, .templates, .trend-tags, .reel-post-media';
         let t = null;
+        // Any row that can scroll sideways (Playnote, pinned notes, people, filters…) keeps the swipe for itself
+        const scrollsSideways = target => {
+            for (let el = target; el && el !== col; el = el.parentElement) {
+                if (el.scrollWidth > el.clientWidth + 4) {
+                    const ox = getComputedStyle(el).overflowX;
+                    if (ox === 'auto' || ox === 'scroll') return true;
+                }
+            }
+            return false;
+        };
         col.addEventListener('touchstart', e => {
             t = null;
             if (e.touches.length !== 1 || window.innerWidth > 760 || document.querySelector('dialog[open]')) return;
             if (!ORDER.includes(state.view) || document.body.classList.contains('chat-open')) return;
-            if (e.target.closest(SKIP)) return;
+            if (e.target.closest(SKIP) || scrollsSideways(e.target)) return;
             const p = e.touches[0];
             t = { x: p.clientX, y: p.clientY, at: Date.now(), axis: null, dx: 0 };
         }, { passive: true });
@@ -2495,7 +2515,7 @@ document.addEventListener('DOMContentLoaded', () => {
             { label: 'Voice note', icon: 'i-wave', tile: true, cls: 'mobile-only', onClick: () => window.diaryTranscribe && window.diaryTranscribe.open() },
             ...[['archive', 'Archive', 'i-archive'], ['trash', 'Trash', 'i-trash']].map(tile),
             { heading: 'Discover', cls: 'mobile-only' },
-            ...[['play', 'Play & learn', 'i-trophy'], ['reels', 'Reels', 'i-reel'], ['library', 'Library', 'i-book'], ['market', 'Market', 'i-store']].map(tile),
+            ...[['play', 'Playnote', 'i-trophy'], ['reels', 'Reels', 'i-reel'], ['library', 'Library', 'i-book'], ['market', 'Market', 'i-store']].map(tile),
             { sep: true, cls: 'mobile-only' },
             ...(hooks.menuItems ? hooks.menuItems() : []),
             { label: 'Refresh', icon: 'i-refresh', onClick: () => refreshView() },

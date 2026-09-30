@@ -12447,3 +12447,27 @@ html.kb-open :is(.story-viewer, .transcribe, .reader, .post-view, .lib-compose, 
 
 body[data-view="play"] .fab { display: none !important; }
 .pl-ex-row > .pl-ex-word { width: 220px; }
+
+/* Sticky bars sit right under the top bar (script.js measures its real height into --topbar-h) */
+.feed-bar { top: var(--topbar-h, 92px); }
+.pf-tabs { top: var(--topbar-h, 0px); }
+@media (max-width: 760px) {
+    .feed-bar { top: var(--topbar-h, 62px); }
+    .new-posts { top: calc(var(--topbar-h, 62px) + 58px); }
+}
+/* Sideways rows: a swipe scrolls the row and stops at its ends instead of moving the page */
+:is(.nh-pinned, .pl-ex-row, .pymk-row, .ex-row, .feed-tabs, .rx-tabs, .notif-filters, .pl-seg, .sched-tabs, .ex-tabs, .cm-filters, .stories-bar, .live-strip, .nh-templates, .nh-tags, .folder-chips, .trend-tags, .mk-row) {
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x pan-y;
+}
+.nh-pinned { scroll-snap-type: x mandatory; scroll-padding-inline: 2px; }
+
+/* Phones: iOS zooms the whole page into any text box under 16px (the "feed zooms in when I tap New post"
+   bug). Every place you type is at least 16px on touch screens; pinch-zoom stays available. */
+@media (pointer: coarse), (max-width: 760px) {
+    input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+    textarea, select, [contenteditable="true"] {
+        font-size: max(16px, 1em) !important;
+    }
+}

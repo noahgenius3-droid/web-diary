@@ -1,4 +1,4 @@
-// Play & learn (#/play): the daily habit page. Daily trivia, the weekly challenge, Bible and brain challenges,
+// Playnote (#/play): the daily habit page. Daily trivia, the weekly challenge, Bible and brain challenges,
 // the question of the day, word of the day, daily thought and daily poll, practice by category, leaderboards
 // and your trivia numbers. Answers and scores live on the server (the phone never gets an answer before you
 // pick one), so leaderboards are fair. Results can be shared to the feed.
@@ -211,7 +211,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     app.views.play = () => {
-        app.setTitle('Play & learn');
+        app.setTitle('Playnote');
         const blocked = I.gate('Daily trivia, challenges and leaderboards — learn something every day.');
         if (blocked) return blocked;
         if (!P.today) { load(); return '<div class="pl"><div class="pl-board-skel" aria-busy="true"><i></i><i></i><i></i></div></div>'; }
@@ -236,14 +236,14 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     const greeting = () => { const h = new Date().getHours(); return h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening'; };
 
-    // The Explore page's "Play & learn" band: today's games plus the word of the day
+    // The Explore page's "Playnote" band: today's games plus the word of the day
     function exploreSection() {
         if (!me()) return '';
         if (!P.today) { if (!P.loading) load(); return ''; }
         const w = P.today.word;
         return `
             <section class="ex-sec pl-ex" aria-labelledby="pl-ex-h">
-                <header class="ex-head"><h3 id="pl-ex-h"><span class="ex-ic">${ic('i-trophy')}</span>Play & learn</h3>
+                <header class="ex-head"><h3 id="pl-ex-h"><span class="ex-ic">${ic('i-trophy')}</span>Playnote</h3>
                     <p>Trivia, a new word and a quick poll — a few minutes a day</p>
                     <button type="button" class="link-btn accent ex-more" data-action="go-play">Open</button></header>
                 <div class="pl-ex-row">
