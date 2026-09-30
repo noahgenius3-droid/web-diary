@@ -175,7 +175,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const VKINDS = { person: 'Public figure', organisation: 'Organisation', minister: 'Minister', educator: 'Educator', administrator: 'Administrator' };
     const QCATS = ['general', 'bible', 'history', 'science', 'current', 'sports', 'education', 'brain'];
     const QLABEL = { general: 'General knowledge', bible: 'Bible', history: 'History', science: 'Science & tech', current: 'Current affairs', sports: 'Sports', education: 'Education', brain: 'Brain teasers' };
-    const GLABEL = { five: 'Five', wordsearch: 'Word search', sudoku: 'Sudoku', memory: 'Memory', maths: 'Maths sprint', slide: 'Sliding puzzle' };
+    const GLABEL = { five: 'Five', wordsearch: 'Word search', sudoku: 'Sudoku', memory: 'Memory', maths: 'Maths sprint', slide: 'Sliding puzzle', wordplay: 'Wordplay' };
     const X = { users: null, userQ: '', requests: null, questions: null, qCat: '', qSearch: '', games: null, scheduled: null, announcements: null, badges: null };
 
     async function loadExtra(tab) {

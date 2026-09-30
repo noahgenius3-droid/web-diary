@@ -17,7 +17,8 @@ document.addEventListener('DOMContentLoaded', () => {
         sudoku: { title: 'Sudoku', sub: 'Fill the grid, 1 to 9', icon: 'i-g-sudoku' },
         memory: { title: 'Memory', sub: 'Match all eight pairs', icon: 'i-g-cards' },
         maths: { title: 'Maths sprint', sub: 'As many as you can in 60 seconds', icon: 'i-g-plus' },
-        slide: { title: 'Sliding puzzle', sub: 'Put the tiles back in order', icon: 'i-g-slide' }
+        slide: { title: 'Sliding puzzle', sub: 'Put the tiles back in order', icon: 'i-g-slide' },
+        wordplay: { title: 'Wordplay', sub: 'Build words on the board for points', icon: 'i-g-tiles' }
     };
     const G = { today: null, off: new Set() };
 
@@ -134,7 +135,7 @@ document.addEventListener('DOMContentLoaded', () => {
         W.share = share;
         W.dlg.querySelector('.gm-body').innerHTML = `
             <div class="gm-end">
-                <p class="gm-cheer">${W.game === 'maths' ? 'Time’s up!' : won ? 'Solved!' : 'Nice try'}</p>
+                <p class="gm-cheer">${W.game === 'maths' ? 'Time’s up!' : W.game === 'wordplay' ? 'Well played!' : won ? 'Solved!' : 'Nice try'}</p>
                 <p class="gm-summary">${esc(summary)} · ${clockText(time)}</p>
                 <div class="gm-points"><b>${error ? '—' : score.toLocaleString()}</b><span>${error ? esc(error.message || 'Couldn’t save your score') : data.ranked ? 'points · counts on today’s leaderboard' : 'points · practice'}</span></div>
                 ${data && data.badges && data.badges.length ? `<div class="gm-badges">${data.badges.map(b => `<span class="badge-chip ${esc(b.tier)}">${ic(b.icon)}${esc(b.name)}</span>`).join('')}<small>New badge${data.badges.length > 1 ? 's' : ''}!</small></div>` : ''}
@@ -564,12 +565,239 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    const BUILD = { five: buildFive, wordsearch: buildWordsearch, sudoku: buildSudoku, memory: buildMemory, maths: buildMaths, slide: buildSlide };
+    // =====================================================================
+    // Wordplay: a Scrabble-style board. Seven letters, six turns, bonus squares
+    // =====================================================================
+    const WP_N = 9, WP_TURNS = 6;
+    const WP_VAL = { A: 1, B: 3, C: 3, D: 2, E: 1, F: 4, G: 2, H: 4, I: 1, J: 8, K: 5, L: 1, M: 3, N: 1, O: 1, P: 3, Q: 10, R: 1, S: 1, T: 1, U: 1, V: 4, W: 4, X: 8, Y: 4, Z: 10 };
+    const WP_BAG = { A: 9, B: 2, C: 2, D: 4, E: 12, F: 2, G: 3, H: 2, I: 9, J: 1, K: 1, L: 4, M: 2, N: 6, O: 8, P: 2, Q: 1, R: 6, S: 4, T: 6, U: 4, V: 2, W: 2, X: 1, Y: 2, Z: 1 };
+    // Bonus squares: triple word, double word, triple letter, double letter (the centre row holds the starting word)
+    const WP_BONUS = (() => {
+        const b = {};
+        const put = (kind, list) => list.forEach(([r, c]) => { b[`${r},${c}`] = kind; });
+        put('tw', [[0, 0], [0, 8], [8, 0], [8, 8]]);
+        put('dw', [[1, 1], [2, 2], [6, 6], [7, 7], [1, 7], [2, 6], [6, 2], [7, 1]]);
+        put('tl', [[1, 4], [4, 1], [4, 7], [7, 4]]);
+        put('dl', [[0, 2], [0, 6], [2, 0], [6, 0], [8, 2], [8, 6], [2, 8], [6, 8], [3, 3], [3, 5], [5, 3], [5, 5]]);
+        return b;
+    })();
+    const WP_BONUS_LABEL = { tw: '3W', dw: '2W', tl: '3L', dl: '2L' };
+    // The dictionary (the public-domain ENABLE list, ~105,000 words) lives in Supabase; answers are remembered for the session
+    const WP_LOOKED = new Map(); // WORD -> true / false
+    async function wpUnknown(words) {
+        const ask = [...new Set(words)].filter(w => !WP_LOOKED.has(w));
+        if (ask.length) {
+            const { data, error } = await client.rpc('diary_words_check', { p_words: ask });
+            if (error) throw error;
+            const bad = new Set((data || []).map(w => w.toUpperCase()));
+            ask.forEach(w => WP_LOOKED.set(w, !bad.has(w)));
+        }
+        return words.filter(w => !WP_LOOKED.get(w));
+    }
+    function buildWordplay() {
+        const rnd = W.rnd;
+        const start = pick(FIVE, rnd).toUpperCase();
+        const board = Array.from({ length: WP_N }, () => Array(WP_N).fill(''));
+        [...start].forEach((ch, i) => { board[4][2 + i] = ch; });
+        const bag = [];
+        Object.entries(WP_BAG).forEach(([ch, n]) => { for (let i = 0; i < n; i++) bag.push(ch); });
+        [...start].forEach(ch => bag.splice(bag.indexOf(ch), 1));
+        const shuffled = shuffle(bag, rnd);
+        W.state = { board, bag: shuffled, rack: shuffled.splice(0, 7), pending: [], sel: null, turn: 1, score: 0, best: null, log: [], busy: false };
+        frame(`<div class="wp-top"><span class="wp-score" aria-live="polite"></span><span class="wp-turn"></span></div>
+            <div class="wp-board" role="grid" aria-label="Board"></div>
+            <p class="gm-hint" aria-live="polite">Tap a letter, then a square. Build off ${esc(start)}.</p>
+            <div class="wp-rack" aria-label="Your letters"></div>
+            <div class="wp-actions">
+                <button type="button" class="ghost-btn" data-wp="shuffle">${ic('i-refresh')}Shuffle</button>
+                <button type="button" class="ghost-btn" data-wp="recall">Recall</button>
+                <button type="button" class="ghost-btn" data-wp="swap">Swap</button>
+                <button type="button" class="primary-btn" data-wp="play">Play</button>
+            </div>
+            <button type="button" class="link-btn wp-end" data-wp="end">End game</button>`);
+        paintWordplay();
+    }
+    const wpAt = (r, c) => {
+        const st = W.state;
+        if (r < 0 || c < 0 || r >= WP_N || c >= WP_N) return '';
+        const p = st.pending.find(x => x.r === r && x.c === c);
+        return p ? p.ch : st.board[r][c];
+    };
+    // Every word the pending tiles make, with its score; or an explanation of why the move doesn't work
+    function wpMove() {
+        const st = W.state, P = st.pending;
+        if (!P.length) return { error: 'Place some letters first' };
+        const sameRow = P.every(p => p.r === P[0].r), sameCol = P.every(p => p.c === P[0].c);
+        if (!sameRow && !sameCol) return { error: 'Letters must go in one straight line' };
+        const across = P.length > 1 ? sameRow : (wpAt(P[0].r, P[0].c - 1) || wpAt(P[0].r, P[0].c + 1));
+        const [dr, dc] = across ? [0, 1] : [1, 0];
+        // No gaps along the line
+        const idx = P.map(p => (across ? p.c : p.r));
+        for (let k = Math.min(...idx); k <= Math.max(...idx); k++) {
+            if (!wpAt(across ? P[0].r : k, across ? k : P[0].c)) return { error: 'No gaps between your letters' };
+        }
+        const isNew = (r, c) => P.some(p => p.r === r && p.c === c);
+        const wordFrom = (r, c, dr2, dc2) => {
+            while (wpAt(r - dr2, c - dc2)) { r -= dr2; c -= dc2; }
+            const cells = [];
+            while (wpAt(r, c)) { cells.push([r, c]); r += dr2; c += dc2; }
+            return cells;
+        };
+        const words = [];
+        const main = wordFrom(P[0].r, P[0].c, dr, dc);
+        if (main.length > 1) words.push(main);
+        P.forEach(p => { const cross = wordFrom(p.r, p.c, dc, dr); if (cross.length > 1) words.push(cross); });
+        if (!words.length) return { error: 'Make a word of two letters or more' };
+        if (!words.some(w => w.some(([r, c]) => !isNew(r, c)))) return { error: 'Join onto a word already on the board' };
+        let total = 0;
+        const scored = words.map(cells => {
+            let sum = 0, mult = 1;
+            cells.forEach(([r, c]) => {
+                let v = WP_VAL[wpAt(r, c)] || 0;
+                if (isNew(r, c)) {
+                    const b = WP_BONUS[`${r},${c}`];
+                    if (b === 'dl') v *= 2; else if (b === 'tl') v *= 3; else if (b === 'dw') mult *= 2; else if (b === 'tw') mult *= 3;
+                }
+                sum += v;
+            });
+            const word = cells.map(([r, c]) => wpAt(r, c)).join('');
+            total += sum * mult;
+            return { word, points: sum * mult };
+        });
+        const bingo = P.length === 7 ? 50 : 0;
+        return { words: scored, total: total + bingo, bingo };
+    }
+    function paintWordplay() {
+        const st = W.state;
+        const move = st.pending.length ? wpMove() : null;
+        W.dlg.querySelector('.wp-board').innerHTML = st.board.map((row, r) => row.map((ch, c) => {
+            const p = st.pending.find(x => x.r === r && x.c === c);
+            const letter = p ? p.ch : ch;
+            const b = WP_BONUS[`${r},${c}`];
+            if (letter) return `<button type="button" class="wp-cell tile${p ? ' new' : ''}" data-wc="${r},${c}" aria-label="${letter}${p ? ', tap to take back' : ''}"${p ? '' : ' tabindex="-1"'}>${letter}<sub>${WP_VAL[letter]}</sub></button>`;
+            return `<button type="button" class="wp-cell${b ? ` ${b}` : ''}" data-wc="${r},${c}" aria-label="Empty${b ? `, ${WP_BONUS_LABEL[b]}` : ''}">${b ? WP_BONUS_LABEL[b] : ''}</button>`;
+        }).join('')).join('');
+        W.dlg.querySelector('.wp-rack').innerHTML = st.rack.map((ch, i) => (ch
+            ? `<button type="button" class="wp-tile${st.sel === i ? ' sel' : ''}" data-wr="${i}" aria-label="${ch}, ${WP_VAL[ch]} points" aria-pressed="${st.sel === i}">${ch}<sub>${WP_VAL[ch]}</sub></button>`
+            : '<span class="wp-tile empty" aria-hidden="true"></span>')).join('');
+        W.dlg.querySelector('.wp-score').innerHTML = `<b>${st.score}</b> points`;
+        W.dlg.querySelector('.wp-turn').textContent = `Turn ${Math.min(st.turn, WP_TURNS)} of ${WP_TURNS} · ${st.bag.length} in the bag`;
+        const playBtn = W.dlg.querySelector('[data-wp="play"]');
+        playBtn.disabled = !move || !!move.error || st.busy;
+        playBtn.textContent = move && !move.error ? `Play · ${move.total}` : 'Play';
+        if (move) hint(move.error || move.words.map(w => `${w.word} ${w.points}`).join(' + ') + (move.bingo ? ' + 50 for all seven!' : ''));
+    }
+    function wpDraw() {
+        const st = W.state;
+        st.rack = st.rack.map(ch => ch || st.bag.shift() || '');
+    }
+    function wpRecall() {
+        const st = W.state;
+        st.pending.forEach(p => { const k = st.rack.indexOf(''); if (k >= 0) st.rack[k] = p.ch; else st.rack.push(p.ch); });
+        st.pending = [];
+        st.sel = null;
+    }
+    function wpNextTurn() {
+        const st = W.state;
+        st.turn++;
+        if (st.turn > WP_TURNS || !st.rack.some(Boolean)) return finishWordplay();
+        paintWordplay();
+    }
+    async function wpAction(act) {
+        const st = W.state;
+        if (st.busy) return;
+        startClock();
+        if (act === 'shuffle') { wpRecall(); st.rack = shuffle(st.rack, Math.random); }
+        else if (act === 'recall') wpRecall();
+        else if (act === 'swap') {
+            if (!st.bag.length) return hint('The bag is empty — nothing to swap');
+            const ok = await app.ask({ title: 'Swap all your letters?', text: 'You get seven new letters, but it uses up this turn.', ok: 'Swap' });
+            if (!ok || !W || W.done) return;
+            wpRecall();
+            const old = st.rack.filter(Boolean);
+            st.rack = st.bag.splice(0, old.length);
+            st.bag.push(...old);
+            st.bag = shuffle(st.bag, W.rnd);
+            st.log.push('⬜');
+            hint('New letters');
+            return wpNextTurn();
+        } else if (act === 'end') {
+            const ok = await app.ask({ title: 'End the game now?', text: `You’ll finish on ${st.score} points.`, ok: 'End game' });
+            if (ok && W && !W.done) { wpRecall(); finishWordplay(); }
+            return;
+        } else if (act === 'play') {
+            const move = wpMove();
+            if (move.error) return hint(move.error);
+            st.busy = true;
+            paintWordplay();
+            hint('Checking…');
+            let bad = null;
+            try {
+                bad = (await wpUnknown(move.words.map(w => w.word)))[0] || null;
+            } catch (e) {
+                st.busy = false;
+                paintWordplay();
+                return hint('Couldn’t check the words — are you online?');
+            }
+            st.busy = false;
+            if (!W || W.done) return;
+            if (bad) {
+                paintWordplay();
+                W.dlg.querySelector('.wp-board').classList.add('shake');
+                setTimeout(() => W && W.dlg.querySelector('.wp-board')?.classList.remove('shake'), 400);
+                return hint(`${bad} isn’t in our dictionary`);
+            }
+            st.pending.forEach(p => { st.board[p.r][p.c] = p.ch; });
+            st.pending = [];
+            st.score += move.total;
+            const top = move.words.reduce((a, b) => (b.points > a.points ? b : a));
+            if (!st.best || top.points > st.best.points) st.best = top;
+            st.log.push(move.total >= 30 ? '🟩' : move.total >= 15 ? '🟨' : '🟧');
+            wpDraw();
+            if (navigator.vibrate) navigator.vibrate(12);
+            hint(`${move.words.map(w => w.word).join(', ')} · +${move.total}${move.bingo ? ' (all seven!)' : ''}`);
+            return wpNextTurn();
+        }
+        paintWordplay();
+    }
+    function wordplayTapRack(i) {
+        const st = W.state;
+        if (st.busy || !st.rack[i]) return;
+        st.sel = st.sel === i ? null : i;
+        paintWordplay();
+    }
+    function wordplayTapCell(r, c) {
+        const st = W.state;
+        if (st.busy) return;
+        const k = st.pending.findIndex(p => p.r === r && p.c === c);
+        if (k >= 0) { // take a letter back
+            const [p] = st.pending.splice(k, 1);
+            const slot = st.rack.indexOf('');
+            if (slot >= 0) st.rack[slot] = p.ch; else st.rack.push(p.ch);
+            return paintWordplay();
+        }
+        if (st.board[r][c]) return;
+        const i = st.sel;
+        if (i === null || !st.rack[i]) return hint('Tap one of your letters first');
+        startClock();
+        st.pending.push({ r, c, ch: st.rack[i] });
+        st.rack[i] = '';
+        st.sel = null;
+        paintWordplay();
+    }
+    function finishWordplay() {
+        const st = W.state;
+        const best = st.best ? ` · best word ${st.best.word} (${st.best.points})` : '';
+        finish({ won: st.score > 0, moves: st.score, summary: `${st.score} points in ${st.log.length} ${st.log.length === 1 ? 'turn' : 'turns'}${best}`,
+            share: `🔤 Wordplay on Cordial${W.daily ? ` · ${utcDay()}` : ''}: ${st.score} points${best}\n${st.log.join('')}\n#playnote` });
+    }
+
+    const BUILD = { wordplay: buildWordplay, five: buildFive, wordsearch: buildWordsearch, sudoku: buildSudoku, memory: buildMemory, maths: buildMaths, slide: buildSlide };
 
     // ---------- One click handler for every game ----------
     document.addEventListener('click', e => {
         if (!W || !W.dlg.contains(e.target)) return;
-        const b = e.target.closest('[data-gm], [data-k], [data-i], [data-n], [data-c], [data-d], [data-t]');
+        const b = e.target.closest('[data-gm], [data-k], [data-i], [data-n], [data-c], [data-d], [data-t], [data-wp], [data-wc], [data-wr]');
         if (!b) return;
         if (b.dataset.gm) {
             const act = b.dataset.gm;
@@ -580,7 +808,10 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         if (W.done) return;
-        if (b.dataset.k) fiveKey(b.dataset.k);
+        if (b.dataset.wp) wpAction(b.dataset.wp);
+        else if (b.dataset.wc) { const [r, c] = b.dataset.wc.split(',').map(Number); wordplayTapCell(r, c); }
+        else if (b.dataset.wr !== undefined) wordplayTapRack(Number(b.dataset.wr));
+        else if (b.dataset.k) fiveKey(b.dataset.k);
         else if (b.dataset.i !== undefined && W.game === 'sudoku') { W.state.sel = Number(b.dataset.i); paintSudoku(); }
         else if (b.dataset.n !== undefined) sudokuPut(Number(b.dataset.n));
         else if (b.dataset.c !== undefined) memoryFlip(Number(b.dataset.c));

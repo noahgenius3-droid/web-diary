@@ -712,10 +712,35 @@ document.addEventListener('DOMContentLoaded', () => {
         content.innerHTML = (views[state.view] || renderHome)();
         Media.hydrate(content);
         markArrival();
+        dockBar();
         if (hooks.afterRender) hooks.afterRender(state.view, { repaint });
         if (scrolls) restoreScrolls(scrolls);
         if (focus) restoreFocus(focus);
     }
+
+    // Phones: the feed's For you / Following bar lives inside the top bar instead of being a second sticky bar.
+    // Two sticky layers in one scrolling column drift against each other on iPhone (the "bouncing" tabs);
+    // one header that holds both can't.
+    function dockBar() {
+        const dock = $('topbar-dock');
+        if (!dock) return;
+        const old = dock.querySelector('.feed-tabs');
+        const left = old ? old.scrollLeft : 0;
+        const bar = window.matchMedia('(max-width: 760px)').matches ? content.querySelector('.feed-bar') : null;
+        dock.replaceChildren();
+        if (bar) {
+            dock.appendChild(bar);
+            const tabs = bar.querySelector('.feed-tabs');
+            if (tabs && left) tabs.scrollLeft = left;
+        }
+        dock.hidden = !bar;
+        document.body.classList.toggle('bar-docked', !!bar);
+    }
+    window.matchMedia('(max-width: 760px)').addEventListener?.('change', () => render());
+    $('topbar-dock')?.addEventListener('click', e => {
+        const el = e.target.closest('[data-action]');
+        if (el && actions[el.dataset.action]) actions[el.dataset.action](el, e);
+    });
 
     // Which screen is showing: the page, its id (a community, a folder) and anything a module adds (the open chat)
     function screenKey() {
