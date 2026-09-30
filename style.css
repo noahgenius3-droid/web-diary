@@ -13659,3 +13659,15 @@ body[data-view="feed"] .post.ig .post-text { font-size: 1.02rem; line-height: 1.
 @keyframes update-in { from { opacity: 0; transform: translate(-50%, 12px); } }
 @media (min-width: 761px) { .update-bar { bottom: 24px; } }
 @media (prefers-reduced-motion: reduce) { .update-bar { animation: none; } }
+
+/* ---------- Continue with Google ---------- */
+.auth-oauth { display: grid; gap: 14px; }
+.auth-oauth[hidden] { display: none; }
+.auth-google { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 48px; padding: 0 16px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; font-size: 1rem; font-weight: 700; cursor: pointer; touch-action: manipulation; user-select: none; -webkit-user-select: none; transition: transform 100ms ease-out, background 120ms, border-color 120ms; }
+.auth-google:active { transform: scale(0.98); }
+.auth-google:disabled { opacity: 0.6; cursor: progress; }
+.auth-google:focus-visible { outline: 3px solid rgba(79, 70, 229, 0.45); outline-offset: 3px; }
+@media (hover: hover) and (pointer: fine) { .auth-google:hover { background: var(--input); border-color: color-mix(in srgb, var(--text) 25%, var(--border)); } }
+.auth-g { width: 20px; height: 20px; flex: none; }
+.auth-or { display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 0.82rem; font-weight: 600; }
+.auth-or::before, .auth-or::after { content: ''; flex: 1; height: 1px; background: var(--border); }

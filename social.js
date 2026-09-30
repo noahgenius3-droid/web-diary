@@ -493,7 +493,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.disabled = true;
         const { error } = await client.auth.resend({ type: pending.type === 'email_change' ? 'email_change' : 'signup', email, options: { emailRedirectTo: BACK_TO() } });
         btn.disabled = false;
-        if (error) return showAuthMessage(/rate|seconds|many/i.test(error.message) ? 'Please wait a minute before asking for another email.' : (error.message || 'Couldn’t send the email — try again.'), true);
+        if (error) return showAuthMessage(error.code === 'over_email_send_rate_limit' || /email rate limit/i.test(error.message) ? 'Our confirmation emails are paused for a little while because lots of people are joining. Please try again in about an hour.' : /rate|seconds|many/i.test(error.message) ? 'Please wait a minute before asking for another email.' : (error.message || 'Couldn’t send the email — try again.'), true);
         showAuthMessage(`Sent again to ${email}. It can take a minute — check your spam folder too.`);
     });
 
@@ -553,6 +553,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (/anonymous sign-ins are disabled/i.test(m)) return 'Guest access isn’t switched on yet — create a free account instead.';
         if (/invalid login credentials/i.test(m)) return 'That email and password don’t match. Check them, or tap “Forgot password?”.';
         if (/already registered|already been registered|already exists/i.test(m)) return 'There’s already an account with that email — sign in instead.';
+        // Cordial's email sender has an hourly limit for everyone together — not this person's fault
+        if ((err && err.code === 'over_email_send_rate_limit') || /email rate limit/i.test(m)) return 'So many people are joining right now that our confirmation emails are paused for a little while. Your details are fine — please try again in about an hour.';
         if (/rate|too many|seconds/i.test(m)) return 'Too many tries — please wait a minute and try again.';
         if (/token has expired|invalid.*(otp|token)|otp.*(expired|invalid)/i.test(m)) return 'That code didn’t work — it may have expired. Tap “Send the email again” for a new one.';
         return m || 'Something went wrong. Please try again.';
@@ -633,6 +635,29 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    $('auth-google').addEventListener('click', async () => {
+        const btn = $('auth-google');
+        btn.disabled = true;
+        showAuthMessage('');
+        try {
+            const settings = await fetch(`${cfg.supabaseUrl}/auth/v1/settings`, { headers: { apikey: cfg.supabaseKey } })
+                .then(r => r.json()).catch(() => null);
+            if (settings && settings.external && settings.external.google === false) throw new Error('google-off');
+            const { error } = await client.auth.signInWithOAuth({
+                provider: 'google',
+                options: { redirectTo: location.origin + location.pathname, queryParams: { prompt: 'select_account' } }
+            });
+            if (error) throw error;
+            showAuthMessage('Opening Google…');
+        } catch (err) {
+            btn.disabled = false;
+            showAuthMessage(err.message === 'google-off'
+                ? 'Google sign-in isn’t switched on yet. Use your email for now.'
+                : friendlyAuthError(err), true);
+            $('auth-message').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+    });
+
     // Coming back from an email link that didn't work (expired, already used, opened by a mail scanner…)
     (() => {
         const read = str => new URLSearchParams(String(str || '').replace(/^[#?]/, ''));
@@ -643,6 +668,11 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => {
             if (s.session && !isGuest()) return app.showToast('You’re already signed in');
             openAuth('', 'signin');
+            const desc = h.get('error_description') || q.get('error_description') || '';
+            if (/provider|oauth|access_denied/i.test(desc + ' ' + (h.get('error') || q.get('error') || ''))) {
+                showAuthMessage('Google sign-in didn’t finish. Try again, or use your email.', true);
+                return;
+            }
             showAuthMessage(code === 'otp_expired'
                 ? 'That email link has expired or was already used. If you’ve already confirmed, just sign in. If not, type your email and tap “Send the email again”.'
                 : 'That link didn’t work. Sign in, or type your email and tap “Send the email again”.', true);
@@ -804,9 +834,29 @@ document.addEventListener('DOMContentLoaded', () => {
         const meta = user.user_metadata || {};
         const guestName = () => `guest_${Math.random().toString(36).slice(2, 8).padEnd(6, '0')}`;
         let username = user.is_anonymous ? guestName() : String(meta.username || '').toLowerCase();
-        const displayName = String(meta.display_name || String(user.email || 'friend').split('@')[0]).slice(0, 40);
+        const displayName = String(meta.display_name || meta.full_name || meta.name || String(user.email || 'friend').split('@')[0]).slice(0, 40);
+        let confirmFirst = false;
+        if (!username && !user.is_anonymous) {
+            // e.g. Google: no username yet, so suggest one from their email and let them confirm it
+            username = String(user.email || displayName).split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20);
+            if (username.length < 3) username = (username + '_' + Math.random().toString(36).slice(2, 6)).slice(0, 20);
+            confirmFirst = true;
+        }
 
         for (;;) {
+            if (confirmFirst) {
+                confirmFirst = false;
+                const r = await app.ask({
+                    title: `Welcome to Cordial, ${displayName.split(' ')[0]}!`,
+                    text: 'Pick your username. Friends find you by it: 3–20 lowercase letters, numbers or _.',
+                    value: username, placeholder: 'e.g. noah_writes', ok: 'Continue'
+                });
+                if (!r) {
+                    await client.auth.signOut();
+                    return null;
+                }
+                username = r.value.toLowerCase();
+            }
             if (!USERNAME_RE.test(username) && user.is_anonymous) username = guestName();
             if (!USERNAME_RE.test(username)) {
                 const r = await app.ask({
