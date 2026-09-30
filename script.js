@@ -3082,3 +3082,53 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }, { passive: true });
 })();
+
+// Older iPhones (iOS 15 and earlier) lack form.requestSubmit(): press Enter-to-send the classic way there
+if (window.HTMLFormElement && !HTMLFormElement.prototype.requestSubmit) {
+    HTMLFormElement.prototype.requestSubmit = function (submitter) {
+        if (submitter) return submitter.click();
+        const b = document.createElement('button');
+        b.type = 'submit';
+        b.hidden = true;
+        this.appendChild(b);
+        b.click();
+        b.remove();
+    };
+}
+
+// Everyone gets the newest Cordial: phones often keep the app open for days (especially from the home screen),
+// so when you come back to it — and every 30 minutes — check whether a newer version is live, and offer it
+(() => {
+    const mine = (document.querySelector('script[src*="script.js?v="]') || {}).src || '';
+    const current = (mine.match(/v=(\d+)/) || [])[1];
+    if (!current || !/^https?:$/.test(location.protocol)) return;
+    let shown = false, lastCheck = 0;
+    async function check() {
+        if (shown || !navigator.onLine || Date.now() - lastCheck < 60000) return;
+        lastCheck = Date.now();
+        try {
+            if (navigator.serviceWorker && navigator.serviceWorker.getRegistration) {
+                const reg = await navigator.serviceWorker.getRegistration();
+                if (reg) reg.update().catch(() => {});
+            }
+            const res = await fetch(`/index.html?check=${Date.now()}`, { cache: 'no-store' });
+            if (!res.ok) return;
+            const live = ((await res.text()).match(/script\.js\?v=(\d+)/) || [])[1];
+            if (live && Number(live) > Number(current)) offer();
+        } catch (e) { /* offline or blocked: try again later */ }
+    }
+    function offer() {
+        shown = true;
+        const bar = document.createElement('div');
+        bar.className = 'update-bar';
+        bar.setAttribute('role', 'status');
+        bar.innerHTML = '<span>A new version of Cordial is ready</span><button type="button">Update</button><button type="button" class="update-later" aria-label="Later">✕</button>';
+        bar.querySelector('button').addEventListener('click', () => location.reload());
+        bar.querySelector('.update-later').addEventListener('click', () => bar.remove());
+        document.body.append(bar);
+    }
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
+    window.addEventListener('online', check);
+    setInterval(check, 30 * 60000);
+    setTimeout(check, 20000);
+})();

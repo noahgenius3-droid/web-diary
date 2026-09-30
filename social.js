@@ -2528,7 +2528,7 @@ document.addEventListener('DOMContentLoaded', () => {
         feed.sort((a, b) => b.sortAt - a.sortAt);
         s.feedLoading = false;
         s.feed = feed;
-        s.suggestions = suggestRes.error ? [] : suggestRes.data;
+        s.suggestions = (!suggestRes.error && Array.isArray(suggestRes.data)) ? suggestRes.data : [];
         await loadSavedExtra();
         app.requestRender(['feed', 'explore']);
         loadPreviews(feed);
@@ -3539,7 +3539,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         </section>` : ''}
                     <section class="side-box">
                         <h4>People you may know</h4>
-                        ${s.suggestions.slice(0, 5).map(p => `
+                        ${(s.suggestions || []).slice(0, 5).map(p => `
                             <div class="suggest-row">
                                 <button type="button" class="row-av" data-profile="${esc(p.id)}" aria-label="${esc(p.display_name)}’s profile">${avatar(p, 'md')}</button>
                                 <span class="contact-name" data-profile="${esc(p.id)}" role="button" tabindex="0"><strong>${esc(p.display_name)}</strong><small>${esc(p.reason || `@${p.username}`)}</small></span>
@@ -5317,7 +5317,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ]),
         'find-people': () => { app.setView('explore'); setTimeout(() => document.getElementById('ex-search')?.focus(), 350); },
         'suggest-add': el => {
-            s.suggestions = s.suggestions.filter(p => p.username !== el.dataset.username);
+            s.suggestions = (s.suggestions || []).filter(p => p.username !== el.dataset.username);
             addFriend(el.dataset.username);
         },
         'feed-photo': el => {
