@@ -13515,3 +13515,33 @@ body[data-view="feed"] .post.ig .post-text { font-size: 1.02rem; line-height: 1.
 .pv-c-empty { display: grid; justify-items: center; gap: 4px; padding: 26px 12px; color: var(--text-muted); text-align: center; }
 .pv-c-empty .i { width: 30px; height: 30px; color: var(--accent); opacity: 0.8; }
 .pv-c-empty strong { color: var(--text); }
+
+/* ==========================================================================
+   Comments, Instagram-style: name and text inline, a quiet meta line, a heart on the right,
+   replies tucked under their comment behind "—— View 3 replies"
+   ========================================================================== */
+.igc-thread { display: grid; gap: 2px; padding: 6px 0; }
+.igc { display: flex; align-items: flex-start; gap: 12px; }
+.igc .c-av { flex: none; padding: 0; border: 0; background: none; border-radius: 50%; cursor: pointer; }
+.igc-main { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.igc-text { margin: 0; font-size: 0.94rem; line-height: 1.42; overflow-wrap: anywhere; }
+.igc-name { padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-weight: 800; cursor: pointer; }
+.igc-at { color: var(--accent); font-weight: 600; }
+.igc-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: 0.78rem; color: var(--text-muted); }
+.igc-meta button { min-height: 24px; padding: 0; border: 0; background: none; color: var(--text-muted); font: inherit; font-weight: 700; cursor: pointer; }
+@media (hover: hover) and (pointer: fine) { .igc-meta button:hover { color: var(--text); } }
+.igc-meta span { font-weight: 700; }
+.igc-heart { display: grid; place-items: center; flex: none; width: 32px; height: 32px; margin-top: 2px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--text-muted); cursor: pointer; }
+.igc-heart .i { width: 15px; height: 15px; }
+.igc-heart[aria-pressed="true"] { color: #ed4956; }
+.igc-heart[aria-pressed="true"] .i { animation: like-pop 360ms cubic-bezier(0.2, 0.9, 0.3, 1.4); }
+.igc-replies { display: grid; gap: 10px; margin-left: 44px; padding-top: 4px; }
+.igc.reply { gap: 10px; }
+.igc.reply .igc-text { font-size: 0.9rem; }
+.igc-toggle { display: inline-flex; align-items: center; gap: 12px; justify-self: start; min-height: 28px; padding: 0; border: 0; background: none; color: var(--text-muted); font: inherit; font-size: 0.8rem; font-weight: 700; cursor: pointer; }
+.igc-toggle span { display: block; width: 24px; height: 1px; background: currentColor; opacity: 0.6; }
+.igc-replying { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 6px; padding: 6px 6px 6px 14px; border-radius: 12px; background: var(--input); font-size: 0.84rem; color: var(--text-muted); }
+.igc-replying strong { color: var(--text); }
+.igc-replying button { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--text-muted); cursor: pointer; }
+.igc-replying button .i { width: 16px; height: 16px; }
+@media (prefers-reduced-motion: reduce) { .igc-heart[aria-pressed="true"] .i { animation: none; } }

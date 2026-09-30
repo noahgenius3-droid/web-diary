@@ -109,7 +109,7 @@ document.addEventListener('DOMContentLoaded', () => {
         friend_request: ['friend', 'i-user-plus'], friend_accepted: ['friend', 'i-user'],
         entry_like: ['like', 'i-thumb'], post_like: ['like', 'i-thumb'], post_activity: ['comment', 'i-bell'],
         scheduled_published: ['group', 'i-clock'], scheduled_failed: ['missed', 'i-alert'], trivia_rank: ['like', 'i-trophy'], badge_earned: ['like', 'i-trophy'], announcement: ['group', 'i-sparkle'], verification_update: ['friend', 'i-verified'],
-        game_invite: ['friend', 'i-g-tiles'], game_turn: ['like', 'i-g-tiles'], game_over: ['like', 'i-trophy'],
+        comment_reply: ['comment', 'i-reply'], game_invite: ['friend', 'i-g-tiles'], game_turn: ['like', 'i-g-tiles'], game_over: ['like', 'i-trophy'],
         entry_comment: ['comment', 'i-chat'], post_comment: ['comment', 'i-chat'],
         community_post: ['group', 'i-users'], community_join: ['group', 'i-users'],
         call_started: ['call', 'i-phone'], missed_call: ['missed', 'i-phone-off'],
@@ -137,6 +137,7 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'post_like': return `${who} reacted ${d.emoji || '👍'} to your post in ${group}`;
             case 'announcement': return `${plain ? '📣 ' : ''}${plain ? (d.title || 'News from Cordial') : `<strong>${esc(d.title || 'News from Cordial')}</strong>`}${d.snippet ? ` — ${plain ? d.snippet : esc(d.snippet)}` : ''}`;
             case 'verification_update': return d.approved ? `Your account is now verified ✓${d.note ? ` — ${plain ? d.note : esc(d.note)}` : ''}` : `Your verification request wasn’t approved${d.note ? `: ${plain ? d.note : esc(d.note)}` : ''}`;
+            case 'comment_reply': return `${who} replied to your comment:${quote}`;
             case 'game_invite': return `${who} challenged you to a game of Wordplay`;
             case 'game_turn': return d.kind === 'pass' ? `${who} passed — your turn in Wordplay` : d.kind === 'swap' ? `${who} swapped letters — your turn in Wordplay`
                 : d.kind === 'resign' ? `${who} left your Wordplay match — your turn`
@@ -252,6 +253,11 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'trivia_rank':
             case 'badge_earned':
                 app.setView('play');
+                break;
+            case 'comment_reply':
+                if (d.entry_id) { app.setView('feed'); I.openEntry(d.entry_id, { focus: 'input' }); }
+                else if (d.post_id) app.setView('post', { postId: `g-${d.post_id}` });
+                else if (d.reel_id) app.setView('reels', { reelId: d.reel_id });
                 break;
             case 'game_invite':
             case 'game_turn':

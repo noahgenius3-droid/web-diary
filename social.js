@@ -3963,24 +3963,43 @@ document.addEventListener('DOMContentLoaded', () => {
         const who = c => `<button type="button" class="name-link" data-profile="${esc(c.author)}">${c.author === me ? 'You' : esc((c.author_profile && c.author_profile.display_name) || 'Someone')}</button>${tick(c.author)}`;
 
         if (mode === 'full' || mode === 'sheet') {
+            const likes = (loaded && thread.likes) || new Map();
+            const openSet = (loaded && thread.openReplies) || new Set();
+            const ids = new Set(loaded ? thread.items.map(c => c.id) : []);
+            const tops = loaded ? thread.items.filter(c => !c.reply_to || !ids.has(c.reply_to)) : [];
+            const kidsOf = id => thread.items.filter(c => c.reply_to === id);
+            const handle = c => (c.author_profile && c.author_profile.username) || ((c.author_profile && c.author_profile.display_name) || 'someone').toLowerCase().replace(/\s+/g, '');
+            const igRow = (c, topId, isReply) => {
+                const author = c.author_profile || { display_name: 'Someone' };
+                const canDelete = c.author === me || thread.ownerId === me;
+                const l = likes.get(c.id) || { n: 0, mine: false };
+                const text = c.body ? linkTags(esc(c.body)).replace(/^@([a-z0-9_]{3,20})/i, '<span class="igc-at">@$1</span>') : '';
+                return `
+                    <div class="igc${isReply ? ' reply' : ''}" data-comment="${esc(c.id)}">
+                        <button type="button" class="c-av" data-profile="${esc(c.author)}" aria-label="${esc(author.display_name)}’s profile">${avatar({ id: c.author, display_name: author.display_name, avatar_path: author.avatar_path }, isReply ? 'xs' : 'sm')}</button>
+                        <div class="igc-main">
+                            <p class="igc-text"><button type="button" class="igc-name" data-profile="${esc(c.author)}">${esc(handle(c))}</button>${tick(c.author)} ${text}</p>
+                            ${c.audio_path ? voiceHTML({ path: c.audio_path, duration: c.audio_duration }, COMMENT_AUDIO) : ''}
+                            <div class="igc-meta">
+                                <time datetime="${esc(c.created_at)}" title="${esc(fullDate(c.created_at))}">${igAgo(c.created_at)}</time>
+                                ${l.n ? `<span>${l.n} ${l.n === 1 ? 'like' : 'likes'}</span>` : ''}
+                                ${canComment ? `<button type="button" data-cmt="reply" data-id="${esc(topId)}" data-name="${esc(handle(c))}">Reply</button>` : ''}
+                                ${canDelete ? `<button type="button" data-action="comment-delete" data-key="${key}" data-id="${esc(c.id)}">Delete</button>` : ''}
+                            </div>
+                        </div>
+                        <button type="button" class="igc-heart" data-cmt="like" data-id="${esc(c.id)}" aria-pressed="${l.mine}" aria-label="${l.mine ? 'Unlike' : 'Like'} comment"><svg class="i"><use href="#${l.mine ? 'i-heart-fill' : 'i-heart'}"/></svg></button>
+                    </div>`;
+            };
             const list = !loaded
                 ? '<div class="pv-c-skel" aria-label="Loading comments"><i></i><i></i><i></i></div>'
-                : thread.items.map(c => {
-                    const author = c.author_profile || { display_name: 'Someone' };
-                    const canDelete = c.author === me || thread.ownerId === me;
-                    return `
-                        <div class="comment full" data-comment="${esc(c.id)}">
-                            <button type="button" class="c-av" data-profile="${esc(c.author)}" aria-label="${esc(author.display_name)}’s profile">${avatar({ id: c.author, display_name: author.display_name, avatar_path: author.avatar_path }, 'sm')}</button>
-                            <div class="c-main">
-                                <div class="c-bubble${c.audio_path ? ' has-voice' : ''}"><strong>${who(c)}</strong> ${c.body ? linkTags(esc(c.body)) : ''}
-                                    ${c.audio_path ? voiceHTML({ path: c.audio_path, duration: c.audio_duration }, COMMENT_AUDIO) : ''}</div>
-                                <span class="comment-meta">
-                                    <time datetime="${esc(c.created_at)}" title="${esc(fullDate(c.created_at))}">${timeAgo(c.created_at)}</time>
-                                    ${mode === 'full' && canComment && c.author !== me && author.username ? ` · <button type="button" class="link-btn" data-pv="reply" data-name="${esc(author.username)}">Reply</button>` : ''}
-                                    ${canDelete ? ` · <button type="button" class="link-btn" data-action="comment-delete" data-key="${key}" data-id="${esc(c.id)}">Delete</button>` : ''}
-                                </span>
-                            </div>
-                        </div>`;
+                : tops.map(c => {
+                    const kids = kidsOf(c.id);
+                    const open = openSet.has(c.id);
+                    return `<div class="igc-thread">${igRow(c, c.id, false)}${kids.length ? `
+                        <div class="igc-replies">
+                            <button type="button" class="igc-toggle" data-cmt="toggle" data-id="${esc(c.id)}" aria-expanded="${open}"><span aria-hidden="true"></span>${open ? 'Hide replies' : `View ${kids.length} ${kids.length === 1 ? 'reply' : 'replies'}`}</button>
+                            ${open ? kids.map(k => igRow(k, c.id, true)).join('') : ''}
+                        </div>` : ''}</div>`;
                 }).join('') || `<div class="pv-c-empty"><svg class="i"><use href="#i-chat"/></svg><strong>No comments yet</strong><span>${canComment ? 'Start the conversation.' : 'Nobody has commented yet.'}</span></div>`;
             return `
                 <section class="comments full" data-comments="${key}" data-mode="${mode}" aria-label="Comments">
@@ -4014,6 +4033,82 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>`;
     }
 
+    // Instagram-style short times: now, 5m, 3h, 2d, 4w
+    function igAgo(iso) {
+        const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
+        if (m < 1) return 'now';
+        if (m < 60) return `${m}m`;
+        if (m < 1440) return `${Math.round(m / 60)}h`;
+        if (m < 10080) return `${Math.round(m / 1440)}d`;
+        return `${Math.round(m / 10080)}w`;
+    }
+    function composerFor(key) {
+        const pvForm = document.querySelector(`#post-view form[data-form="comment"][data-key="${CSS.escape(key)}"]`);
+        if (pvForm) return pvForm;
+        return document.querySelector(`[data-comments="${CSS.escape(key)}"] form[data-form="comment"], form[data-form="comment"][data-key="${CSS.escape(key)}"]`);
+    }
+    function startReply(key, id, name) {
+        s.replyTo = { key, id, name };
+        const form = composerFor(key);
+        if (!form) return;
+        form.parentElement.querySelectorAll('.igc-replying').forEach(x => x.remove());
+        form.insertAdjacentHTML('beforebegin', `<div class="igc-replying" role="status"><span>Replying to <strong>${esc(name)}</strong></span><button type="button" data-cmt="cancel-reply" aria-label="Cancel reply"><svg class="i"><use href="#i-close"/></svg></button></div>`);
+        const input = form.querySelector('input[name="body"]');
+        if (input) {
+            if (!input.value.startsWith(`@${name} `)) input.value = `@${name} ${input.value.replace(/^@\S+\s*/, '')}`;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.focus();
+            input.setSelectionRange(input.value.length, input.value.length);
+        }
+    }
+    function cancelReply() {
+        const r = s.replyTo;
+        s.replyTo = null;
+        document.querySelectorAll('.igc-replying').forEach(x => x.remove());
+        if (!r) return;
+        const form = composerFor(r.key);
+        const input = form && form.querySelector('input[name="body"]');
+        if (input && input.value.trim() === `@${r.name}`) { input.value = ''; input.dispatchEvent(new Event('input', { bubbles: true })); }
+    }
+    async function toggleCommentLike(key, id) {
+        const thread = s.comments.get(key);
+        if (!thread) return;
+        thread.likes = thread.likes || new Map();
+        const cur = thread.likes.get(id) || { n: 0, mine: false };
+        const next = { n: Math.max(0, cur.n + (cur.mine ? -1 : 1)), mine: !cur.mine };
+        thread.likes.set(id, next);
+        repaintComments(key);
+        if (next.mine && navigator.vibrate) navigator.vibrate(8);
+        const { error } = next.mine
+            ? await client.from('diary_comment_likes').insert({ comment_id: id })
+            : await client.from('diary_comment_likes').delete().eq('comment_id', id).eq('user_id', s.profile.id);
+        if (error && !/duplicate/i.test(error.message || '')) {
+            thread.likes.set(id, cur);
+            repaintComments(key);
+            app.showToast('Couldn’t update that — try again');
+        }
+    }
+    document.addEventListener('click', e => {
+        const b = e.target.closest('[data-cmt]');
+        if (!b) return;
+        const box = b.closest('[data-comments]');
+        const key = (box && box.dataset.comments) || (s.replyTo && s.replyTo.key);
+        if (!key) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const what = b.dataset.cmt;
+        if (what === 'like') toggleCommentLike(key, b.dataset.id);
+        else if (what === 'reply') startReply(key, b.dataset.id, b.dataset.name);
+        else if (what === 'cancel-reply') cancelReply();
+        else if (what === 'toggle') {
+            const thread = s.comments.get(key);
+            if (!thread) return;
+            thread.openReplies = thread.openReplies || new Set();
+            if (thread.openReplies.has(b.dataset.id)) thread.openReplies.delete(b.dataset.id); else thread.openReplies.add(b.dataset.id);
+            repaintComments(key);
+        }
+    }, true);
+
     function commentTarget(key) {
         const [kind, id] = key.split(':');
         return { column: { entry: 'entry_id', post: 'post_id', reel: 'reel_id' }[kind], id };
@@ -4038,11 +4133,23 @@ document.addEventListener('DOMContentLoaded', () => {
         repaintComments(key);
         const target = commentTarget(key);
         const { data } = await client.from('diary_comments')
-            .select('id, body, audio_path, audio_duration, created_at, author, author_profile:diary_profiles!diary_comments_author_fkey(username, display_name, avatar_path)')
+            .select('id, body, audio_path, audio_duration, created_at, author, reply_to, author_profile:diary_profiles!diary_comments_author_fkey(username, display_name, avatar_path)')
             .eq(target.column, target.id)
             .order('created_at')
-            .limit(200);
+            .limit(300);
         thread.items = data || [];
+        thread.likes = new Map();
+        thread.openReplies = thread.openReplies || new Set();
+        const ids = thread.items.map(c => c.id);
+        if (ids.length) {
+            const { data: hearts } = await client.from('diary_comment_likes').select('comment_id, user_id').in('comment_id', ids);
+            (hearts || []).forEach(h => {
+                const cur = thread.likes.get(h.comment_id) || { n: 0, mine: false };
+                cur.n++;
+                if (h.user_id === s.profile.id) cur.mine = true;
+                thread.likes.set(h.comment_id, cur);
+            });
+        }
         thread.loading = false;
         repaintComments(key);
     }
@@ -4050,9 +4157,11 @@ document.addEventListener('DOMContentLoaded', () => {
     async function addComment(key, body, extra = {}) {
         if (!addComment.checked) { addComment.checked = true; setTimeout(checkBadges, 2500); }
         const target = commentTarget(key);
+        const replying = s.replyTo && s.replyTo.key === key ? s.replyTo : null;
+        if (replying && !('reply_to' in extra)) extra = { ...extra, reply_to: replying.id };
         const { data, error } = await client.from('diary_comments')
             .insert({ [target.column]: target.id, body: body.slice(0, 2000), ...extra })
-            .select('id, body, audio_path, audio_duration, created_at, author, author_profile:diary_profiles!diary_comments_author_fkey(username, display_name, avatar_path)')
+            .select('id, body, audio_path, audio_duration, created_at, author, reply_to, author_profile:diary_profiles!diary_comments_author_fkey(username, display_name, avatar_path)')
             .single();
         if (error) {
             app.showToast(key.startsWith('post:') ? 'Join the community to comment' : 'Couldn’t post your comment');
@@ -4061,9 +4170,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const thread = s.comments.get(key);
         if (thread && thread.open && !thread.loading) {
             if (!thread.items.some(c => c.id === data.id)) thread.items.push(data);
+            if (data.reply_to) (thread.openReplies = thread.openReplies || new Set()).add(data.reply_to);
         } else {
             s.previews.set(key, [...(s.previews.get(key) || []), data].slice(-2));
         }
+        if (replying) cancelReply();
         bumpCommentCount(key, 1);
         repaintComments(key);
         return true;
@@ -4161,8 +4272,13 @@ document.addEventListener('DOMContentLoaded', () => {
         // Your own voice clip goes with it (other people's clips are theirs to keep or delete)
         if (found && found.audio_path && found.author === s.profile.id) client.storage.from(COMMENT_AUDIO).remove([found.audio_path]);
         const thread = s.comments.get(key);
-        if (thread) thread.items = thread.items.filter(c => c.id !== id);
-        bumpCommentCount(key, -1);
+        let gone = 1;
+        if (thread) {
+            const before = thread.items.length;
+            thread.items = thread.items.filter(c => c.id !== id && c.reply_to !== id);
+            gone = Math.max(1, before - thread.items.length);
+        }
+        bumpCommentCount(key, -gone);
         repaintComments(key);
     }
 
