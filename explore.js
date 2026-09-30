@@ -364,7 +364,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                     <label class="search ex-search">
                         <svg class="i"><use href="#i-search"/></svg>
-                        <input type="search" id="ex-search" placeholder="Search posts, #tags, people, books and communities" aria-label="Search Explore" value="${esc(E.raw ?? q)}" enterkeyhint="search" autocomplete="off">
+                        <input type="search" id="ex-search" placeholder="Search people, interests, posts, #tags, books and groups" aria-label="Search Explore" value="${esc(E.raw ?? q)}" enterkeyhint="search" autocomplete="off">
                     </label>
                 </section>
                 <nav class="ex-tabs" role="tablist" aria-label="Show">

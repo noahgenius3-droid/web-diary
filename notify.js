@@ -71,7 +71,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------- Text & navigation ----------
     const CATEGORY = {
         friend_request: ['friend', 'i-user-plus'], friend_accepted: ['friend', 'i-user'],
-        entry_like: ['like', 'i-heart-fill'], post_like: ['like', 'i-heart-fill'],
+        entry_like: ['like', 'i-thumb'], post_like: ['like', 'i-thumb'], post_activity: ['comment', 'i-bell'],
         entry_comment: ['comment', 'i-chat'], post_comment: ['comment', 'i-chat'],
         community_post: ['group', 'i-users'], community_join: ['group', 'i-users'],
         call_started: ['call', 'i-phone'], missed_call: ['missed', 'i-phone-off'],
@@ -86,15 +86,16 @@ document.addEventListener('DOMContentLoaded', () => {
     function describe(x, plain = false) {
         const d = x.data || {};
         const actorName = (x.actor_profile && x.actor_profile.display_name) || 'Someone';
-        const who = plain ? actorName : `<strong>${esc(actorName)}</strong>`;
+        const who = plain ? actorName : x.actor ? `<button type="button" class="name-link" data-profile="${esc(x.actor)}">${esc(actorName)}</button>` : `<strong>${esc(actorName)}</strong>`;
         const group = d.community_name ? (plain ? `${d.emoji || ''} ${d.community_name}`.trim() : `<strong>${esc(d.emoji || '')} ${esc(d.community_name)}</strong>`) : '';
         const quote = d.snippet ? (plain ? ` “${d.snippet}”` : ` <span class="notif-quote">“${esc(d.snippet)}”</span>`) : '';
         switch (x.type) {
             case 'friend_request': return `${who} sent you a friend request`;
             case 'friend_accepted': return `${who} accepted your friend request — say hi!`;
-            case 'entry_like': return `${who} liked your post${quote}`;
+            case 'entry_like': return `${who} reacted ${d.emoji || '👍'} to your post${quote}`;
             case 'entry_comment': return `${who} commented:${quote}`;
-            case 'post_like': return `${who} liked your post in ${group}`;
+            case 'post_like': return `${who} reacted ${d.emoji || '👍'} to your post in ${group}`;
+            case 'post_activity': return `${who} commented on a post you follow${group ? ` in ${group}` : ''}:${quote}`;
             case 'post_comment': return `${who} commented on your post in ${group}:${quote}`;
             case 'community_post': return `${who} posted in ${group}:${quote}`;
             case 'community_join': return `${who} joined ${group}`;
@@ -178,8 +179,17 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'entry_like':
             case 'entry_repost':
             case 'entry_comment':
+            case 'entry_reaction':
                 app.setView('feed');
-                I.focusPost(`entry:${d.entry_id}`, { open: x.type === 'entry_comment' });
+                I.openEntry(d.entry_id || d.entry, x.type === 'entry_comment' ? { focus: 'input' } : undefined);
+                break;
+            case 'post_activity':
+                if (d.kind === 'entry' && d.entry_id) { app.setView('feed'); I.openEntry(d.entry_id); }
+                else if (d.post_id) { app.setView('community', { communityId: d.community_id }); I.focusPost(`post:${d.post_id}`, { open: true }); }
+                break;
+            case 'new_follower':
+            case 'friend_accepted':
+                if (window.diaryProfile && x.actor) window.diaryProfile.open(x.actor);
                 break;
             case 'post_like':
             case 'post_comment':
@@ -297,7 +307,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         return `
             <div class="notif${n.fresh.has(x.id) ? ' unread' : ''}" data-n="${esc(x.id)}" role="button" tabindex="0">
-                <span class="notif-avatar">${avatar(actor, 'md')}<span class="notif-type t-${cat}"><svg class="i"><use href="#${icon}"/></svg></span></span>
+                <span class="notif-avatar"${x.actor ? ` data-profile="${esc(x.actor)}"` : ''}>${avatar(actor, 'md')}<span class="notif-type t-${cat}"><svg class="i"><use href="#${icon}"/></svg></span></span>
                 <span class="notif-main">
                     <span class="notif-text">${describe(x)}</span>
                     <time>${timeAgo(x.created_at)}</time>
@@ -554,7 +564,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Missed calls are logged by the callee's own device (call.js calls this)
     window.diaryNotify = {
-        alertStatus, enableAlerts, disableAlerts, unsubscribePush, pushSupported, showLivePopup,
+        alertStatus, enableAlerts, disableAlerts, unsubscribePush, pushSupported, showLivePopup, close,
         logMissedCall(callerId) {
             if (!s.profile || !callerId) return;
             client.from('diary_notifications').insert({ actor: callerId, type: 'missed_call', data: {} }).then(() => {});

@@ -264,7 +264,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Every page is a browser history entry (#/feed, #/community/<id> …), so Back / Forward and the phone's
     // back gesture move between pages. Open sheets and dialogs share one extra entry on top: Back closes the
     // top one instead of leaving the page.
-    const ROUTE_KEYS = { community: 'communityId', folder: 'folderId' };
+    const ROUTE_KEYS = { community: 'communityId', folder: 'folderId', profile: 'profileId', post: 'postId' };
     const ROOT_VIEWS = ['home', 'feed', 'explore', 'communities', 'messages'];
     const routeListeners = [];
     let ignorePops = 0;
@@ -2688,7 +2688,7 @@ document.addEventListener('DOMContentLoaded', () => {
         getNotes: () => notes,
         newEntry: defaults => openEditor(null, defaults),
         // Used by the feed composer: stores the files on this device and saves the entry in one go
-        async createEntry({ title = '', text = '', html = null, shared = false, color = null }, files = []) {
+        async createEntry({ title = '', text = '', html = null, shared = false, color = null, audience = 'friends' }, files = []) {
             const attachments = [];
             for (const file of files) {
                 const att = { id: uid(), kind: Media.kindOf(file.type || ''), name: file.name || 'photo', type: file.type, size: file.size, ...(file.duration ? { duration: file.duration } : {}) };
@@ -2698,7 +2698,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const n = migrateNote({
                 id: uid(), title,
                 text: html ? Rich.toText(Rich.sanitize(html)) : text,
-                html: html ? Rich.sanitize(html) : Rich.textToHTML(text), shared, attachments,
+                html: html ? Rich.sanitize(html) : Rich.textToHTML(text), shared, attachments, audience,
                 color: color || COLORS[notes.length % COLORS.length], createdAt: Date.now()
             }, notes.length);
             n.dilute = Dilute.analyse(n);
@@ -2842,6 +2842,7 @@ document.addEventListener('DOMContentLoaded', () => {
             archived: !!n.archived,
             private: !!n.private,
             shared: !!n.shared && !n.private,
+            ...(n.audience === 'public' ? { audience: 'public' } : {}), // friends-only unless chosen (keeps old notes unchanged for sync)
             pinned: !!n.pinned,
             sharedGroups: Array.isArray(n.sharedGroups) ? n.sharedGroups.filter(x => typeof x === 'string') : [],
             trashedAt: n.trashedAt ?? null,

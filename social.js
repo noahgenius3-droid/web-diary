@@ -53,8 +53,13 @@ document.addEventListener('DOMContentLoaded', () => {
         remoteIds: new Set(), // local ids of my entries that exist in the feed
         remotePhotos: new Map(), // local id -> [{ id, path, name }] uploaded for the feed
         remoteAudio: new Map(),  // local id -> { id, path, name, duration } the post's audio
-        feedSort: 'latest',
+        feedSort: 'foryou',  // foryou | following | latest | popular
         feedFilter: 'all',   // all | mine | saved | tag:<name>
+        feedAudience: load('diaryFeedAudience', 'friends'), // who new posts from the feed composer go to
+        hidden: new Set(),      // "entry:<id>" | "post:<id>" you hid from your feed
+        watching: new Set(),    // posts you get notified about when someone comments
+        profilePosts: [],       // posts on the profile page you're looking at (profile.js)
+        singlePost: null,       // a post opened from a link
         saved: new Set(),       // entry ids you've saved (synced to your account)
         savedReels: new Set(),
         savedExtra: [],         // saved entries that are older than the loaded feed
@@ -241,7 +246,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return `${head}${local.length ? `<div class="people-list">${local.map(p => personHTML({ ...p, relation: s.friends.includes(p) ? 'friend' : 'none' })).join('')}</div>` : ''}<p class="people-note muted small">Searching everyone…</p>`;
         }
         if (hit.error) return `${head}<p class="people-note muted small">Couldn’t search people right now.</p>`;
-        if (!hit.list.length) return `${head}<p class="people-note muted small">No one called “${esc(q)}” yet — check the spelling, or try their @username.</p>`;
+        if (!hit.list.length) return `${head}<p class="people-note muted small">No one matches “${esc(q)}” — try a name, @username, interest, group, or someone’s exact email.</p>`;
         return `${head}<div class="people-list">${hit.list.map(personHTML).join('')}</div>`;
     }
 
@@ -263,7 +268,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return `
             <div class="person-row" data-person-row="${esc(p.id)}">
                 <button type="button" class="person-open" data-profile="${esc(p.id)}" aria-label="View ${esc(p.display_name)}’s profile">${avatar(p, 'md')}</button>
-                <span class="person-text" data-profile="${esc(p.id)}" role="button" tabindex="0"><strong>${esc(p.display_name)}</strong><small>@${esc(p.username)}${label ? ` · ${label}` : ''}</small></span>
+                <span class="person-text" data-profile="${esc(p.id)}" role="button" tabindex="0"><strong>${esc(p.display_name)}</strong><small>@${esc(p.username)}${label ? ` · ${label}` : ''}</small>${p.matched ? `<small class="person-why">${esc(p.matched)}</small>` : ''}</span>
                 <span class="person-actions">${actions}${follow}</span>
             </div>`;
     }
@@ -534,6 +539,7 @@ document.addEventListener('DOMContentLoaded', () => {
             remoteIds: new Set(), channel: null, presence: null, comments: new Map(),
             saved: new Set(), savedReels: new Set(), savedExtra: [],
             previews: new Map(), rendered: new Map(), following: new Set(), followerCount: 0,
+            hidden: new Set(), watching: new Set(), profilePosts: [], singlePost: null,
             incognito: {}, chatOpenedAt: {}
         });
         closePost(true);
@@ -2265,21 +2271,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Feed ----------
     const FEED_SELECT = `
-        id, author, local_id, title, body, html, color, mood, photos, audio, written_at, shared_at, allow_reposts,
+        id, author, local_id, title, body, html, color, mood, photos, audio, written_at, shared_at, allow_reposts, audience,
         author_profile:diary_profiles!diary_shared_entries_author_fkey(username, display_name, avatar_path),
-        likes:diary_entry_likes(user_id),
-        reactions:diary_entry_reactions(user_id, emoji),
+        likes:diary_entry_likes(user_id, emoji),
         comments:diary_comments(count),
         reposts:diary_reposts(user_id, created_at, profile:diary_profiles!diary_reposts_user_id_fkey(username, display_name))`;
 
     async function loadFeed() {
         if (s.feedLoading) return;
         s.feedLoading = true;
-        const [feedRes, suggestRes, repostRes] = await Promise.all([
-            client.from('diary_shared_entries').select(FEED_SELECT).order('shared_at', { ascending: false }).limit(60),
-            client.rpc('diary_friend_suggestions'),
-            client.from('diary_reposts').select('entry_id').order('created_at', { ascending: false }).limit(60)
+        const [feedRes, suggestRes, repostRes, hiddenRes, watchRes] = await Promise.all([
+            client.from('diary_shared_entries').select(FEED_SELECT).order('shared_at', { ascending: false }).limit(100),
+            client.rpc('diary_people_you_may_know', { p_limit: 12 }),
+            client.from('diary_reposts').select('entry_id').order('created_at', { ascending: false }).limit(60),
+            client.from('diary_hidden_posts').select('kind, item_id'),
+            client.from('diary_post_watch').select('kind, item_id')
         ]);
+        s.hidden = new Set((hiddenRes.data || []).map(r => `${r.kind}:${r.item_id}`));
+        s.watching = new Set((watchRes.data || []).map(r => `${r.kind}:${r.item_id}`));
         let feed = feedRes.error ? [] : feedRes.data;
         // Older posts that friends reposted recently
         const have = new Set(feed.map(p => p.id));
@@ -2330,14 +2339,52 @@ document.addEventListener('DOMContentLoaded', () => {
         p.sortAt = Math.max(Date.parse(p.shared_at), latest ? Date.parse(latest.created_at) : 0);
     }
 
+    async function fetchEntry(id) {
+        if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+        const { data } = await client.from('diary_shared_entries').select(FEED_SELECT).eq('id', id).maybeSingle();
+        if (!data) return null;
+        decorateRepost(data);
+        s.singlePost = data;
+        return data;
+    }
+
+    // #/post/<id> (a feed post) or #/post/g-<id> (a group post): open it over the right page
+    const resolving = new Set();
+    app.views.post = () => {
+        const id = app.state.postId || '';
+        if (!resolving.has(id)) {
+            resolving.add(id);
+            setTimeout(async () => {
+                resolving.delete(id);
+                if (!signedIn()) return app.setView('feed', {}, { replace: true });
+                if (id.startsWith('g-')) {
+                    const pid = id.slice(2);
+                    const { data } = await client.from('diary_community_posts').select('community_id').eq('id', pid).maybeSingle();
+                    if (!data) { app.setView('communities', {}, { replace: true }); return app.showToast('That post isn’t available — you may need to join the group'); }
+                    app.setView('community', { communityId: data.community_id }, { replace: true });
+                    setTimeout(() => focusPost(`post:${pid}`, { open: true }), 900);
+                } else {
+                    app.setView('feed', {}, { replace: true });
+                    window.diarySocial.internals.openEntry(id);
+                }
+            }, 0);
+        }
+        return '<div class="social"><section class="social-main"><div class="post-skel"><span class="sk-row"><i class="sk-av"></i><i class="sk-line w40"></i></span><i class="sk-line"></i><i class="sk-line w70"></i><i class="sk-media"></i></div></section></div>';
+    };
+
     // ---------- Following ----------
     // A one-way follow (no approval needed): followers get told when you go live and can watch, like friends.
     async function loadFollows() {
         const me = s.profile.id;
-        const [mine, fans] = await Promise.all([
+        const [mine, fans, hidden, watching] = await Promise.all([
             client.from('diary_follows').select('followee').eq('follower', me),
-            client.from('diary_follows').select('follower', { count: 'exact', head: true }).eq('followee', me)
+            client.from('diary_follows').select('follower', { count: 'exact', head: true }).eq('followee', me),
+            client.from('diary_hidden_posts').select('kind, item_id'),
+            client.from('diary_post_watch').select('kind, item_id')
         ]);
+        // Posts you hid or follow (group pages need these before the feed ever loads)
+        if (!hidden.error) s.hidden = new Set(hidden.data.map(r => `${r.kind}:${r.item_id}`));
+        if (!watching.error) s.watching = new Set(watching.data.map(r => `${r.kind}:${r.item_id}`));
         s.following = new Set(mine.error ? [] : mine.data.map(r => r.followee));
         s.followerCount = fans.error ? 0 : fans.count || 0;
     }
@@ -2420,6 +2467,90 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // ---------- More post options (shared with community.js) ----------
+    const postLink = (kind, id) => `${location.origin}${location.pathname}#/post/${kind === 'post' ? 'g-' : ''}${encodeURIComponent(id)}`;
+
+    async function copyText(text, done = 'Copied') {
+        try {
+            await navigator.clipboard.writeText(text);
+            app.showToast(done);
+        } catch (err) {
+            app.ask({ title: 'Copy this link', text, ok: 'Done', cancel: null }).catch(() => {});
+        }
+    }
+
+    async function sharePost(kind, post) {
+        const url = postLink(kind, post.id);
+        const title = post.title || `${(post.author_profile && post.author_profile.display_name) || 'A'} post on Cordial`;
+        if (navigator.share) {
+            try { await navigator.share({ title, url }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+        }
+        copyText(url, 'Link copied — paste it anywhere to share');
+    }
+
+    async function toggleWatch(kind, id) {
+        const key = `${kind}:${id}`;
+        const on = s.watching.has(key);
+        if (on) s.watching.delete(key); else s.watching.add(key);
+        const { error } = on
+            ? await client.from('diary_post_watch').delete().eq('kind', kind).eq('item_id', id)
+            : await client.from('diary_post_watch').insert({ kind, item_id: id });
+        if (error) {
+            if (on) s.watching.add(key); else s.watching.delete(key);
+            return app.showToast('Couldn’t change notifications for this post');
+        }
+        app.showToast(on ? 'Notifications off for this post' : 'You’ll be notified about new comments on this post');
+    }
+
+    async function hidePost(kind, id, hide = true) {
+        const key = `${kind}:${id}`;
+        if (hide) s.hidden.add(key); else s.hidden.delete(key);
+        if (s.detail === key) closePost();
+        app.render();
+        const { error } = hide
+            ? await client.from('diary_hidden_posts').insert({ kind, item_id: id })
+            : await client.from('diary_hidden_posts').delete().eq('kind', kind).eq('item_id', id);
+        if (error && hide) {
+            s.hidden.delete(key);
+            app.render();
+            return app.showToast('Couldn’t hide that post');
+        }
+        if (hide) app.showToast('Post hidden — you won’t see it in your feed', () => hidePost(kind, id, false));
+    }
+
+    // The extra menu items every post gets: copy link, share, follow the post, hide it, follow its author
+    function postExtras(kind, post) {
+        const mine = post.author === s.profile.id;
+        const first = ((post.author_profile && post.author_profile.display_name) || 'them').split(' ')[0];
+        const items = [
+            { label: 'Copy link', icon: 'i-link', onClick: () => copyText(postLink(kind, post.id), 'Link copied') },
+            { label: 'Share…', icon: 'i-share', onClick: () => sharePost(kind, post) },
+            s.watching.has(`${kind}:${post.id}`)
+                ? { label: 'Turn off notifications', icon: 'i-bell-off', onClick: () => toggleWatch(kind, post.id) }
+                : { label: 'Turn on notifications', icon: 'i-bell', onClick: () => toggleWatch(kind, post.id) }
+        ];
+        if (!mine) {
+            if (!s.friends.some(f => f.id === post.author)) {
+                items.push(s.following.has(post.author)
+                    ? { label: `Unfollow ${first}`, icon: 'i-user', onClick: () => toggleFollow(post.author, first) }
+                    : { label: `Follow ${first}`, icon: 'i-user-plus', onClick: () => toggleFollow(post.author, first) });
+            }
+            items.push({ label: 'Hide post', icon: 'i-eye-off', onClick: () => hidePost(kind, post.id) });
+        }
+        items.push({ label: `View ${mine ? 'your' : `${first}’s`} profile`, icon: 'i-user', onClick: () => { closePost(); window.diaryProfile && window.diaryProfile.open(post.author); } });
+        return items;
+    }
+
+    async function setAudience(post, audience) {
+        const { error } = await client.from('diary_shared_entries').update({ audience }).eq('id', post.id);
+        if (error) return app.showToast('Couldn’t change who can see this');
+        post.audience = audience;
+        const local = app.getNotes().find(n => n.id === post.local_id);
+        if (local) app.updateNote(local.id, { audience });
+        app.showToast(audience === 'public' ? 'Everyone on Cordial can see this post now' : 'Only your friends can see this post now');
+        app.render();
+    }
+
     // ---------- Reposts ----------
     async function toggleRepost(entryId) {
         const post = postsFor('entry').find(p => p.id === entryId);
@@ -2484,70 +2615,155 @@ document.addEventListener('DOMContentLoaded', () => {
         app.render();
     }
 
-    // ---------- Emoji reactions on posts ----------
-    // Tap the smile (or press and hold Like) for a row of reactions; tap a reaction chip to add or take back
-    // yours. You can leave more than one. The same picker is used for stories.
-    const POST_REACTIONS = ['❤️', '😂', '😮', '😢', '🔥', '👏', '🙏', '😍'];
-    const REACTION_NAMES = { '❤️': 'Love', '😂': 'Haha', '😮': 'Wow', '😢': 'Sad', '🔥': 'Fire', '👏': 'Clap', '🙏': 'Thanks', '😍': 'Adore' };
+    // ---------- Reactions (Like is 👍) ----------
+    // One reaction per person per post, on feed and group posts alike. Tap Like to like or take it back; press
+    // and hold (or rest the mouse on it) to choose another reaction — picking your current one removes it.
+    // Stories and group-chat messages keep their own emoji row (STORY_REACTIONS).
+    const POST_REACTS = [['👍', 'Like'], ['❤️', 'Love'], ['😂', 'Funny'], ['🙏', 'Amen'], ['👏', 'Celebrate'], ['😮', 'Wow']];
+    const REACT_NAME = Object.fromEntries(POST_REACTS);
+    const STORY_REACTIONS = ['❤️', '😂', '😮', '😢', '🔥', '👏', '🙏', '😍'];
+    const REACTION_NAMES = { '❤️': 'Love', '😂': 'Haha', '😮': 'Wow', '😢': 'Sad', '🔥': 'Fire', '👏': 'Clap', '🙏': 'Thanks', '😍': 'Adore', '👍': 'Like' };
+    const POST_REACTIONS = STORY_REACTIONS; // stories.js and groupchat.js use this row
 
-    const myEntryReactions = id => {
-        const p = postsFor('entry').find(x => x.id === id);
-        return new Set(((p && p.reactions) || []).filter(r => r.user_id === s.profile.id).map(r => r.emoji));
-    };
+    const communityPost = id => (window.diaryCommunities ? window.diaryCommunities.posts().find(p => p.id === id) : null);
+    const findPost = (kind, id) => (kind === 'post' ? communityPost(id)
+        : postsFor('entry').find(p => p.id === id) || (s.profilePosts || []).find(p => p.id === id) || (s.singlePost && s.singlePost.id === id ? s.singlePost : null));
+    const myReaction = likes => ((likes || []).find(l => l.user_id === s.profile.id) || {}).emoji || null;
 
-    function entryReactionsHTML(p) {
-        const list = (p.reactions || []).filter(r => POST_REACTIONS.includes(r.emoji));
-        if (!list.length) return '';
+    // "👍❤️😂 You, Ada and 12 others" — the most-used reactions first; tap to see everyone
+    function reactSummaryHTML(kind, id, likes) {
+        if (!likes || !likes.length) return '';
         const me = s.profile.id;
         const counts = new Map();
-        list.forEach(r => {
-            const x = counts.get(r.emoji) || { n: 0, mine: false };
-            x.n++;
-            if (r.user_id === me) x.mine = true;
-            counts.set(r.emoji, x);
-        });
-        const people = new Set(list.map(r => r.user_id)).size;
-        return `
-            <div class="post-reacts" aria-label="Reactions">
-                ${POST_REACTIONS.filter(e => counts.has(e)).map(e => {
-                    const x = counts.get(e);
-                    return `<button type="button" class="post-react${x.mine ? ' mine' : ''}" data-action="entry-react" data-id="${esc(p.id)}" data-emoji="${e}" aria-pressed="${x.mine}" aria-label="${REACTION_NAMES[e]} ${x.n}${x.mine ? ', including you' : ''}">${e}<span>${x.n}</span></button>`;
-                }).join('')}
-                <span class="post-react-who">${people === 1 ? '1 person' : `${people} people`} reacted</span>
-            </div>`;
+        likes.forEach(l => counts.set(l.emoji || '👍', (counts.get(l.emoji || '👍') || 0) + 1));
+        const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([e]) => e);
+        const mine = likes.some(l => l.user_id === me);
+        const known = likes.map(l => l.user_id !== me && s.friends.find(f => f.id === l.user_id)).find(Boolean);
+        const others = likes.length - (mine ? 1 : 0) - (known ? 1 : 0);
+        const names = [mine ? 'You' : '', known ? esc(known.display_name.split(' ')[0]) : ''].filter(Boolean);
+        const text = names.length
+            ? `${names.join(names.length === 2 && !others ? ' and ' : ', ')}${others > 0 ? ` and ${others} ${others === 1 ? 'other' : 'others'}` : ''}`
+            : `${likes.length}`;
+        return `<button type="button" class="react-sum" data-action="reactors" data-kind="${kind}" data-id="${esc(id)}" aria-label="${likes.length} ${likes.length === 1 ? 'reaction' : 'reactions'} — see who reacted"><span class="react-sum-emojis" aria-hidden="true">${top.map(e => `<i>${e}</i>`).join('')}</span><span class="react-sum-text">${text}</span></button>`;
     }
 
-    async function toggleEntryReaction(entryId, emoji) {
-        if (!POST_REACTIONS.includes(emoji)) return;
-        const post = postsFor('entry').find(p => p.id === entryId);
-        if (!post) return;
+    function likeButtonHTML(kind, id, likes) {
+        const mine = myReaction(likes);
+        const name = mine ? REACT_NAME[mine] || 'Like' : 'Like';
+        return `<button class="act like-btn${mine ? ' reacted' : ''}" data-action="like" data-kind="${kind}" data-id="${esc(id)}" aria-pressed="${!!mine}" aria-label="${mine ? `You reacted ${name} — tap to remove, hold for other reactions` : 'Like — hold for more reactions'}" title="Hold for more reactions">${mine ? `<span class="like-emoji" aria-hidden="true">${mine}</span>` : '<svg class="i"><use href="#i-thumb"/></svg>'}<span class="act-label">${name}</span></button>`;
+    }
+
+    // Set, change or remove your reaction on a feed post ('entry') or group post ('post')
+    async function setReaction(kind, id, emoji) {
+        const post = findPost(kind, id);
+        if (!post || !signedIn()) return;
+        if (kind === 'post' && window.diaryCommunities && !window.diaryCommunities.isMember(post.community_id)) return app.showToast('Join the community to react');
         const me = s.profile.id;
-        const before = (post.reactions || []).map(r => ({ ...r }));
-        const had = before.some(r => r.user_id === me && r.emoji === emoji);
-        post.reactions = had ? before.filter(r => !(r.user_id === me && r.emoji === emoji)) : [...before, { user_id: me, emoji }];
+        const before = (post.likes || []).map(l => ({ ...l }));
+        const had = myReaction(before);
+        const next = emoji && emoji !== had ? emoji : null;
+        post.likes = [...before.filter(l => l.user_id !== me), ...(next ? [{ user_id: me, emoji: next }] : [])];
         if (navigator.vibrate) navigator.vibrate(8);
-        app.render();
-        const { error } = had
-            ? await client.from('diary_entry_reactions').delete().eq('entry_id', entryId).eq('user_id', me).eq('emoji', emoji)
-            : await client.from('diary_entry_reactions').insert({ entry_id: entryId, emoji });
+        repaintReactions(kind, id, post.likes, !!next && !had);
+        const table = kind === 'entry' ? 'diary_entry_likes' : 'diary_community_likes';
+        const col = kind === 'entry' ? 'entry_id' : 'post_id';
+        const { error } = !next
+            ? await client.from(table).delete().eq(col, id).eq('user_id', me)
+            : had
+                ? await client.from(table).update({ emoji: next }).eq(col, id).eq('user_id', me)
+                : await client.from(table).insert(kind === 'entry' ? { entry_id: id, user_id: me, emoji: next } : { post_id: id, emoji: next });
         if (error) {
-            post.reactions = before;
-            app.render();
+            post.likes = before;
+            repaintReactions(kind, id, before);
             app.showToast('Couldn’t update your reaction');
         }
     }
 
+    // Repaint just the Like button and the summary line wherever the post shows (its card and the open post)
+    function repaintReactions(kind, id, likes, pop = false) {
+        const key = `${kind}:${id}`;
+        const o = s.rendered.get(key);
+        if (o) o.likes = likes;
+        const roots = [...document.querySelectorAll(`[data-post="${CSS.escape(key)}"]`)];
+        if (s.detail === key && $('pv-shell')) roots.push($('pv-shell'));
+        roots.forEach(root => {
+            const btn = root.querySelector(`.like-btn[data-id="${CSS.escape(id)}"]`);
+            if (btn) {
+                btn.outerHTML = likeButtonHTML(kind, id, likes);
+                if (pop) root.querySelector(`.like-btn[data-id="${CSS.escape(id)}"]`)?.classList.add('pop');
+            }
+            root.querySelectorAll('[data-react-sum]').forEach(sum => { sum.innerHTML = reactSummaryHTML(kind, id, likes); });
+        });
+    }
+
+    function openReactionPicker(btn, opts = {}) {
+        const { kind, id } = btn.dataset;
+        const post = findPost(kind, id);
+        const mine = post ? myReaction(post.likes) : null;
+        emojiPicker(btn, emoji => setReaction(kind, id, emoji), { set: POST_REACTS, chosen: new Set(mine ? [mine] : []), ...opts });
+    }
+
+    // Everyone who reacted, with a tab per reaction
+    async function openReactors(kind, id) {
+        const dlg = document.createElement('dialog');
+        dlg.className = 'sheet-dialog reactors-sheet';
+        dlg.setAttribute('aria-label', 'Reactions');
+        dlg.innerHTML = '<div class="rx-card"><header class="rx-head"><h2>Reactions</h2><button type="button" class="icon-btn" data-rx="close" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button></header><div class="rx-body"><span class="lv-spinner" aria-hidden="true"></span></div></div>';
+        document.body.append(dlg);
+        dlg.showModal();
+        const close = () => { if (dlg.open) dlg.close(); };
+        dlg.addEventListener('close', () => dlg.remove());
+        let filter = 'all';
+        let list = [];
+        const paint = () => {
+            const counts = new Map();
+            list.forEach(r => counts.set(r.emoji, (counts.get(r.emoji) || 0) + 1));
+            const shown = filter === 'all' ? list : list.filter(r => r.emoji === filter);
+            dlg.querySelector('.rx-body').innerHTML = `
+                <div class="rx-tabs" role="tablist" aria-label="Filter by reaction">
+                    <button type="button" role="tab" data-rx="tab" data-f="all" aria-selected="${filter === 'all'}">All ${list.length}</button>
+                    ${POST_REACTS.filter(([e]) => counts.has(e)).map(([e, n]) => `<button type="button" role="tab" data-rx="tab" data-f="${e}" aria-selected="${filter === e}" aria-label="${n}: ${counts.get(e)}">${e} ${counts.get(e)}</button>`).join('')}
+                </div>
+                <div class="rx-list">${shown.map(r => `
+                    <div class="rx-row">
+                        <button type="button" class="rx-who" data-profile="${esc(r.id)}" aria-label="${esc(r.display_name)}’s profile">${avatar(r, 'md')}<span class="rx-emoji" aria-hidden="true">${r.emoji}</span></button>
+                        <button type="button" class="rx-name" data-profile="${esc(r.id)}"><strong>${esc(r.id === s.profile.id ? 'You' : r.display_name)}</strong><small>@${esc(r.username)} · ${esc(REACT_NAME[r.emoji] || '')}</small></button>
+                        ${r.id === s.profile.id ? '' : followButton(r)}
+                    </div>`).join('') || '<p class="muted small">No reactions yet.</p>'}</div>`;
+            hydrateStorage(dlg);
+        };
+        dlg.addEventListener('click', e => {
+            if (e.target.closest('[data-profile]')) return close(); // the profile opens underneath
+            if (e.target === dlg) return close();
+            const b = e.target.closest('[data-rx]');
+            if (!b) return;
+            if (b.dataset.rx === 'close') close();
+            if (b.dataset.rx === 'tab') { filter = b.dataset.f; paint(); }
+        }, true);
+        dlg.addEventListener('click', e => {
+            const f = e.target.closest('.follow-btn');
+            if (f) toggleFollow(f.dataset.id, f.dataset.name);
+        });
+        const { data, error } = await client.rpc('diary_reactors', { p_kind: kind, p_id: id });
+        if (!dlg.isConnected) return;
+        if (error) { dlg.querySelector('.rx-body').innerHTML = '<p class="muted small">Couldn’t load reactions right now.</p>'; return; }
+        list = data || [];
+        paint();
+    }
+
     // A floating row of emojis that grows out of the button that opened it. onPick(emoji) runs on tap.
-    // opts.chosen: emojis already picked (shown highlighted); opts.onClose: runs when it goes away.
+    // opts.set: [[emoji, name], …] (default: the story / chat row); opts.chosen: emojis already picked;
+    // opts.onClose: runs when it goes away; opts.noFocus: leave focus where it is (mouse hover).
     function emojiPicker(anchor, onPick, opts = {}) {
         document.querySelectorAll('.emoji-pop').forEach(p => p.remove());
         const pop = document.createElement('div');
-        pop.className = 'emoji-pop';
+        pop.className = `emoji-pop${opts.set ? ' labelled' : ''}`;
         pop.setAttribute('role', 'menu');
         pop.setAttribute('aria-label', 'Reactions');
         const chosen = opts.chosen || new Set();
-        pop.innerHTML = POST_REACTIONS.map((e, i) =>
-            `<button type="button" role="menuitem" data-emoji="${e}" style="--i:${i}" class="${chosen.has(e) ? 'on' : ''}" aria-label="${REACTION_NAMES[e]}${chosen.has(e) ? ' (yours — tap to remove)' : ''}">${e}</button>`).join('');
+        const set = opts.set || STORY_REACTIONS.map(e => [e, REACTION_NAMES[e]]);
+        pop.innerHTML = set.map(([e, name], i) =>
+            `<button type="button" role="menuitem" data-emoji="${e}" style="--i:${i}" class="${chosen.has(e) ? 'on' : ''}" aria-label="${name}${chosen.has(e) ? ' (yours — tap to remove)' : ''}" title="${name}">${e}${opts.set ? `<small>${name}</small>` : ''}</button>`).join('');
         const host = anchor.closest('dialog[open]') || document.body;
         host.append(pop);
         const r = anchor.getBoundingClientRect();
@@ -2560,6 +2776,7 @@ document.addEventListener('DOMContentLoaded', () => {
         pop.style.transformOrigin = `${r.left + r.width / 2 - left}px ${above ? '100%' : '0%'}`;
         pop.classList.add(above ? 'above' : 'below');
         const close = () => {
+            if (pop.classList.contains('closing')) return;
             pop.classList.add('closing');
             setTimeout(() => pop.remove(), 140);
             document.removeEventListener('pointerdown', outside, true);
@@ -2581,54 +2798,53 @@ document.addEventListener('DOMContentLoaded', () => {
             window.addEventListener('scroll', close, true);
         }, 0);
         document.addEventListener('keydown', key, true);
-        pop.querySelector('button')?.focus({ preventScroll: true });
+        if (!opts.noFocus) pop.querySelector('button')?.focus({ preventScroll: true });
         return close;
     }
 
-    // Press and hold Like on a feed post: the reaction row appears (and the tap doesn't also like it)
+    // Press and hold Like (or rest a mouse on it) for the reaction row; the tap that follows doesn't also like
     {
         let timer = null;
         let fired = false;
-        content.addEventListener('pointerdown', e => {
-            const btn = e.target.closest('.like-btn[data-kind="entry"]');
+        let hoverTimer = null;
+        const likeBtn = t => (t && t.closest ? t.closest('.like-btn[data-kind]') : null);
+        document.addEventListener('pointerdown', e => {
+            const btn = likeBtn(e.target);
             if (!btn) return;
             fired = false;
             clearTimeout(timer);
-            timer = setTimeout(() => {
-                fired = true;
-                emojiPicker(btn, emoji => toggleEntryReaction(btn.dataset.id, emoji), { chosen: myEntryReactions(btn.dataset.id) });
-            }, 450);
+            clearTimeout(hoverTimer);
+            timer = setTimeout(() => { fired = true; openReactionPicker(btn); }, 420);
         });
         const cancel = () => clearTimeout(timer);
-        content.addEventListener('pointerup', cancel);
-        content.addEventListener('pointercancel', cancel);
-        content.addEventListener('contextmenu', e => { if (e.target.closest('.like-btn[data-kind="entry"]')) e.preventDefault(); });
-        content.addEventListener('click', e => {
-            if (fired && e.target.closest('.like-btn[data-kind="entry"]')) {
+        document.addEventListener('pointerup', cancel);
+        document.addEventListener('pointercancel', cancel);
+        document.addEventListener('contextmenu', e => { if (likeBtn(e.target)) e.preventDefault(); });
+        document.addEventListener('click', e => {
+            if (fired && likeBtn(e.target)) {
                 e.stopPropagation();
                 e.preventDefault();
                 fired = false;
             }
         }, true);
+        if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+            document.addEventListener('pointerover', e => {
+                const btn = likeBtn(e.target);
+                if (!btn || e.pointerType !== 'mouse') return;
+                clearTimeout(hoverTimer);
+                hoverTimer = setTimeout(() => {
+                    if (btn.isConnected && btn.matches(':hover') && !document.querySelector('.emoji-pop')) openReactionPicker(btn, { noFocus: true });
+                }, 650);
+            });
+            document.addEventListener('pointerout', e => { if (likeBtn(e.target)) clearTimeout(hoverTimer); });
+        }
     }
 
-
-    async function toggleLike(entryId) {
-        const post = (s.feed || []).find(p => p.id === entryId);
+    // A plain tap: like (👍), or take back whatever reaction you left
+    function toggleLike(kind, id) {
+        const post = findPost(kind, id);
         if (!post) return;
-        const me = s.profile.id;
-        const liked = post.likes.some(l => l.user_id === me);
-        post.likes = liked ? post.likes.filter(l => l.user_id !== me) : [...post.likes, { user_id: me }];
-        app.render();
-
-        const { error } = liked
-            ? await client.from('diary_entry_likes').delete().eq('entry_id', entryId).eq('user_id', me)
-            : await client.from('diary_entry_likes').insert({ entry_id: entryId, user_id: me });
-        if (error) {
-            app.showToast('Could not update like');
-            post.likes = liked ? [...post.likes, { user_id: me }] : post.likes.filter(l => l.user_id !== me);
-            app.render();
-        }
+        return setReaction(kind, id, myReaction(post.likes) || '👍');
     }
 
     // ---------- Sharing ----------
@@ -2813,6 +3029,7 @@ document.addEventListener('DOMContentLoaded', () => {
             html,
             color: note.color,
             mood: note.mood,
+            audience: note.audience === 'public' ? 'public' : 'friends',
             written_at: new Date(note.createdAt).toISOString(),
             updated_at: new Date().toISOString()
         }, { onConflict: 'author,local_id' });
@@ -2882,7 +3099,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const mine = s.feed.filter(p => p.author === me);
         const likesReceived = mine.reduce((sum, p) => sum + p.likes.length, 0);
 
-        let list = s.feed;
+        let list = s.feed.filter(p => !s.hidden.has(`entry:${p.id}`));
         let filterLabel = '';
         if (s.feedAuthor) {
             list = list.filter(p => p.author === s.feedAuthor);
@@ -2899,9 +3116,7 @@ document.addEventListener('DOMContentLoaded', () => {
             list = list.filter(p => hashtags(p).includes(tag));
             filterLabel = `#${tag}`;
         }
-        if (s.feedSort === 'popular') {
-            list = [...list].sort((a, b) => b.likes.length - a.likes.length || b.sortAt - a.sortAt);
-        }
+        if (s.feedFilter === 'all' && !s.feedAuthor && s.feedSort === 'following') list = list.filter(inNetwork);
 
         const navItem = (filter, icon, label) => `
             <button class="social-nav-item${!s.feedAuthor && s.feedFilter === filter ? ' active' : ''}" data-action="feed-filter" data-filter="${filter}">
@@ -2922,8 +3137,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="profile-stats">
                             <div><b>${mine.length}</b><span>Posts</span></div>
                             <div><b>${s.friends.length}</b><span>Friends</span></div>
-                            <div><b>${likesReceived}</b><span>Likes</span></div>
+                            <div><b>${likesReceived}</b><span>Reactions</span></div>
                         </div>
+                        <button type="button" class="link-btn accent" data-profile="${esc(s.profile.id)}">View your profile</button>
                     </div>
                     <nav class="social-nav" aria-label="Feed">
                         ${navItem('all', 'i-home', 'Feed')}
@@ -2938,8 +3154,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         <h4>Contacts</h4>
                         ${s.friends.slice(0, 6).map(f => `
                             <div class="contact-row">
-                                ${avatar(f, 'md')}
-                                <span class="contact-name"><strong>${esc(f.display_name)}</strong><small>@${esc(f.username)}</small></span>
+                                <button type="button" class="row-av" data-profile="${esc(f.id)}" aria-label="${esc(f.display_name)}’s profile">${avatar(f, 'md')}</button>
+                                <span class="contact-name" data-profile="${esc(f.id)}" role="button" tabindex="0"><strong>${esc(f.display_name)}</strong><small>@${esc(f.username)}</small></span>
                                 <button class="icon-btn ghost" data-action="message-friend" data-id="${esc(f.id)}" aria-label="Message ${esc(f.display_name)}"><svg class="i"><use href="#i-chat"/></svg></button>
                             </div>`).join('') || '<p class="muted small">Add friends to see them here.</p>'}
                         ${s.friends.length ? '<button class="link-btn center" data-action="find-friends">View all</button>' : ''}
@@ -2952,7 +3168,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <button class="new-posts" data-action="feed-refresh"${s.feedStale ? '' : ' hidden'}><svg class="i"><use href="#i-refresh"/></svg>New posts</button>
                     <div class="feed-bar">
                         <div class="feed-tabs" role="tablist" aria-label="Show">
-                            ${[['latest', 'Latest'], ['popular', 'Popular'], ['saved', 'Saved']].map(([k, l]) => {
+                            ${[['foryou', 'For you'], ['following', 'Following'], ['latest', 'Latest'], ['popular', 'Popular'], ['saved', 'Saved']].map(([k, l]) => {
                                 const on = k === 'saved' ? s.feedFilter === 'saved' : (s.feedFilter === 'all' && !s.feedAuthor && s.feedSort === k);
                                 return `<button class="feed-tab" role="tab" aria-selected="${on}" data-action="feed-tab" data-tab="${k}">${l}</button>`;
                             }).join('')}
@@ -2981,7 +3197,9 @@ document.addEventListener('DOMContentLoaded', () => {
                             <button type="button" class="pc-tool video" data-action="feed-video"><svg class="i"><use href="#i-reel"/></svg>Video</button>
                             <button type="button" class="pc-tool live" data-action="live-start"><svg class="i"><use href="#i-live"/></svg>Live</button>
                             <button type="button" class="pc-tool story-toggle" data-action="feed-story-toggle" aria-pressed="${s.feedStory}" title="Also add this post to your story"><span class="pc-story-ring" aria-hidden="true"></span>Story</button>
-                            <span class="pc-note"><svg class="i"><use href="#i-lock"/></svg>Friends only · also saved to your diary</span>
+                            <button type="button" class="pc-audience" data-action="feed-audience" aria-haspopup="menu" title="Who can see this post — it’s also saved to your diary">${s.feedAudience === 'public'
+                                ? '<svg class="i"><use href="#i-globe"/></svg>Everyone'
+                                : '<svg class="i"><use href="#i-lock"/></svg>Friends'}<svg class="i caret"><use href="#i-down"/></svg></button>
                             <button type="submit" class="pc-post" id="feed-post-btn">${s.posting ? 'Posting…' : 'Post'}</button>
                         </div>
                     </form>
@@ -3007,9 +3225,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         <h4>Requests ${s.incoming.length ? `<span class="count-dot">${s.incoming.length}</span>` : ''}</h4>
                         ${s.incoming.map(f => `
                             <div class="request-row">
-                                ${avatar(f, 'md')}
+                                <button type="button" class="row-av" data-profile="${esc(f.id)}" aria-label="${esc(f.display_name)}’s profile">${avatar(f, 'md')}</button>
                                 <div>
-                                    <p><strong>${esc(f.display_name)}</strong> wants to add you to friends</p>
+                                    <p><button type="button" class="name-link" data-profile="${esc(f.id)}">${esc(f.display_name)}</button> wants to add you to friends</p>
                                     <div class="request-actions">
                                         <button class="link-btn accent" data-action="accept-request" data-id="${esc(f.friendshipId)}">Accept</button>
                                         <button class="link-btn" data-action="decline-request" data-id="${esc(f.friendshipId)}">Decline</button>
@@ -3033,12 +3251,13 @@ document.addEventListener('DOMContentLoaded', () => {
                             <button class="link-btn center" data-action="go-library">Browse the Library</button>
                         </section>` : ''}
                     <section class="side-box">
-                        <h4>Suggestions for you</h4>
-                        ${s.suggestions.map(p => `
+                        <h4>People you may know</h4>
+                        ${s.suggestions.slice(0, 5).map(p => `
                             <div class="suggest-row">
-                                ${avatar(p, 'md')}
-                                <span class="contact-name"><strong>${esc(p.display_name)}</strong><small>${p.mutual ? `${p.mutual} mutual friend${p.mutual === 1 ? '' : 's'}` : `@${esc(p.username)}`}</small></span>
-                                <button class="icon-btn ghost accent" data-action="suggest-add" data-username="${esc(p.username)}" aria-label="Add ${esc(p.display_name)}"><svg class="i"><use href="#i-user-plus"/></svg></button>
+                                <button type="button" class="row-av" data-profile="${esc(p.id)}" aria-label="${esc(p.display_name)}’s profile">${avatar(p, 'md')}</button>
+                                <span class="contact-name" data-profile="${esc(p.id)}" role="button" tabindex="0"><strong>${esc(p.display_name)}</strong><small>${esc(p.reason || `@${p.username}`)}</small></span>
+                                ${followButton(p, 'chip small')}
+                                <button class="icon-btn ghost accent" data-action="suggest-add" data-username="${esc(p.username)}" aria-label="Add ${esc(p.display_name)} as a friend"><svg class="i"><use href="#i-user-plus"/></svg></button>
                             </div>`).join('') || '<p class="muted small">No suggestions right now.</p>'}
                     </section>
                     <section class="active-card">
@@ -3124,7 +3343,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 audio.file.duration = audio.duration;
                 files.push(audio.file);
             }
-            const note = await app.createEntry({ text, shared: true }, files);
+            const note = await app.createEntry({ text, shared: true, audience: s.feedAudience }, files);
             note.attachments.forEach((att, i) => { if (files[i]) freshFiles.set(att.id, files[i]); });
             if (audio) URL.revokeObjectURL(audio.preview);
             // Share right away instead of waiting for the autosave debounce
@@ -3143,7 +3362,7 @@ document.addEventListener('DOMContentLoaded', () => {
             s.feed = null;
             if (!result.ok) return; // upsertShared already explained; the entry is still saved in the diary
             if (result.photos < photos.length) app.showToast(`Posted, but ${photos.length - result.photos} photo(s) couldn’t upload`);
-            else app.showToast(photos.length ? 'Posted with photos 📸' : 'Posted to your friends');
+            else app.showToast(`${photos.length ? 'Posted with photos 📸' : 'Posted'} — ${s.feedAudience === 'public' ? 'everyone can see it' : 'your friends can see it'}`);
         } catch (err) {
             app.showToast('Couldn’t post that — please try again');
         } finally {
@@ -3163,11 +3382,79 @@ document.addEventListener('DOMContentLoaded', () => {
             })
             : [];
         const items = [
-            ...list.map(p => ({ at: p.sortAt || Date.parse(p.shared_at), likes: p.likes.length, html: () => postCard(p) })),
-            ...reels.map(r => ({ at: Date.parse(r.created_at), likes: r.likes.length, html: () => window.diaryStories.feedCard(r) }))
+            ...list.map(p => ({ at: p.sortAt || Date.parse(p.shared_at), post: p, html: () => postCard(p) })),
+            ...reels.map(r => ({ at: Date.parse(r.created_at), post: { ...r, sortAt: Date.parse(r.created_at), reposts: [] }, html: () => window.diaryStories.feedCard(r) }))
         ];
-        items.sort(s.feedSort === 'popular' ? (a, b) => b.likes - a.likes || b.at - a.at : (a, b) => b.at - a.at);
-        return items.map(item => item.html());
+        const ranked = s.feedFilter === 'all' && !s.feedAuthor;
+        if (ranked && s.feedSort === 'popular') {
+            items.forEach(i => { i.score = popularScore(i.post); });
+            items.sort((a, b) => b.score - a.score || b.at - a.at);
+        } else if (ranked && s.feedSort === 'foryou') {
+            const aff = affinity();
+            items.forEach(i => { i.score = forYouScore(i.post, aff); });
+            items.sort((a, b) => b.score - a.score || b.at - a.at);
+        } else {
+            items.sort((a, b) => b.at - a.at);
+        }
+        const html = items.map(item => item.html());
+        if (ranked && s.feedSort === 'foryou' && html.length > 2) html.splice(3, 0, pymkStripHTML());
+        return html;
+    }
+
+    // ---------- Feed ranking ----------
+    // Popular: reactions, comments and reposts, favouring the last two weeks.
+    // For you: the same, weighted by how close you are to the author (friends, people you follow, people whose
+    // posts you react to) and by the #tags you engage with, and fading with age.
+    const engagement = p => (p.likes || []).length + commentCount(p) * 2 + (p.reposts || []).length * 3;
+    const ageDays = p => (Date.now() - (p.sortAt || Date.parse(p.shared_at || p.created_at))) / 864e5;
+    const popularScore = p => (engagement(p) + 0.01) * (ageDays(p) < 14 ? 1 : 0.2);
+
+    function affinity() {
+        const me = s.profile.id;
+        const people = new Map();
+        const tags = new Map();
+        (s.feed || []).forEach(p => {
+            if (p.author === me) return;
+            const engaged = (p.likes || []).some(l => l.user_id === me) || (p.reposts || []).some(r => r.user_id === me) || s.saved.has(p.id);
+            if (!engaged) return;
+            people.set(p.author, (people.get(p.author) || 0) + 1);
+            hashtags(p).forEach(t => tags.set(t, (tags.get(t) || 0) + 1));
+        });
+        return { people, tags, friends: new Set(s.friends.map(f => f.id)) };
+    }
+
+    function forYouScore(p, aff) {
+        const me = s.profile.id;
+        let close = 0;
+        if (p.author === me) close = 0.4;
+        else if (aff.friends.has(p.author)) close = 3;
+        else if (s.following.has(p.author)) close = 2.5;
+        close += Math.min(3, (aff.people.get(p.author) || 0) * 0.75);
+        if (p.latestRepost && aff.friends.has(p.latestRepost.user_id)) close += 1;
+        const topical = hashtags(p).reduce((n, t) => n + Math.min(2, aff.tags.get(t) || 0), 0);
+        return (1 + close + topical * 0.5) * (1 + Math.log1p(engagement(p))) / Math.pow(ageDays(p) * 24 + 2, 1.1);
+    }
+
+    // People you follow, your friends, and you (reposts by them count too)
+    function inNetwork(p) {
+        const me = s.profile.id;
+        const near = id => id === me || s.following.has(id) || s.friends.some(f => f.id === id);
+        return near(p.author) || (p.latestRepost && near(p.latestRepost.user_id));
+    }
+
+    // "People you may know" as a row of cards, dropped into the For you feed (phones don't have the side column)
+    function pymkStripHTML() {
+        const list = (s.suggestions || []).slice(0, 10);
+        if (!list.length) return '';
+        return `
+            <section class="pymk-strip" aria-label="People you may know">
+                <header><h3>People you may know</h3><button type="button" class="link-btn accent" data-action="find-people">See more</button></header>
+                <div class="pymk-row">${list.map(p => `
+                    <div class="pymk-card">
+                        <button type="button" class="pymk-open" data-profile="${esc(p.id)}" aria-label="${esc(p.display_name)}’s profile">${avatar(p, 'lg')}<strong>${esc(p.display_name)}</strong><small>${esc(p.reason || `@${p.username}`)}</small></button>
+                        ${followButton(p, 'chip accent') || `<button type="button" class="chip accent" data-action="suggest-add" data-username="${esc(p.username)}">Add friend</button>`}
+                    </div>`).join('')}</div>
+            </section>`;
     }
 
     // The most-used #tags in the loaded feed
@@ -3198,10 +3485,11 @@ document.addEventListener('DOMContentLoaded', () => {
             audio: p.audio,
             bucket: FEED_BUCKET,
             likes: p.likes,
-            reactsHTML: entryReactionsHTML(p),
+            audience: p.audience,
             commentCount: commentCount(p),
             saved: s.saved.has(p.id),
             reposts: p.reposts || [],
+            repostedById: p.latestRepost ? p.latestRepost.user_id : null,
             repostedBy: p.latestRepost
                 ? (p.latestRepost.user_id === me ? 'You' : (p.latestRepost.profile && p.latestRepost.profile.display_name) || 'A friend')
                 : '',
@@ -3331,12 +3619,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const me = s.profile.id;
         const { profile } = postPerson(o);
         const key = `${o.kind}:${o.id}`;
-        const liked = o.likes.some(l => l.user_id === me);
         return `
-            <button class="act like-btn" data-action="like" data-kind="${o.kind}" data-id="${esc(o.id)}" aria-pressed="${liked}" aria-label="${liked ? 'Unlike' : 'Like'}">
-                <svg class="i"><use href="#${liked ? 'i-heart-fill' : 'i-heart'}"/></svg><span class="act-count">${o.likes.length || ''}</span>
-            </button>
-            ${o.kind === 'entry' ? `<button class="act react-btn" data-action="entry-react-menu" data-id="${esc(o.id)}" aria-haspopup="true" aria-label="React"><svg class="i"><use href="#i-smile"/></svg></button>` : ''}
+            ${likeButtonHTML(o.kind, o.id, o.likes)}
             <button class="act" data-action="post-open" data-key="${esc(key)}" data-focus="input" aria-label="Comment"><svg class="i"><use href="#i-chat"/></svg><span class="act-count">${o.commentCount || ''}</span></button>
             ${o.canRepost ? (() => {
                 const on = o.reposts.some(r => r.user_id === me);
@@ -3360,12 +3644,12 @@ document.addEventListener('DOMContentLoaded', () => {
         return `
             <article class="post ig" data-post="${key}" data-search="${esc(`${profile.display_name} ${profile.username} ${o.title || ''} ${o.body || ''}`.toLowerCase())}">
                 ${o.pinned ? '<p class="repost-line pinned-line"><svg class="i"><use href="#i-pin-note"/></svg>Pinned by the admins</p>' : ''}
-                ${o.repostedBy ? `<p class="repost-line"><svg class="i"><use href="#i-repost"/></svg>${esc(o.repostedBy)} ${o.reshared ? 'reshared this' : 'reposted'}</p>` : ''}
+                ${o.repostedBy ? `<p class="repost-line"><svg class="i"><use href="#i-repost"/></svg>${o.repostedById ? `<button type="button" class="name-link" data-profile="${esc(o.repostedById)}">${esc(o.repostedBy)}</button>` : esc(o.repostedBy)} ${o.reshared ? 'reshared this' : 'reposted'}</p>` : ''}
                 <header class="post-head">
-                    ${avatar(person, 'md')}
+                    <button type="button" class="post-av" data-profile="${esc(o.author)}" aria-label="${esc(profile.display_name)}’s profile">${avatar(person, 'md')}</button>
                     <div class="post-who">
-                        <strong>${name}${o.badge ? ` <span class="post-badge">${o.badge}</span>` : ''}</strong>
-                        <span class="muted">@${esc(profile.username)} · <button type="button" class="post-time" data-action="post-open" data-key="${esc(key)}" title="${esc(fullDate(o.createdAt))} — open post">${timeAgo(o.createdAt)}</button>${o.mood ? ` · ${MOOD_EMOJI[o.mood] || ''}` : ''}</span>
+                        <strong><button type="button" class="name-link" data-profile="${esc(o.author)}">${name}</button>${o.badge ? ` <span class="post-badge">${o.badge}</span>` : ''}</strong>
+                        <span class="muted">@${esc(profile.username)} · ${o.audience === 'public' ? '<svg class="i aud" aria-label="Everyone can see this"><use href="#i-globe"/></svg> · ' : ''}<button type="button" class="post-time" data-action="post-open" data-key="${esc(key)}" title="${esc(fullDate(o.createdAt))} — open post">${timeAgo(o.createdAt)}</button>${o.mood ? ` · ${MOOD_EMOJI[o.mood] || ''}` : ''}</span>
                     </div>
                     <button class="more-btn" data-action="post-menu" data-kind="${o.kind}" data-id="${esc(o.id)}" aria-label="Post options"><svg class="i"><use href="#i-more"/></svg></button>
                 </header>
@@ -3373,24 +3657,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${audioCardHTML(o.audio)}
                 ${o.bodyExtra || ''}
                 <div class="post-actions">${postActionsHTML(o)}</div>
-                ${o.reactsHTML || ''}
-                ${o.likes.length ? likedBy(o.likes) : ''}
+                <div class="react-sum-row" data-react-sum>${reactSummaryHTML(o.kind, o.id, o.likes)}</div>
                 ${photos.length ? postCaptionHTML(o, photos, false) : ''}
                 ${o.extraHTML || ''}
                 ${commentsBlock(o.kind, o.id, o.commentCount, o.canComment)}
             </article>`;
-    }
-
-    // "Liked by Gladys and 23 others", with the faces of friends who liked it
-    function likedBy(likes) {
-        const me = s.profile.id;
-        const people = likes.map(l => (l.user_id === me ? { ...s.profile, you: true } : s.friends.find(f => f.id === l.user_id))).filter(Boolean);
-        const named = people.find(p => !p.you) || people[0];
-        const faces = people.slice(0, 3).map(p => avatar(p, 'xs')).join('');
-        if (!named) return `<p class="post-likes">${likes.length} ${likes.length === 1 ? 'like' : 'likes'}</p>`;
-        const name = named.you ? 'you' : esc(named.display_name.split(' ')[0]);
-        const others = likes.length - 1;
-        return `<p class="post-likes">${faces ? `<span class="avatar-stack">${faces}</span>` : ''}<span>Liked by <strong>${name}</strong>${others > 0 ? ` and <strong>${others} ${others === 1 ? 'other' : 'others'}</strong>` : ''}</span></p>`;
     }
 
     // ---------- Comments ----------
@@ -3402,7 +3673,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const me = s.profile.id;
         const loaded = thread && thread.open && !thread.loading;
         const total = loaded ? thread.items.length : count;
-        const who = c => (c.author === me ? 'You' : esc((c.author_profile && c.author_profile.display_name) || 'Someone'));
+        const who = c => `<button type="button" class="name-link" data-profile="${esc(c.author)}">${c.author === me ? 'You' : esc((c.author_profile && c.author_profile.display_name) || 'Someone')}</button>`;
 
         if (mode === 'full' || mode === 'sheet') {
             const list = !loaded
@@ -3412,7 +3683,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const canDelete = c.author === me || thread.ownerId === me;
                     return `
                         <div class="comment full" data-comment="${esc(c.id)}">
-                            ${avatar({ id: c.author, display_name: author.display_name, avatar_path: author.avatar_path }, 'sm')}
+                            <button type="button" class="c-av" data-profile="${esc(c.author)}" aria-label="${esc(author.display_name)}’s profile">${avatar({ id: c.author, display_name: author.display_name, avatar_path: author.avatar_path }, 'sm')}</button>
                             <div class="c-main">
                                 <div class="c-bubble${c.audio_path ? ' has-voice' : ''}"><strong>${who(c)}</strong> ${c.body ? linkTags(esc(c.body)) : ''}
                                     ${c.audio_path ? voiceHTML({ path: c.audio_path, duration: c.audio_duration }, COMMENT_AUDIO) : ''}</div>
@@ -3742,7 +4013,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <button type="button" class="pv-close pv-back" data-pv="close" aria-label="Back to ${backTo === 'Back' ? 'where you were' : backTo}" title="Back (Esc)">
                     <svg class="i"><use href="#i-back"/></svg><span>${backTo}</span>
                 </button>
-                <div class="pv-top-who">
+                <div class="pv-top-who" data-profile="${esc(o.author)}" role="button" tabindex="0" aria-label="${esc(profile.display_name)}’s profile">
                     ${avatar(person, 'sm')}
                     <span><strong>${name}${o.badge ? ` <span class="post-badge">${o.badge}</span>` : ''}</strong><small>@${esc(profile.username)} · ${timeAgo(o.createdAt)}${o.mood ? ` · ${MOOD_EMOJI[o.mood] || ''}` : ''}</small></span>
                 </div>
@@ -3763,7 +4034,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
             <footer class="pv-foot">
                 <div class="post-actions" data-pd="actions">${postActionsHTML(o)}</div>
-                <div class="pv-stats" data-pd="stats">${o.reactsHTML || ''}${o.likes.length ? likedBy(o.likes) : ''}</div>
+                <div class="pv-stats" data-pd="stats" data-react-sum>${reactSummaryHTML(o.kind, o.id, o.likes)}</div>
                 ${o.canComment ? `
                     <div class="pv-emojis" role="group" aria-label="Add an emoji">
                         ${QUICK_EMOJI.map(e => `<button type="button" data-pv="emoji" data-emoji="${e}" aria-label="Add ${e}">${e}</button>`).join('')}
@@ -3868,7 +4139,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (el && el.innerHTML !== html) el.innerHTML = html;
             };
             set('actions', postActionsHTML(o));
-            set('stats', (o.reactsHTML || '') + (o.likes.length ? likedBy(o.likes) : ''));
+            set('stats', reactSummaryHTML(o.kind, o.id, o.likes));
             set('bodyextra', o.bodyExtra || '');
             set('extra', o.extraHTML || '');
         });
@@ -4040,10 +4311,16 @@ document.addEventListener('DOMContentLoaded', () => {
         chooseDelete, openRecentlyDeleted, editedTag, showHistory, prefOf, setPref, isMuted, muteMenu, soundMenu, FOREVER,
         statusOf, contactCardHTML, pickContact, deviceId, deviceLabel, STATUS,
         loadFeed: () => { if (s.feed === null) loadFeed(); },
-        // Open a feed post in the post view from anywhere (Explore, notifications), even if its card isn't on screen
+        FEED_SELECT, decorateRepost, loadPreviews, postCard, findPost, postExtras, hidePost, setReaction, openReactors,
+        likeButtonHTML, reactSummaryHTML, openPost, closePost, copyText, postLink, save, load,
+        isHidden: (kind, id) => s.hidden.has(`${kind}:${id}`),
+        // Open a feed post in the post view from anywhere (Explore, notifications, links), even if its card isn't on screen
         openEntry(id, opts) {
-            const p = postsFor('entry').find(x => x.id === id);
-            if (!p) return false;
+            const p = findPost('entry', id);
+            if (!p) {
+                fetchEntry(id).then(found => { if (found) this.openEntry(id, opts); else app.showToast('That post isn’t available — it may have been removed or is only for friends'); });
+                return true;
+            }
             postCard(p); // records what the post view needs
             openPost(`entry:${id}`, opts);
             return true;
@@ -4521,7 +4798,7 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         'post-menu': el => {
             if (el.dataset.kind === 'post' && window.diaryCommunities) return window.diaryCommunities.postMenu(el);
-            const post = postsFor('entry').find(p => p.id === el.dataset.id);
+            const post = findPost('entry', el.dataset.id);
             if (!post) return;
             const mine = post.author === s.profile.id;
             const key = `entry:${post.id}`;
@@ -4540,7 +4817,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 } }
             ];
-            if (!mine && window.diarySafety) common.push({ label: 'Report post', icon: 'i-flag', onClick: () => window.diarySafety.report('entry', post.id, { who: (post.author_profile && post.author_profile.display_name) || '' }) });
+            const report = !mine && window.diarySafety ? [{ label: 'Report post', icon: 'i-flag', onClick: () => window.diarySafety.report('entry', post.id, { who: (post.author_profile && post.author_profile.display_name) || '' }) }] : [];
             const items = mine
                 ? [
                     { label: 'Open entry', icon: 'i-edit', onClick: () => {
@@ -4551,6 +4828,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     } },
                     { label: 'Reshare to the feed', icon: 'i-repost', onClick: () => reshareOwn(post.id) },
                     { label: 'Add to your story', icon: 'i-plus', onClick: () => window.diaryStories && window.diaryStories.shareEntry(post.local_id, post.title || post.body, post) },
+                    post.audience === 'public'
+                        ? { label: 'Only friends can see this', icon: 'i-lock', onClick: () => setAudience(post, 'friends') }
+                        : { label: 'Let everyone see this', icon: 'i-globe', onClick: () => setAudience(post, 'public') },
                     post.allow_reposts === false
                         ? { label: 'Allow reposts', icon: 'i-repost', onClick: () => setAllowReposts(post, true) }
                         : { label: 'Turn off reposts', icon: 'i-repost', onClick: () => setAllowReposts(post, false) },
@@ -4577,8 +4857,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     ...(s.friends.some(f => f.id === post.author) ? [{ label: 'Message', icon: 'i-chat', onClick: () => { app.setView('messages'); openChat(post.author); } }] : []),
                     { label: `More from ${post.author_profile ? post.author_profile.display_name : 'them'}`, icon: 'i-user', onClick: () => { closePost(); s.feedAuthor = post.author; app.render(); } }
                 ];
-            app.openPopover(el, [...common, ...items]);
+            app.openPopover(el, [...common, ...postExtras('entry', post), ...items, ...report]);
         },
+        'feed-audience': el => app.openPopover(el, [
+            { label: 'Friends — only your friends', icon: 'i-lock', onClick: () => { s.feedAudience = 'friends'; save('diaryFeedAudience', 'friends'); app.render(); } },
+            { label: 'Everyone — anyone on Cordial and your followers', icon: 'i-globe', onClick: () => { s.feedAudience = 'public'; save('diaryFeedAudience', 'public'); app.render(); } }
+        ]),
+        'find-people': () => { app.setView('explore'); setTimeout(() => document.getElementById('ex-search')?.focus(), 350); },
         'suggest-add': el => {
             s.suggestions = s.suggestions.filter(p => p.username !== el.dataset.username);
             addFriend(el.dataset.username);
@@ -4588,9 +4873,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (entry) Media.lightbox(entry.url);
         },
         'find-friends': () => app.setView('messages'),
-        'like': el => (el.dataset.kind === 'post' && window.diaryCommunities
-            ? window.diaryCommunities.toggleLike(el.dataset.id)
-            : toggleLike(el.dataset.id)),
+        'like': el => toggleLike(el.dataset.kind, el.dataset.id),
+        'reactors': el => openReactors(el.dataset.kind, el.dataset.id),
         'comments-open': el => openPost(el.dataset.key),
         'comments-focus': el => openPost(el.dataset.key, { focus: 'input' }),
         'post-open': el => openPost(el.dataset.key, { focus: el.dataset.focus }),
@@ -4712,8 +4996,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const friend = s.friends.find(f => f.id === s.activeFriend);
             if (friend && window.diaryChatTools) window.diaryChatTools.openGallery(dmConv(friend));
         },
-        'entry-react-menu': el => emojiPicker(el, emoji => toggleEntryReaction(el.dataset.id, emoji), { chosen: myEntryReactions(el.dataset.id) }),
-        'entry-react': el => toggleEntryReaction(el.dataset.id, el.dataset.emoji),
         'chat-incognito': el => incognitoMenu(el),
         'close-chat': () => {
             if (s.activeFriend) pruneVanished(s.activeFriend, true);
@@ -4949,6 +5231,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function load(key, fallback) {
         try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch (e) { return fallback; }
+    }
+
+    function save(key, value) {
+        try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* private mode: just this visit */ }
     }
 
     function randomId() {

@@ -308,7 +308,7 @@ returns table (id uuid, username text, display_name text, avatar_path text, rela
 language sql stable security definer set search_path = '' as $$
     with me as (select auth.uid() as uid),
     term as (select lower(btrim(regexp_replace(coalesce(q, ''), '^@', ''))) as t),
-    pat as (select '%' || replace(replace(replace(t, '\', '\\'), '%', '\%'), '_', '\_') || '%' as p, t from term),
+    pat as (select '%' || replace(replace(replace(t, '\', '\\'), '%', '\%'), '_', '\_') || '%' as pt, t from term),
     by_email as (
         select u.id from auth.users u join public.diary_presence pr on pr.user_id = u.id and pr.email_search
         where (select t from term) like '%@%.%' and lower(u.email) = (select t from term)),
@@ -316,16 +316,16 @@ language sql stable security definer set search_path = '' as $$
         select p.id,
             case
                 when p.id in (select id from by_email) then 'Email match'
-                when lower(p.username) like (select p from pat) or lower(p.display_name) like (select p from pat) then null
+                when lower(p.username) like (select pt from pat) or lower(p.display_name) like (select pt from pat) then null
                 when private.diary_can_see(p.id, (select uid from me), 'profile') and exists (
                     select 1 from public.diary_profile_details d where d.user_id = p.id
-                    and exists (select 1 from unnest(d.interests) i where i like (select p from pat)))
-                    then 'Interested in ' || (select string_agg(i, ', ') from public.diary_profile_details d, unnest(d.interests) i where d.user_id = p.id and i like (select p from pat))
+                    and exists (select 1 from unnest(d.interests) i where i like (select pt from pat)))
+                    then 'Interested in ' || (select string_agg(i, ', ') from public.diary_profile_details d, unnest(d.interests) i where d.user_id = p.id and i like (select pt from pat))
                 when private.diary_can_see(p.id, (select uid from me), 'profile') and exists (
-                    select 1 from public.diary_profile_details d where d.user_id = p.id and (lower(d.bio) like (select p from pat) or lower(d.location) like (select p from pat)))
-                    then (select case when lower(d.location) like (select p from pat) then 'Lives in ' || d.location else left(d.bio, 60) end from public.diary_profile_details d where d.user_id = p.id)
+                    select 1 from public.diary_profile_details d where d.user_id = p.id and (lower(d.bio) like (select pt from pat) or lower(d.location) like (select pt from pat)))
+                    then (select case when lower(d.location) like (select pt from pat) then 'Lives in ' || d.location else left(d.bio, 60) end from public.diary_profile_details d where d.user_id = p.id)
                 else (select 'Member of ' || c.name from public.diary_community_members m join public.diary_communities c on c.id = m.community_id
-                      where m.user_id = p.id and lower(c.name) like (select p from pat)
+                      where m.user_id = p.id and lower(c.name) like (select pt from pat)
                         and (c.visibility = 'public' or private.diary_is_member(c.id, (select uid from me))) limit 1)
             end as matched,
             (lower(p.username) = (select t from term) or lower(p.display_name) = (select t from term)) as exact,
@@ -334,14 +334,14 @@ language sql stable security definer set search_path = '' as $$
         where (select uid from me) is not null and char_length((select t from term)) >= 2 and p.id <> (select uid from me)
           and not exists (select 1 from public.diary_blocks b where b.blocker = p.id and b.blocked = (select uid from me))
           and (
-            lower(p.username) like (select p from pat) or lower(p.display_name) like (select p from pat)
+            lower(p.username) like (select pt from pat) or lower(p.display_name) like (select pt from pat)
             or p.id in (select id from by_email)
             or (private.diary_can_see(p.id, (select uid from me), 'profile') and exists (
                 select 1 from public.diary_profile_details d where d.user_id = p.id and (
-                    lower(d.bio) like (select p from pat) or lower(d.location) like (select p from pat)
-                    or exists (select 1 from unnest(d.interests) i where i like (select p from pat)))))
+                    lower(d.bio) like (select pt from pat) or lower(d.location) like (select pt from pat)
+                    or exists (select 1 from unnest(d.interests) i where i like (select pt from pat)))))
             or exists (select 1 from public.diary_community_members m join public.diary_communities c on c.id = m.community_id
-                where m.user_id = p.id and lower(c.name) like (select p from pat)
+                where m.user_id = p.id and lower(c.name) like (select pt from pat)
                   and (c.visibility = 'public' or private.diary_is_member(c.id, (select uid from me)))))
     )
     select p.id, p.username, p.display_name,

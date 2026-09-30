@@ -31,7 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const P = { loaded: false, settings: { show_online: 'everyone', show_last_seen: 'everyone', read_receipts: true } };
     async function loadPresencePrivacy() {
         P.loaded = true;
-        const { data } = await I.client.from('diary_presence').select('show_online, show_last_seen, read_receipts, status, status_text, status_until, allow_calls, photo_visibility, profile_visibility').maybeSingle();
+        const { data } = await I.client.from('diary_presence').select('show_online, show_last_seen, read_receipts, status, status_text, status_until, allow_calls, photo_visibility, profile_visibility, stats_visibility, email_search').maybeSingle();
         if (data) {
             if (data.status_until && Date.parse(data.status_until) < Date.now()) Object.assign(data, { status: null, status_text: null });
             P.settings = data;
@@ -396,7 +396,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${signedIn() ? row('i-checks', 'Read receipts', presence.read_receipts === false ? 'Off — people won’t see when you’ve read their messages, and you won’t see theirs' : 'On — blue ticks when a message has been read', toggle('st-receipts', presence.read_receipts !== false, 'Read receipts')) : ''}
                     ${signedIn() ? row('i-phone', 'Who can call you', presence.allow_calls === 'nobody' ? 'No one — calls are blocked' : 'Your friends', seg('privacy-calls', [['friends', 'Friends'], ['nobody', 'No one']], presence.allow_calls || 'friends')) : ''}
                     ${signedIn() ? row('i-image', 'Who sees your profile photo', 'Everyone else sees your initials', seg('privacy-photo', WHO2, presence.photo_visibility || 'everyone')) : ''}
-                    ${signedIn() ? row('i-user', 'Who sees your profile details', 'Like when you joined Cordial', seg('privacy-profile', WHO2, presence.profile_visibility || 'everyone')) : ''}
+                    ${signedIn() ? row('i-user', 'Who sees your profile details', 'Your bio, location, interests and when you joined', seg('privacy-profile', WHO2, presence.profile_visibility || 'everyone')) : ''}
+                    ${signedIn() ? row('i-chart', 'Who sees your numbers', 'Posts, followers, following and reactions — and your follower lists', seg('privacy-stats', [['everyone', 'Everyone'], ['friends', 'Friends'], ['nobody', 'Only me']], presence.stats_visibility || 'everyone')) : ''}
+                    ${signedIn() ? row('i-search', 'Let people find me by email', 'Only someone who types your exact email address', seg('privacy-email', [['off', 'Off'], ['on', 'On']], presence.email_search === true || presence.email_search === 'on' ? 'on' : 'off')) : ''}
                     ${signedIn() ? row('i-bell', 'Message previews in alerts', read('diaryPreviews', '1') === '1' ? 'Alerts show what the message says' : 'Alerts only say who it’s from', toggle('st-previews', read('diaryPreviews', '1') === '1', 'Message previews')) : ''}
                     ${signedIn() ? `<div class="st-row st-col">
                         <span class="st-ic"><svg class="i"><use href="#i-block"/></svg></span>
@@ -465,8 +467,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!F.loaded) loadFollowLists();
         const person = (p, action, label) => `
             <div class="st-person">
-                ${I.avatar(p, 'sm')}
-                <span class="st-text"><strong>${esc(p.display_name)}</strong><small>@${esc(p.username)}</small></span>
+                <button type="button" class="row-av" data-profile="${esc(p.id)}" aria-label="${esc(p.display_name)}’s profile">${I.avatar(p, 'sm')}</button>
+                <span class="st-text" data-profile="${esc(p.id)}" role="button" tabindex="0"><strong>${esc(p.display_name)}</strong><small>@${esc(p.username)}</small></span>
                 <button class="st-btn" data-action="${action}" data-id="${esc(p.id)}" data-name="${esc(p.display_name.split(' ')[0])}">${label}</button>
             </div>`;
         const list = (items, action, label, empty) => !F.loaded
@@ -495,6 +497,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (setting === 'privacy-calls') return setPrivacyKey('allow_calls', value);
             if (setting === 'privacy-photo') return setPrivacyKey('photo_visibility', value);
             if (setting === 'privacy-profile') return setPrivacyKey('profile_visibility', value);
+            if (setting === 'privacy-stats') return setPrivacyKey('stats_visibility', value);
+            if (setting === 'privacy-email') return setPrivacyKey('email_search', value);
             if (setting === 'theme') setTheme(value);
             if (setting === 'accent') setPref('accent', 'diaryAccent', value, 'indigo');
             if (setting === 'text') setPref('text', 'diaryTextSize', value, 'default');

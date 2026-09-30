@@ -28,7 +28,6 @@ document.addEventListener('DOMContentLoaded', () => {
         query: '',
         here: [],                // who's on this community's page right now
         presence: null,
-        reactOpen: null,         // post id whose emoji picker is open
         posting: false
     };
 
@@ -47,7 +46,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (c.current && c.current.id === id) { c.tab = 'chat'; app.render(); }
             else c.wantTab = 'chat';
         },
-        toggleLike, postMenu, onRemoteChange, reset,
+        postMenu, onRemoteChange, reset,
+        isMember: cid => !!roleOf(cid),
         // For the note share sheet
         async myGroups() {
             if (c.list === null) await loadCommunities();
@@ -76,11 +76,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const POST_SELECT = `id, community_id, author, kind, title, body, html, photos, poll, pinned_at, created_at,
         author_profile:diary_profiles!diary_community_posts_author_fkey(username, display_name, avatar_path),
-        likes:diary_community_likes(user_id),
+        likes:diary_community_likes(user_id, emoji),
         comments:diary_comments(count),
-        votes:diary_community_poll_votes(user_id, option),
-        reactions:diary_community_reactions(user_id, emoji)`;
-    const REACTIONS = ['❤️', '😂', '🔥', '👏', '😮', '🙏'];
+        votes:diary_community_poll_votes(user_id, option)`;
 
     // ---------- Data ----------
     // Phones on weak signal (or waking from the background) can leave a request hanging;
@@ -140,7 +138,7 @@ document.addEventListener('DOMContentLoaded', () => {
             app.setView('communities');
             return;
         }
-        Object.assign(c, { current: cm, tab: c.wantTab || 'posts', posts: [], members: [], draft: { text: '', photos: [], poll: null }, reactOpen: null });
+        Object.assign(c, { current: cm, tab: c.wantTab || 'posts', posts: [], members: [], draft: { text: '', photos: [], poll: null } });
         c.wantTab = null;
         loadPosts();
         loadMembers();
@@ -428,74 +426,8 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>`;
     }
 
-    function reactionsHTML(p, member) {
-        const counts = new Map();
-        (p.reactions || []).forEach(r => {
-            const e = counts.get(r.emoji) || { n: 0, mine: false };
-            e.n++;
-            if (r.user_id === me()) e.mine = true;
-            counts.set(r.emoji, e);
-        });
-        const chips = REACTIONS.filter(e => counts.has(e)).map(e => {
-            const x = counts.get(e);
-            return `<button type="button" class="cm-react${x.mine ? ' mine' : ''}" data-action="cm-react" data-id="${esc(p.id)}" data-emoji="${e}"${member ? '' : ' disabled'} aria-pressed="${x.mine}" aria-label="${e} ${x.n}">${e}<span>${x.n}</span></button>`;
-        }).join('');
-        if (!chips && !member) return '';
-        const open = c.reactOpen === p.id;
-        return `
-            <div class="cm-reacts">
-                ${chips}
-                ${member ? `<button type="button" class="cm-react-add" data-action="cm-react-menu" data-id="${esc(p.id)}" aria-expanded="${open}" aria-label="Add a reaction"><svg class="i"><use href="#i-smile"/></svg><span aria-hidden="true">+</span></button>` : ''}
-                ${open ? `<div class="cm-react-picker">${REACTIONS.map(e => `<button type="button" data-action="cm-react" data-id="${esc(p.id)}" data-emoji="${e}" aria-label="React ${e}">${e}</button>`).join('')}</div>` : ''}
-            </div>`;
-    }
-
-    function pollBuilder() {
-        const poll = c.draft.poll;
-        if (!poll) return '';
-        return `
-            <div class="cm-poll-build">
-                <input class="cm-poll-in" data-poll="q" maxlength="200" placeholder="Ask a question…" value="${esc(poll.question)}" aria-label="Poll question">
-                ${poll.options.map((o, i) => `<input class="cm-poll-in opt" data-poll="${i}" maxlength="80" placeholder="Option ${i + 1}" value="${esc(o)}" aria-label="Option ${i + 1}">`).join('')}
-                <div class="cm-poll-build-foot">
-                    ${poll.options.length < 4 ? '<button type="button" class="chip" data-action="cm-poll-add">+ Add option</button>' : ''}
-                    <button type="button" class="chip" data-action="cm-poll-remove">Remove poll</button>
-                </div>
-            </div>`;
-    }
-
-    function postsTab(cm) {
-        const member = !!roleOf(cm.id);
-        const first = s.profile.display_name.split(' ')[0];
-        const composer = member ? `
-            <form class="post-composer" data-form="cm-post">
-                <div class="pc-row">
-                    ${avatar(s.profile, 'md')}
-                    <textarea id="cm-text" rows="2" maxlength="5000" placeholder="Share an update with ${esc(cm.name)}, ${esc(first)}…" aria-label="Write a post"></textarea>
-                </div>
-                <div class="pc-photos" id="cm-photos" hidden></div>
-                ${pollBuilder()}
-                <div class="pc-foot">
-                    <button type="button" class="pc-tool" data-action="cm-add-photos"><svg class="i"><use href="#i-image"/></svg>Photo</button>
-                    <button type="button" class="pc-tool poll" data-action="cm-poll" aria-pressed="${!!c.draft.poll}"><svg class="i"><use href="#i-chart"/></svg>Poll</button>
-                    <button type="button" class="pc-tool camera" data-action="cm-camera"><svg class="i"><use href="#i-camera"/></svg>Camera</button>
-                    <button type="button" class="pc-tool note" data-action="cm-share-note"><svg class="i"><use href="#i-notes"/></svg>Share a note</button>
-                    <button type="submit" class="pc-post" id="cm-post-btn"${c.posting ? ' disabled' : ''}>${c.posting ? 'Posting…' : 'Post'}</button>
-                </div>
-            </form>` : `
-            <div class="cm-join-banner">
-                <p><strong>Join ${esc(cm.name)}</strong> to post, like and comment.</p>
-                <button class="primary-btn" data-action="cm-join" data-id="${esc(cm.id)}">Join</button>
-            </div>`;
-
-        const posts = c.loadingPosts && !c.posts.length
-            ? '<p class="muted">Loading posts…</p>'
-            : [...c.posts].sort((a, b) => (b.pinned_at ? 1 : 0) - (a.pinned_at ? 1 : 0)).map(p => postHTML(p, member)).join('') || `<div class="empty"><p class="empty-title">No posts yet</p><p>${member ? 'Be the first to share something.' : 'Nothing has been shared here yet.'}</p></div>`;
-
-        return `<div class="cm-posts">${composer}<div class="feed-list">${posts}</div></div>`;
-    }
-
     function postHTML(p, member) {
+        if (I.isHidden && I.isHidden('post', p.id)) return '';
         return renderPost({
             kind: 'post',
             id: p.id,
@@ -513,7 +445,6 @@ document.addEventListener('DOMContentLoaded', () => {
             mine: p.author === me(),
             pinned: !!p.pinned_at,
             bodyExtra: pollHTML(p, member),
-            extraHTML: reactionsHTML(p, member),
             badge: p.kind === 'note' ? '📓 shared a note' : p.kind === 'poll' ? '📊 started a poll' : ''
         });
     }
@@ -639,7 +570,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const row = payload.new && payload.new.post_id ? payload.new : payload.old;
                 if (row && row.user_id !== me()) refreshPost(row.post_id);
             })
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_community_reactions' }, payload => {
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_community_likes' }, payload => {
                 const row = payload.new && payload.new.post_id ? payload.new : payload.old;
                 if (row && row.user_id !== me()) refreshPost(row.post_id);
             })
@@ -799,24 +730,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return !!posted;
     }
 
-    // ---------- Likes & post menu ----------
-    async function toggleLike(postId) {
-        const post = c.posts.find(p => p.id === postId);
-        if (!post) return;
-        if (!roleOf(post.community_id)) return app.showToast('Join the community to like posts');
-        const liked = post.likes.some(l => l.user_id === me());
-        post.likes = liked ? post.likes.filter(l => l.user_id !== me()) : [...post.likes, { user_id: me() }];
-        app.render();
-        const { error } = liked
-            ? await client.from('diary_community_likes').delete().eq('post_id', postId).eq('user_id', me())
-            : await client.from('diary_community_likes').insert({ post_id: postId });
-        if (error) {
-            post.likes = liked ? [...post.likes, { user_id: me() }] : post.likes.filter(l => l.user_id !== me());
-            app.render();
-            app.showToast('Couldn’t update like');
-        }
-    }
-
+    // ---------- Polls & post menu ----------
     async function vote(postId, option) {
         const p = c.posts.find(x => x.id === postId);
         if (!p || !roleOf(p.community_id)) return app.showToast('Join the community to vote');
@@ -835,28 +749,6 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (!mine) {
             const el = content.querySelector(`[data-post="post:${CSS.escape(postId)}"] .cm-poll-opt.chosen`);
             if (el) celebrate(el, 10);
-        }
-    }
-
-    async function react(postId, emoji) {
-        const p = c.posts.find(x => x.id === postId);
-        if (!p || !roleOf(p.community_id)) return app.showToast('Join the community to react');
-        const before = (p.reactions || []).map(r => ({ ...r }));
-        const had = before.some(r => r.user_id === me() && r.emoji === emoji);
-        p.reactions = had ? before.filter(r => !(r.user_id === me() && r.emoji === emoji)) : [...before, { user_id: me(), emoji }];
-        c.reactOpen = null;
-        repaintPost(postId);
-        if (!had) {
-            const chip = content.querySelector(`[data-post="post:${CSS.escape(postId)}"] .cm-react[data-emoji="${emoji}"]`);
-            if (chip) chip.classList.add('pop');
-        }
-        const { error } = had
-            ? await client.from('diary_community_reactions').delete().eq('post_id', postId).eq('user_id', me()).eq('emoji', emoji)
-            : await client.from('diary_community_reactions').insert({ post_id: postId, emoji });
-        if (error) {
-            p.reactions = before;
-            repaintPost(postId);
-            app.showToast('Couldn’t add that reaction');
         }
     }
 
@@ -906,7 +798,7 @@ document.addEventListener('DOMContentLoaded', () => {
             items.push({ label: 'Delete post', icon: 'i-trash', danger: true, onClick: () => deletePost(post) });
         }
         if (post.author !== me() && window.diarySafety) items.push({ label: 'Report post', icon: 'i-flag', onClick: () => window.diarySafety.report('post', post.id) });
-        if (!items.length) items.push({ label: 'Copy text', icon: 'i-notes', onClick: () => navigator.clipboard?.writeText(post.body || post.title || '') });
+        if (I.postExtras) items.unshift(...I.postExtras('post', post));
         app.openPopover(el, items);
     }
 
@@ -1197,11 +1089,6 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         'cm-poll-remove': () => { c.draft.poll = null; app.render(); },
         'cm-vote': el => vote(el.dataset.id, Number(el.dataset.opt)),
-        'cm-react': el => react(el.dataset.id, el.dataset.emoji),
-        'cm-react-menu': el => {
-            c.reactOpen = c.reactOpen === el.dataset.id ? null : el.dataset.id;
-            repaintPost(el.dataset.id);
-        },
         'cm-answer-prompt': () => {
             const text = $('cm-text');
             if (!text) return;
