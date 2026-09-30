@@ -830,15 +830,42 @@ document.addEventListener('DOMContentLoaded', () => {
     // Live: a move by anyone in your matches updates the list and the open board
     function subscribeMatches() {
         if (MX.channel || !myId()) return;
-        MX.channel = client.channel(`wp-matches-${myId()}-${Date.now()}`)
+        const ch = MX.channel = client.channel(`wp-matches-${myId()}-${Date.now()}`)
             .on('postgres_changes', { event: '*', schema: 'public', table: 'diary_wp_matches' }, payload => {
                 const m = payload.new || {};
                 clearTimeout(MX.t);
                 MX.t = setTimeout(loadMatches, 250);
                 if (W && W.match && W.match === m.id) refreshMatch();
             })
-            .subscribe();
+            .subscribe(status => {
+                if (MX.channel !== ch) return;
+                if (status === 'SUBSCRIBED') {
+                    MX.retry = 0;
+                    if (MX.lost) { MX.lost = false; resync(); } // catch up on anything missed while we were away
+                } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+                    MX.lost = true;
+                    MX.channel = null;
+                    client.removeChannel(ch).catch(() => {});
+                    clearTimeout(MX.rt);
+                    MX.rt = setTimeout(subscribeMatches, Math.min(30000, 1000 * 2 ** (MX.retry = (MX.retry || 0) + 1)));
+                }
+            });
     }
+    // Back from the background, the lock screen or a dead zone: fetch the latest board and scores at once
+    function resync() {
+        if (!myId()) return;
+        loadMatches();
+        if (W && W.match) refreshMatch();
+        if (!MX.channel && MX.list !== null) subscribeMatches();
+    }
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') resync(); });
+    window.addEventListener('online', () => { resync(); if (W && W.match && W.state.m) paintMatch(); });
+    window.addEventListener('offline', () => { if (W && W.match && W.state.m) paintMatch(); });
+    window.addEventListener('pageshow', e => { if (e.persisted) resync(); });
+    // Safety net while a match is open: check every 10 seconds in case a live update was missed
+    setInterval(() => {
+        if (W && W.match && W.state && W.state.m && !W.state.busy && document.visibilityState === 'visible' && navigator.onLine) refreshMatch();
+    }, 10000);
     const isMyTurn = m => m.status === 'active' && m.players[m.turn] === myId() && !m.out_players.includes(myId());
     function statusText(m) {
         if (m.status === 'active') return isMyTurn(m) ? 'Your turn' : `${firstName(m.players[m.turn])}’s turn`;
@@ -955,19 +982,31 @@ document.addEventListener('DOMContentLoaded', () => {
         await refreshMatch(true);
     }
     const sortedLetters = arr => arr.filter(Boolean).sort().join('');
+    // Give up waiting after ms (the request may still finish; we check the board afterwards)
+    const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(Object.assign(new Error('timed out'), { timeout: true })), ms))]);
     async function refreshMatch(first = false) {
         if (!W || !W.match) return;
         const id = W.match;
-        const [{ data: m, error }, { data: rk }] = await Promise.all([
-            client.from('diary_wp_matches').select('*').eq('id', id).maybeSingle(),
-            client.from('diary_wp_racks').select('rack').eq('match_id', id).eq('user_id', myId()).maybeSingle()
-        ]);
+        let m = null, error = null, rk = null;
+        try {
+            const [a, b] = await Promise.all([
+                withTimeout(client.from('diary_wp_matches').select('*').eq('id', id).maybeSingle(), 12000),
+                withTimeout(client.from('diary_wp_racks').select('rack').eq('match_id', id).eq('user_id', myId()).maybeSingle(), 12000)
+            ]);
+            m = a.data; error = a.error || b.error; rk = b.data;
+        } catch (e) { error = e; }
         if (!W || W.match !== id) return;
+        if (error && W.state.m) { paintMatch(); return; } // offline or slow: keep the board you have, try again soon
         if (error || !m) { W.dlg.querySelector('.gm-body').innerHTML = '<p class="gm-hint">This match isn’t available any more.</p><button type="button" class="ghost-btn" data-gm="close">Close</button>'; return; }
         await loadPeople(m.players);
         if (!W || W.match !== id) return;
         const st = W.state;
         const moved = !st.m || st.m.board !== m.board || st.m.turn !== m.turn;
+        if (st.m && !first) {
+            const gains = {};
+            m.players.forEach(p => { const d = Number(m.scores[p] || 0) - Number(st.m.scores[p] || 0); if (d > 0) gains[p] = d; });
+            if (Object.keys(gains).length) { st.gains = gains; st.gainAt = Date.now(); }
+        }
         st.m = m;
         st.board = Array.from({ length: WP_N }, (_, r) => [...m.board.slice(r * WP_N, r * WP_N + WP_N)].map(ch => (ch === '.' ? '' : ch)));
         const letters = (rk && rk.rack) || '';
@@ -1022,9 +1061,11 @@ document.addEventListener('DOMContentLoaded', () => {
             <span class="wpm-p${active && i === m.turn ? ' turn' : ''}${m.out_players.includes(p) ? ' out' : ''}${!active && m.winner === p ? ' won' : ''}" role="listitem"
                 aria-label="${esc(who(p).display_name || 'Player')}: ${Number(m.scores[p] || 0)} points${active && i === m.turn ? ', playing now' : ''}">
                 ${I.avatar(who(p), 'sm')}<span><strong>${esc(firstName(p))}</strong><b>${Number(m.scores[p] || 0)}</b></span>
+                ${st.gains && st.gains[p] && Date.now() - st.gainAt < 3500 ? `<em class="wpm-gain" aria-hidden="true">+${st.gains[p]}</em>` : ''}
                 ${!active && m.winner === p ? ic('i-trophy', 'wpm-crown') : ''}
             </span>`).join('');
-        W.dlg.querySelector('.wpm-bag').textContent = active ? `${m.bag_count} ${m.bag_count === 1 ? 'letter' : 'letters'} left in the bag` : 'Match over';
+        W.dlg.querySelector('.wpm-bag').textContent = !navigator.onLine ? 'Offline — your letters stay put' : active ? `${m.bag_count} ${m.bag_count === 1 ? 'letter' : 'letters'} left in the bag` : 'Match over';
+        W.dlg.querySelector('.wpm-game')?.classList.toggle('offline', !navigator.onLine);
         const move = mine && st.pending.length ? wpMove() : null;
         const play = W.dlg.querySelector('[data-wp="play"]');
         play.disabled = !mine || !move || !!move.error || st.busy;
@@ -1050,9 +1091,24 @@ document.addEventListener('DOMContentLoaded', () => {
         st.busy = true;
         paintMatch();
         hint(name === 'diary_wp_play' ? 'Checking your words…' : 'One moment…');
-        const { data, error } = await client.rpc(name, args);
+        if (!navigator.onLine) {
+            st.busy = false;
+            paintMatch();
+            return hint('You’re offline. Your letters stay on the board — tap again when you’re back online.');
+        }
+        const movesBefore = st.m ? st.m.moves : 0;
+        let data = null, error = null;
+        try { ({ data, error } = await withTimeout(client.rpc(name, args), 15000)); } catch (e) { error = e; }
         if (!W || W.match !== id) return;
         st.busy = false;
+        // No answer (a timeout or a dropped connection): the move may still have landed, so look before saying anything
+        if (error && (error.timeout || /fetch|network|timed? ?out|load failed/i.test(error.message || ''))) {
+            hint('The connection is slow — checking whether that went through…');
+            await refreshMatch();
+            if (!W || W.match !== id) return;
+            if (W.state.m && W.state.m.moves > movesBefore) { if (navigator.vibrate) navigator.vibrate(12); return; }
+            return hint('That didn’t go through — check your connection and try again. Your letters are still on the board.');
+        }
         if (error) {
             paintMatch();
             if (name === 'diary_wp_play') {

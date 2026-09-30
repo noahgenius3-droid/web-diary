@@ -434,14 +434,52 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Waiting on an email: show where it went, offer the code box and "send again"
-    function awaitEmail(email, type, text) {
+    function awaitEmail(email, type, text, password = '') {
         pending.email = email;
         pending.type = type;
         setAuthMode('verify');
         $('auth-code').value = '';
-        showAuthMessage(text || `We sent an email to ${email}. Tap the link in it on this phone — or, if it shows a 6-digit code, type it here.`);
+        showAuthMessage(text || `We sent an email to ${email}. Tap the link in it — then come back here. We’ll sign you in as soon as it’s confirmed, even if the link opens a page that doesn’t load.`);
         if (!authDialog.open) authDialog.showModal();
+        if (password && type === 'signup') watchConfirmation(email, password);
     }
+
+    // The confirmation link confirms the account on Supabase straight away, but where it sends you afterwards
+    // can fail to load on a phone. So while this screen waits, we keep quietly trying to sign in with the
+    // password you just typed (held in memory only, never stored): the moment the email is confirmed, you're in.
+    let confirmWatch = null;
+    function stopConfirmWatch() {
+        if (!confirmWatch) return;
+        clearInterval(confirmWatch.timer);
+        document.removeEventListener('visibilitychange', confirmWatch.onShow);
+        window.removeEventListener('focus', confirmWatch.onShow);
+        confirmWatch = null; // drops the password with it
+    }
+    function watchConfirmation(email, password) {
+        stopConfirmWatch();
+        const started = Date.now();
+        const w = confirmWatch = { busy: false };
+        const tryNow = async () => {
+            if (confirmWatch !== w || w.busy || !client) return;
+            if (Date.now() - started > 30 * 60000) return stopConfirmWatch();
+            w.busy = true;
+            const { error } = await client.auth.signInWithPassword({ email, password });
+            w.busy = false;
+            if (confirmWatch !== w) return;
+            if (!error) {
+                stopConfirmWatch();
+                if (authDialog.open) authDialog.close();
+                app.showToast('Email confirmed — welcome to Cordial! 🎉');
+            } else if (!/not confirmed|rate|too many|seconds/i.test(error.message || '') && error.code !== 'email_not_confirmed' && error.status !== 429) {
+                stopConfirmWatch(); // a different problem (e.g. wrong password): stop and let them sign in by hand
+            }
+        };
+        w.onShow = () => { if (document.visibilityState === 'visible') tryNow(); };
+        w.timer = setInterval(tryNow, 6000);
+        document.addEventListener('visibilitychange', w.onShow);
+        window.addEventListener('focus', w.onShow);
+    }
+    authDialog.addEventListener('close', stopConfirmWatch);
 
     authDialog.querySelectorAll('.auth-tabs .tab').forEach(t =>
         t.addEventListener('click', () => setAuthMode(t.dataset.mode)));
@@ -554,7 +592,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const { error } = await client.auth.signInWithPassword({ email, password });
                 if (error) {
                     if (error.code === 'email_not_confirmed' || /not confirmed/i.test(error.message)) {
-                        return awaitEmail(email, 'signup', `You haven’t confirmed ${email} yet. Tap the link in the email we sent (check spam too), type its code here, or send it again.`);
+                        return awaitEmail(email, 'signup', `You haven’t confirmed ${email} yet. Tap the link in the email we sent (check spam too), then come back here — we’ll sign you in automatically. Or send it again.`, password);
                     }
                     throw error;
                 }
@@ -571,7 +609,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     return showAuthMessage('There’s already an account with that email — sign in instead.', true);
                 }
                 if (data.session) authDialog.close();
-                else awaitEmail(email, 'signup');
+                else awaitEmail(email, 'signup', '', password);
             } else if (authMode === 'verify') {
                 const { error } = await client.auth.verifyOtp({ email: pending.email, token: $('auth-code').value, type: pending.type });
                 if (error) throw error;
