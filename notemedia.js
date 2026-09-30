@@ -29,7 +29,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const SPEEDS = { slow: 5.5, normal: 4, fast: 2.8 }; // seconds per slide
     const TRACKS = [
         ['none', 'No music', '🔇'], ['calm', 'Calm', '🌙'], ['uplifting', 'Uplifting', '☀️'],
-        ['lofi', 'Lo-fi', '🎧'], ['afro', 'Afro groove', '🥁'], ['cinematic', 'Cinematic', '🎬']
+        ['lofi', 'Lo-fi', '🎧'], ['afro', 'Afro groove', '🥁'], ['cinematic', 'Cinematic', '🎬'],
+        ['praise', 'Gospel praise', '🙌'], ['worship', 'Worship', '🕊️']
     ];
     const CHARACTERS = [['none', 'None', '—'], ['buddy', 'Buddy', '🟣'], ['kitty', 'Kitty', '🐱'], ['robo', 'Robo', '🤖'], ['sunny', 'Sunny', '🌞']];
     const MAX_MUSIC = 20 * 1048576;
@@ -37,6 +38,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Which built-in track suits the note, from its words
     function recommend(note) {
         const t = `${note.title} ${note.text}`.toLowerCase();
+        if (/\b(god|jesus|christ|lord|church|pray|prayer|bless|grace|praise|worship|amen|hallelujah|gospel|holy|faith|psalm|bible|spirit|mercy|testimony)/.test(t)) {
+            return /\b(praise|celebrat|dance|testimony|victory|hallelujah|joy|thank|win|won|breakthrough)/.test(t) ? 'praise' : 'worship';
+        }
         if (/\b(sad|miss(ed|ing)?|lost|grief|griev|cry|cried|tired|alone|lonely|hurt|pray|prayer|peace|calm|rest|sorry|heal)/.test(t)) return 'calm';
         if (/\b(party|dance|danc|celebrat|independence|birthday|vibes|jollof|owambe|naija|afro|wedding|festival)/.test(t)) return 'afro';
         if (/\b(win|won|grateful|thank|happy|excited|joy|success|proud|love|blessed|amazing)/.test(t)) return 'uplifting';
@@ -48,11 +52,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------- Built-in music, generated live with Web Audio (no files, no licences) ----------
     const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
     function musicEngine(ctx, out, kind) {
-        const bpm = { calm: 70, uplifting: 100, lofi: 80, afro: 108, cinematic: 64 }[kind] || 80;
+        const bpm = { calm: 70, uplifting: 100, lofi: 80, afro: 108, cinematic: 64, praise: 112, worship: 68 }[kind] || 80;
         const step = 60 / bpm / 4; // a sixteenth note
+        // Every voice goes through a compressor and a big make-up gain, then a limiter: loud and full, never clipping
         const master = ctx.createGain();
-        master.gain.value = 0.9;
-        master.connect(out);
+        master.gain.value = 1;
+        const glue = ctx.createDynamicsCompressor();
+        glue.threshold.value = -24; glue.knee.value = 10; glue.ratio.value = 4; glue.attack.value = 0.005; glue.release.value = 0.25;
+        const makeup = ctx.createGain();
+        makeup.gain.value = 2.6;
+        const limit = ctx.createDynamicsCompressor();
+        limit.threshold.value = -2; limit.knee.value = 0; limit.ratio.value = 20; limit.attack.value = 0.002; limit.release.value = 0.1;
+        master.connect(glue); glue.connect(makeup); makeup.connect(limit); limit.connect(out);
         const noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
         const nd = noiseBuf.getChannelData(0);
         for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
@@ -104,9 +115,37 @@ document.addEventListener('DOMContentLoaded', () => {
             uplifting: [[60, 64, 67], [67, 71, 74], [69, 72, 76], [65, 69, 72]],
             lofi: [[62, 65, 69, 72], [67, 71, 74, 77], [60, 64, 67, 71], [57, 60, 64, 67]],
             afro: [[57, 60, 64], [53, 57, 60], [60, 64, 67], [55, 59, 62]],
-            cinematic: [[45, 52, 57], [41, 48, 53], [48, 55, 60], [43, 50, 55]]
+            cinematic: [[45, 52, 57], [41, 48, 53], [48, 55, 60], [43, 50, 55]],
+            // Gospel: I – vi7 – ii7 – V7 in C (praise), and a slow I – V/7 – vi – IV (worship)
+            praise: [[60, 64, 67, 72], [57, 60, 64, 67], [62, 65, 69, 72], [55, 59, 62, 65]],
+            worship: [[60, 64, 67], [59, 62, 67], [57, 60, 64], [53, 57, 60, 65]]
         };
         const PENTA = [69, 72, 74, 76, 79, 81];
+        // A church organ: a few sine harmonics (like drawbars) with a gentle vibrato
+        const organ = (m, t, dur, gain) => {
+            [[1, 1], [2, 0.5], [3, 0.25], [4, 0.18], [0.5, 0.4]].forEach(([h, g]) => {
+                const o = ctx.createOscillator();
+                o.frequency.value = mtof(m) * h;
+                const lfo = ctx.createOscillator();
+                const depth = ctx.createGain();
+                lfo.frequency.value = 5.5;
+                depth.gain.value = 3 * h;
+                lfo.connect(depth); depth.connect(o.frequency);
+                const env = ctx.createGain();
+                env.gain.setValueAtTime(0.0001, t);
+                env.gain.linearRampToValueAtTime(gain * g, t + 0.06);
+                env.gain.setValueAtTime(gain * g, t + dur - 0.08);
+                env.gain.linearRampToValueAtTime(0.0001, t + dur);
+                o.connect(env); env.connect(master);
+                o.start(t); lfo.start(t);
+                o.stop(t + dur + 0.05); lfo.stop(t + dur + 0.05);
+            });
+        };
+        // A piano-ish note: bright attack, long decay
+        const piano = (m, t, dur, gain) => {
+            note(mtof(m), t, dur, { type: 'triangle', gain, attack: 0.003 });
+            note(mtof(m) * 2, t, dur * 0.4, { gain: gain * 0.35, attack: 0.002 });
+        };
 
         function play(i, t) {
             const bar = Math.floor(i / 16), s = i % 16;
@@ -139,11 +178,30 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (s % 2 === 0 && rand() < 0.55) note(mtof(PENTA[Math.floor(rand() * PENTA.length)]), t, 0.3, { gain: 0.07, attack: 0.003 }); // marimba
             } else if (kind === 'cinematic') {
                 if (s === 0) {
-                    chord.forEach(m => note(mtof(m), t, barLen * 1.1, { type: 'sawtooth', gain: 0.022, attack: 2, cutoff: 900 }));
-                    note(mtof(chord[2] + 24), t, barLen, { gain: 0.025, attack: 1.5 });
+                    chord.forEach(m => note(mtof(m), t, barLen * 1.1, { type: 'sawtooth', gain: 0.036, attack: 2, cutoff: 900 }));
+                    note(mtof(chord[2] + 24), t, barLen, { gain: 0.04, attack: 1.5 });
                     if (bar % 2 === 0) { kick(t, 0.5, 80); noise(t, 0.6, { gain: 0.05, bp: 120 }); }
                 }
                 if (s === 8 && bar % 2 === 1) note(mtof(chord[1] + 12), t, 2.4, { type: 'triangle', gain: 0.035, attack: 0.3 });
+            } else if (kind === 'praise') {
+                // Organ stabs on the off-beats, claps on 2 and 4, tambourine, walking bass, shout-kick
+                if (s === 0) chord.forEach(m => organ(m, t, step * 3.5, 0.02));
+                if (s === 6 || s === 10 || s === 14) chord.forEach(m => organ(m, t, step * 1.5, 0.018));
+                if (s === 4 || s === 12) { noise(t, 0.14, { gain: 0.12, bp: 1400 }); noise(t + 0.012, 0.1, { gain: 0.08, bp: 2200 }); }
+                if (s % 2 === 0) noise(t, 0.07, { gain: s % 4 === 2 ? 0.05 : 0.03, bp: 7500 }); // tambourine
+                if (s === 0 || s === 8 || s === 11) kick(t, 0.38);
+                const walk = [chord[0] - 24, chord[1] - 24, chord[2] - 24, chord[1] - 24];
+                if (s % 4 === 0) note(mtof(walk[s / 4]), t, step * 3.5, { gain: 0.17, attack: 0.01, cutoff: 700 });
+                if (s === 2 || s === 9) piano(chord[3 % chord.length] + 12, t, 0.5, 0.05);
+            } else if (kind === 'worship') {
+                // Soft pads, gentle piano arpeggios, a swell at the start of every other bar
+                if (s === 0) {
+                    chord.forEach(m => note(mtof(m), t, barLen * 1.05, { gain: 0.03, attack: 1.4, cutoff: 1800 }));
+                    note(mtof(chord[0] - 12), t, barLen, { gain: 0.07, attack: 0.9 });
+                    if (bar % 2 === 0) organ(chord[0], t, barLen, 0.008);
+                }
+                if (s % 2 === 0) piano([...chord, chord[0] + 12][(s / 2) % (chord.length + 1)] + 12, t, 1.4, 0.035);
+                if (s === 0 && bar % 4 === 3) noise(t, 1.2, { gain: 0.015, hp: 5000 }); // a soft cymbal swell
             }
         }
 
@@ -526,6 +584,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.body.append(dlg);
 
     let S = null;
+    // Music settings for the tab you are on (video and audio each keep their own)
+    const M = () => S.bg[S.tab === 'audio' ? 'audio' : 'video'];
 
     // Everything that makes sound or draws: stopped when the sheet changes or closes
     function stopAll() {
@@ -562,7 +622,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const rec = recommend(n);
         S = {
             note: n, tab: note.tab || 'video', look: 'note', speed: 'normal', voice: false,
-            music: rec, recommended: rec, volume: 0.7, musicFile: null, musicName: '', character: 'buddy',
+            bg: { video: { music: rec, volume: 1 }, audio: { music: 'none', volume: 0.5 } }, recommended: rec, musicFile: null, musicName: '', character: 'buddy',
             denoise: true, audience: 'friends', videoBlob: null, audioBlob: null, audioDuration: 0
         };
         paint();
@@ -601,10 +661,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                 </div>`;
         }
-        const trackBtn = ([k, label, emoji]) => `
-            <button type="button" role="radio" aria-checked="${S.music === k}" class="nm-track" data-nm="music" data-music="${k}">
-                <span aria-hidden="true">${emoji}</span>${label}${k === S.recommended ? '<small>suits your note</small>' : ''}
-            </button>`;
         return `
             <div class="nm-video">
                 <div class="nm-stage">
@@ -618,15 +674,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <button type="button" role="radio" aria-checked="${S.character === k}" class="nm-char" data-nm="char" data-char="${k}"><span aria-hidden="true">${emoji}</span>${label}</button>`).join('')}
                         </div>
                     </div>
-                    <div class="field"><span>Music</span>
-                        <div class="nm-tracks" role="radiogroup" aria-label="Music">
-                            ${TRACKS.map(trackBtn).join('')}
-                            <button type="button" role="radio" aria-checked="${S.music === 'mine'}" class="nm-track mine" data-nm="upload">
-                                <span aria-hidden="true">📁</span>${S.musicFile ? esc(S.musicName) : 'Your own audio'}<small>${S.musicFile ? 'tap to change' : 'MP3, M4A, WAV…'}</small>
-                            </button>
-                        </div>
-                        ${S.music !== 'none' ? `<label class="nm-volume"><span>Music volume</span><input type="range" min="0" max="1" step="0.05" value="${S.volume}" data-nm="volume" aria-label="Music volume"></label>` : ''}
-                    </div>
+                    ${musicPicker('Music')}
                     <div class="field"><span>Look</span>
                         <div class="nm-looks" role="radiogroup" aria-label="Look">${Object.keys(LOOKS).map(k => {
                             const [a, b] = palette(k, S.note.color);
@@ -636,29 +684,68 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="field"><span>Pace</span>
                         <div class="nm-seg" role="radiogroup" aria-label="Pace">${Object.keys(SPEEDS).map(k => `<button type="button" role="radio" aria-checked="${S.speed === k}" data-nm="speed" data-speed="${k}">${k[0].toUpperCase() + k.slice(1)}</button>`).join('')}</div>
                     </div>
-                    <label class="nm-switch"><input type="checkbox" data-nm="voice"${S.voice ? ' checked' : ''}><span><strong>Add my voice</strong><small>Read along while it records — the slides are your prompt. Background noise is filtered out${S.music !== 'none' ? ', and the music is mixed in underneath (use headphones to hear it)' : ''}.</small></span></label>
+                    <label class="nm-switch"><input type="checkbox" data-nm="voice"${S.voice ? ' checked' : ''}><span><strong>Add my voice</strong><small>Read along while it records — the slides are your prompt. Background noise is filtered out${M().music !== 'none' ? ', and the music is mixed in underneath (use headphones to hear it)' : ''}.</small></span></label>
                     <p class="nm-meta">${slidesFor(S.note).length} slides · about ${secs} seconds</p>
                     <button type="button" class="primary-btn nm-wide" data-nm="make-video">${ic('i-sparkle')}Make my video</button>
                 </div>
             </div>`;
     }
 
+    // Music choice (used by both tabs): built-in tracks, gospel included, or your own audio file
+    function musicPicker(label) {
+        const m = M();
+        const trackBtn = ([k, name, emoji]) => `
+            <button type="button" role="radio" aria-checked="${m.music === k}" class="nm-track" data-nm="music" data-music="${k}">
+                <span aria-hidden="true">${emoji}</span>${name}${k === S.recommended && S.tab !== 'audio' ? '<small>suits your note</small>' : ''}
+            </button>`;
+        return `
+            <div class="field"><span>${label}</span>
+                <button type="button" class="nm-upload${m.music === 'mine' ? ' on' : ''}" data-nm="upload">
+                    <span class="nm-upload-ic" aria-hidden="true">📁</span>
+                    <span class="nm-upload-text"><strong>${m.music === 'mine' && S.musicFile ? esc(S.musicName) : 'Upload your own audio'}</strong><small>${m.music === 'mine' && S.musicFile ? 'Playing your audio · tap to change it' : 'A song, beat or instrumental from your device — MP3, M4A, WAV'}</small></span>
+                </button>
+                <div class="nm-tracks" role="radiogroup" aria-label="${label}">${TRACKS.map(trackBtn).join('')}</div>
+                ${m.music !== 'none' ? `<label class="nm-volume"><span>Volume <output>${Math.round(m.volume * 100)}%</output></span><input type="range" min="0" max="1.5" step="0.05" value="${m.volume}" data-nm="volume" aria-label="${label} volume"></label>` : ''}
+            </div>`;
+    }
+
+    // The final mix goes through a limiter, so music + voice can be loud without distorting
+    function mixBus(ac, dest) {
+        const lim = ac.createDynamicsCompressor();
+        lim.threshold.value = -4; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.002; lim.release.value = 0.12;
+        lim.connect(dest);
+        return lim;
+    }
+
+    // Your voice: cleaned, boosted, and the music dips under it while you speak
+    function addVoice(ac, mic, mix, clean, onLevel) {
+        const base = M().volume;
+        S.clean = cleanVoice(ac, ac.createMediaStreamSource(mic), clean, (level, open) => {
+            if (S.musicGain && !S.fading) S.musicGain.gain.setTargetAtTime(open ? base * 0.35 : base, ac.currentTime, open ? 0.05 : 0.5);
+            if (onLevel) onLevel(level, open);
+        });
+        const boost = ac.createGain();
+        boost.gain.value = 2.2;
+        S.clean.node.connect(boost);
+        boost.connect(mix);
+    }
+
     // Build the soundtrack into an audio context: built-in track or your file, at the chosen volume
     function startMusic(ac, out) {
-        if (S.music === 'none') return;
+        if (M().music === 'none') return;
         const gain = ac.createGain();
-        gain.gain.value = S.volume;
+        gain.gain.value = M().volume;
         gain.connect(out);
         S.musicGain = gain;
-        if (S.music === 'mine' && S.musicFile) {
+        if (M().music === 'mine' && S.musicFile) {
             const el = new Audio(URL.createObjectURL(S.musicFile));
             el.loop = true;
             el.crossOrigin = 'anonymous';
             ac.createMediaElementSource(el).connect(gain);
             el.play().catch(() => {});
             S.musicEl = el;
-        } else if (S.music !== 'mine') {
-            S.engine = musicEngine(ac, gain, S.music);
+        } else if (M().music !== 'mine') {
+            S.engine = musicEngine(ac, gain, M().music);
         }
     }
 
@@ -691,7 +778,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         stopSound();
         cancelAnimationFrame(S.raf);
-        const ac = AC && (S.voice || S.music !== 'none') ? new AC() : null; // created on the tap, so phones allow sound
+        const ac = AC && (S.voice || M().music !== 'none') ? new AC() : null; // created on the tap, so phones allow sound
         let mic = null;
         if (S.voice) {
             try { mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
@@ -701,13 +788,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (ac) {
             S.ac = ac;
             const dest = ac.createMediaStreamDestination();
-            startMusic(ac, dest);
+            const mix = mixBus(ac, dest);
+            S.fading = false;
+            startMusic(ac, mix);
             // Hear the music while it records — unless you're reading along (it would leak into the microphone)
             if (S.musicGain && !mic) S.musicGain.connect(ac.destination);
-            if (mic) {
-                S.clean = cleanVoice(ac, ac.createMediaStreamSource(mic), true);
-                S.clean.node.connect(dest);
-            }
+            if (mic) addVoice(ac, mic, mix, true);
             dest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
         }
         const mime = ['video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
@@ -738,7 +824,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const t = (now - t0) / 1000;
             draw(ctx, slides, t, per, pal, S.character);
             bar.querySelector('span').style.width = `${Math.min(100, (t / total) * 100)}%`;
-            if (S.musicGain && t > total - 1.2) S.musicGain.gain.setTargetAtTime(0.0001, S.ac.currentTime, 0.35); // fade the music out at the end
+            if (S.musicGain && t > total - 1.2 && !S.fading) { S.fading = true; S.musicGain.gain.setTargetAtTime(0.0001, S.ac.currentTime, 0.35); } // fade the music out at the end
             if (t < total + 0.3) S.raf = requestAnimationFrame(frame);
             else if (recorder.state !== 'inactive') recorder.stop();
         };
@@ -772,8 +858,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (file.size > MAX_MUSIC) return app.showToast('That audio is over 20 MB — try a shorter clip');
             S.musicFile = file;
             S.musicName = String(file.name || 'Your audio').replace(/\.[a-z0-9]+$/i, '').slice(0, 28);
-            S.music = 'mine';
+            M().music = 'mine';
             paint();
+            audition();
         };
         input.click();
     }
@@ -800,6 +887,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     <button type="button" class="link-btn" data-nm="redo-audio">Record again</button>`
                 : `
                     <label class="nm-switch"><input type="checkbox" data-nm="denoise"${S.denoise ? ' checked' : ''}><span><strong>Silence background noise</strong><small>For a clean voice-over: filters out hum, fans, traffic and chatter, and silences the gaps between your words.</small></span></label>
+                    ${musicPicker('Background music (optional)')}
+                    ${M().music !== 'none' ? '<p class="nm-meta">The music is mixed in under your voice and dips while you speak. Use headphones to hear it as you record.</p>' : ''}
                     <div class="nm-meter" aria-hidden="true"><i></i><span class="nm-gate">Listening…</span></div>
                     <div class="nm-rec-row">
                         <span class="nm-timer" aria-live="off">0:00</span>
@@ -826,18 +915,26 @@ document.addEventListener('DOMContentLoaded', () => {
         if (ac) {
             S.ac = ac;
             const dest = ac.createMediaStreamDestination();
-            S.clean = cleanVoice(ac, ac.createMediaStreamSource(mic), S.denoise, (level, open) => {
-                if (!meter) return;
-                meter.querySelector('i').style.width = `${Math.round(level * 100)}%`;
-                meter.querySelector('.nm-gate').textContent = open ? 'Voice' : '🔇 Background silenced';
-                meter.classList.toggle('closed', !open);
-            });
-            if (!S.denoise) {
-                // Still show a level meter when not cleaning
+            const mix = mixBus(ac, dest);
+            S.fading = false;
+            // Background music under the voice-over (mixed in, not played out loud — it would leak into the mic)
+            startMusic(ac, mix);
+            if (S.denoise) {
+                addVoice(ac, mic, mix, true, (level, open) => {
+                    if (!meter) return;
+                    meter.querySelector('i').style.width = `${Math.round(level * 100)}%`;
+                    meter.querySelector('.nm-gate').textContent = open ? 'Voice' : '🔇 Background silenced';
+                    meter.classList.toggle('closed', !open);
+                });
+            } else {
+                // Recording as is: still boosted and limited, and still a level meter
                 const an = ac.createAnalyser();
                 const src = ac.createMediaStreamSource(mic);
+                const boost = ac.createGain();
+                boost.gain.value = 1.8;
                 src.connect(an);
-                src.connect(dest);
+                src.connect(boost);
+                boost.connect(mix);
                 const buf = new Float32Array(1024);
                 const timer = setInterval(() => {
                     an.getFloatTimeDomainData(buf);
@@ -847,8 +944,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (meter) { meter.querySelector('i').style.width = `${Math.round(Math.max(0, Math.min(1, (db + 70) / 60)) * 100)}%`; meter.querySelector('.nm-gate').textContent = 'Recording as is'; }
                 }, 40);
                 S.clean = { node: src, stop: () => clearInterval(timer) };
-            } else {
-                S.clean.node.connect(dest);
             }
             recStream = dest.stream;
         }
@@ -930,17 +1025,16 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (what === 'speed') { S.speed = el.dataset.speed; paint(); }
         else if (what === 'char') { S.character = el.dataset.char; paint(); }
         else if (what === 'music') {
-            S.music = el.dataset.music;
-            const wasPlaying = S.previewing;
+            M().music = el.dataset.music;
             paint();
-            if (wasPlaying && S.music !== 'none') { stopAll(); startPreview(true); refreshPlay(); }
+            audition();
         } else if (what === 'upload') pickMusic();
         else if (what === 'preview') {
             const playing = S.previewing;
             stopAll();
             startPreview(!playing);
             refreshPlay();
-            if (!playing && S.music === 'none') app.showToast('Pick some music to hear it — or add your voice when you make the video');
+            if (!playing && M().music === 'none') app.showToast('Pick some music to hear it — or add your voice when you make the video');
         } else if (what === 'make-video') makeVideo();
         else if (what === 'redo-video') { S.videoBlob = null; paint(); }
         else if (what === 'save-video') {
@@ -960,6 +1054,24 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (what === 'aud') { S.audience = el.dataset.aud; dlg.querySelectorAll('[data-nm="aud"]').forEach(b => b.setAttribute('aria-checked', String(b === el))); }
         else if (what === 'post-audio') postAudio(el);
     });
+    // Hear a track as soon as you pick it: the video preview plays with it; on the Audio tab, a 6-second taste
+    function audition() {
+        if (!S || M().music === 'none' || !AC) return;
+        if (S.tab === 'video') {
+            stopAll();
+            startPreview(true);
+            refreshPlay();
+            return;
+        }
+        if (S.recorder && S.recorder.state === 'recording') return;
+        stopSound();
+        S.ac = new AC();
+        startMusic(S.ac, S.ac.destination);
+        const ac = S.ac;
+        clearTimeout(S.auditionTimer);
+        S.auditionTimer = setTimeout(() => { if (S && S.ac === ac) stopSound(); }, 6000);
+    }
+
     function refreshPlay() {
         const b = dlg.querySelector('.nm-play');
         if (!b) return;
@@ -968,8 +1080,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     dlg.addEventListener('input', e => {
         if (e.target.dataset.nm === 'volume') {
-            S.volume = Number(e.target.value);
-            if (S.musicGain && S.ac) S.musicGain.gain.setTargetAtTime(S.volume, S.ac.currentTime, 0.05);
+            M().volume = Number(e.target.value);
+            const out = e.target.closest('.nm-volume')?.querySelector('output');
+            if (out) out.textContent = `${Math.round(M().volume * 100)}%`;
+            if (S.musicGain && S.ac) S.musicGain.gain.setTargetAtTime(M().volume, S.ac.currentTime, 0.05);
         }
     });
     dlg.addEventListener('change', e => {
