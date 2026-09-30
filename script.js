@@ -2551,7 +2551,7 @@ document.addEventListener('DOMContentLoaded', () => {
             { label: 'Voice note', icon: 'i-wave', tile: true, cls: 'mobile-only', onClick: () => window.diaryTranscribe && window.diaryTranscribe.open() },
             ...[['archive', 'Archive', 'i-archive'], ['trash', 'Trash', 'i-trash']].map(tile),
             { heading: 'Discover', cls: 'mobile-only' },
-            ...[['play', 'Playnote', 'i-trophy'], ['reels', 'Reels', 'i-reel'], ['library', 'Library', 'i-book'], ['market', 'Market', 'i-store']].map(tile),
+            ...[['play', 'Playnote', 'i-trophy'], ['spaces', 'Spaces', 'i-headphones'], ['reels', 'Reels', 'i-reel'], ['library', 'Library', 'i-book'], ['market', 'Market', 'i-store']].map(tile),
             { sep: true, cls: 'mobile-only' },
             ...(hooks.menuItems ? hooks.menuItems() : []),
             { label: 'Refresh', icon: 'i-refresh', onClick: () => refreshView() },
@@ -3122,7 +3122,7 @@ if (window.HTMLFormElement && !HTMLFormElement.prototype.requestSubmit) {
         const bar = document.createElement('div');
         bar.className = 'update-bar';
         bar.setAttribute('role', 'status');
-        bar.innerHTML = '<span class="update-ic" aria-hidden="true"><svg class="i"><use href="#i-sparkle"/></svg></span><span class="update-text">New version ready</span><button type="button" class="update-go">Update</button><button type="button" class="update-later" aria-label="Not now"><svg class="i"><use href="#i-close"/></svg></button>';
+        bar.innerHTML = '<span class="update-ic" aria-hidden="true"><svg class="i"><use href="#i-sparkle"/></svg></span><span class="update-text">A new version of Cordial is ready</span><button type="button" class="update-go">Update</button><button type="button" class="update-later" aria-label="Not now"><svg class="i"><use href="#i-close"/></svg></button>';
         bar.querySelector('.update-go').addEventListener('click', () => location.reload());
         bar.querySelector('.update-later').addEventListener('click', () => bar.remove());
         document.body.append(bar);

@@ -10,7 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const s = I.state;
     const content = document.getElementById('content');
     const FEED_BUCKET = 'diary-feed';
-    const TABS = [['all', 'For you'], ['news', 'News'], ['posts', 'Posts'], ['reels', 'Reels'], ['live', 'Live'], ['library', 'Library'], ['groups', 'Communities'], ['people', 'People']];
+    const TABS = [['all', 'For you'], ['news', 'News'], ['posts', 'Posts'], ['reels', 'Reels'], ['live', 'Live'], ['spaces', 'Spaces'], ['library', 'Library'], ['groups', 'Communities'], ['people', 'People']];
 
     // ---------- News ----------
     // Headlines come from publishers' feeds through our diary-news function; each story opens on the publisher's site
@@ -313,6 +313,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${newsTab()}
                 </div>`;
         }
+        if (show('spaces') && window.diarySpaces) sections.push(window.diarySpaces.exploreSection());
         if (show('live')) {
             sections.push(`<section class="ex-sec">${head('i-live', 'Live now', 'Friends broadcasting right now')}<div class="ex-row ex-lives">${liveCards()}</div></section>`);
         }

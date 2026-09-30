@@ -20,14 +20,17 @@ async function getConfig() {
 
 // What each notification says on the lock screen, and where tapping it goes
 // deno-lint-ignore no-explicit-any
-function message(type: string, name: string, d: any = {}) {
+function message(type: string, name: string, d: any = {}, actor = "") {
+  const profile = actor ? `/#/profile/${actor}` : "/#/messages";
   switch (type) {
     case "friend_request":
-      return { title: "New friend request", body: `${name} wants to be friends on Cordial`, url: "/#/messages", tag: "friend-request" };
+      return d.note
+        ? { title: `${name} said hello 👋`, body: `“${String(d.note).slice(0, 140)}” — accept to start chatting`, url: "/#/messages", tag: "friend-request" }
+        : { title: "New friend request", body: `${name} wants to be friends on Cordial`, url: "/#/messages", tag: "friend-request" };
     case "friend_accepted":
       return { title: "You're now friends", body: `${name} accepted your friend request — say hi!`, url: "/#/messages", tag: "friend-accepted" };
     case "new_follower":
-      return { title: "New follower", body: `${name} started following you`, url: "/#/settings", tag: "new-follower" };
+      return { title: "New follower", body: `${name} started following you`, url: profile, tag: `new-follower-${actor}` };
     case "mention":
       return { title: `${name} mentioned you`, body: `${d.community_name ? `In ${d.community_name}: ` : ''}${d.snippet || ''}`.slice(0, 180), url: `/#/community/${d.community_id}/m/${d.message_id}`, tag: `gc-${d.community_id}` };
     case "reply":
@@ -36,10 +39,20 @@ function message(type: string, name: string, d: any = {}) {
       return { title: "New sign-in to Cordial", body: `Your account was opened on ${d.label || 'a new device'}. Not you? Change your password.`, url: "/#/settings", tag: "new-login" };
     case "live_started":
       return { title: `🔴 ${name} is live`, body: "Tap to watch now", url: "/#/explore", tag: "live" };
+    case "space_live":
+      return { title: `🎙️ ${name} opened a space`, body: `“${String(d.snippet || "Live audio room").slice(0, 120)}” — tap to listen in`, url: `/?space=${d.space_id}`, tag: `space-${d.space_id}` };
     case "call_started":
       return { title: `📞 ${name} started a ${d.video ? "video" : "voice"} call`, body: `In ${d.emoji ? d.emoji + " " : ""}${d.community_name || "your group"} · tap to join`, url: `/#/community/${d.community_id}`, tag: `call-${d.community_id}` };
     case "post_activity":
       return { title: `${name} commented on a post you follow`, body: `${d.community_name ? `In ${d.community_name}: ` : ""}${d.snippet || ""}`.slice(0, 180), url: d.kind === "entry" ? `/#/post/${d.entry_id}` : `/#/post/g-${d.post_id}`, tag: `watch-${d.entry_id || d.post_id}` };
+    case "comment_reply":
+      return { title: `${name} replied to your comment`, body: String(d.snippet || "").slice(0, 180), url: d.entry_id ? `/#/post/${d.entry_id}` : d.post_id ? `/#/post/g-${d.post_id}` : "/#/reels", tag: `creply-${d.entry_id || d.post_id || d.reel_id}` };
+    case "tagged":
+      return { title: `${name} tagged you in ${d.kind === "comment" ? "a comment" : "a post"}`, body: String(d.snippet || "").slice(0, 180), url: d.entry_id ? `/#/post/${d.entry_id}` : d.post_id ? `/#/post/g-${d.post_id}` : "/#/reels", tag: `tag-${d.comment_id || d.entry_id || d.post_id}` };
+    case "referral_joined":
+      return { title: `🎉 ${name} joined Cordial`, body: "They signed up with your invite — you're now friends. Say hi!", url: profile, tag: `ref-${d.referred}` };
+    case "announcement":
+      return { title: String(d.title || "News from Cordial").slice(0, 120), body: String(d.snippet || "").slice(0, 220), url: "/#/feed", tag: `announce-${d.announcement || "cordial"}` };
     case "scheduled_published":
       return {
         title: d.target === "message" ? "Your scheduled message was sent" : d.target === "group" ? `Your scheduled post is live in ${d.community_name || "your group"}` : "Your scheduled post is live",
@@ -49,6 +62,17 @@ function message(type: string, name: string, d: any = {}) {
       };
     case "scheduled_failed":
       return { title: "A scheduled post couldn't go out", body: `${d.reason || "Something went wrong"} — ${d.snippet || ""}`.slice(0, 180), url: "/#/scheduled", tag: `sched-${d.scheduled_id}` };
+    case "game_invite":
+      return { title: `${name} challenged you to Wordplay`, body: "Your seven letters are waiting — tap to play", url: `/#/play/m/${d.match_id}`, tag: `wp-${d.match_id}` };
+    case "game_turn":
+      return {
+        title: "Your turn in Wordplay",
+        body: d.kind === "pass" ? `${name} passed` : d.kind === "swap" ? `${name} swapped letters` : d.kind === "resign" ? `${name} left the match` : `${name} played ${d.word || "a word"} for ${d.points || 0}`,
+        url: `/#/play/m/${d.match_id}`,
+        tag: `wp-${d.match_id}`,
+      };
+    case "game_over":
+      return { title: d.won ? "You won at Wordplay! 🏆" : "Your Wordplay match is over", body: d.resigned ? `${name} resigned` : `You finished on ${d.score ?? 0} points`, url: `/#/play/m/${d.match_id}`, tag: `wp-${d.match_id}` };
     default:
       return null;
   }
@@ -76,7 +100,7 @@ Deno.serve(async (req) => {
     .eq("id", id).maybeSingle();
   if (!n) return new Response("Gone", { status: 200 });
   const actor = (n as any).actor_profile;
-  const text = message(n.type, actor?.display_name || (actor?.username ? `@${actor.username}` : "Someone"), (n as any).data || {});
+  const text = message(n.type, actor?.display_name || (actor?.username ? `@${actor.username}` : "Someone"), (n as any).data || {}, String(n.actor || ""));
   if (!text) return new Response("Skipped", { status: 200 });
 
   const { data: subs } = await admin.from("diary_push_subscriptions").select("id, endpoint, p256dh, auth").eq("user_id", n.user_id);
@@ -84,7 +108,7 @@ Deno.serve(async (req) => {
   let sent = 0;
   await Promise.all((subs || []).map(async (sub) => {
     try {
-      await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, { TTL: n.type === "call_started" ? 120 : 86400, urgency: "high" });
+      await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, { TTL: n.type === "call_started" ? 120 : n.type === "space_live" ? 3600 : 86400, urgency: "high" });
       sent++;
     } catch (e: any) {
       // The browser dropped this subscription (uninstalled, cleared, turned off): forget it

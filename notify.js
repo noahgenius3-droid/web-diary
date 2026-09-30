@@ -114,7 +114,7 @@ document.addEventListener('DOMContentLoaded', () => {
         community_post: ['group', 'i-users'], community_join: ['group', 'i-users'],
         call_started: ['call', 'i-phone'], missed_call: ['missed', 'i-phone-off'],
         entry_repost: ['group', 'i-repost'], reel_like: ['like', 'i-heart-fill'], reel_comment: ['comment', 'i-chat'], library_like: ['like', 'i-heart-fill'],
-        live_started: ['call', 'i-live'], new_follower: ['group', 'i-user-plus'],
+        live_started: ['call', 'i-live'], space_live: ['call', 'i-headphones'], new_follower: ['group', 'i-user-plus'],
         entry_reaction: ['like', 'i-smile'], story_reaction: ['like', 'i-smile'],
         mention: ['comment', 'i-chat'], reply: ['comment', 'i-reply'], new_login: ['missed', 'i-shield'],
         book_request: ['group', 'i-store'], book_request_update: ['group', 'i-store'], book_message: ['comment', 'i-store']
@@ -163,6 +163,7 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'reel_comment': return `${who} commented on your reel:${quote}`;
             case 'library_like': return `${who} loved your writing${quote}`;
             case 'live_started': return `${who} is live now${quote}`;
+            case 'space_live': return `🎙️ ${who} opened a space:${quote}`;
             case 'new_follower': return `${who} started following you`;
             case 'new_login': return `New sign-in to your account on ${plain ? (d.label || 'a new device') : `<strong>${esc(d.label || 'a new device')}</strong>`}. Not you? Change your password and sign out other devices.`;
             case 'mention': return d.everyone ? `${who} mentioned everyone in ${group}:${quote}` : `${who} mentioned you in ${group}:${quote}`;
@@ -198,6 +199,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 break;
             case 'live_started':
                 if (window.diaryLive) window.diaryLive.watch(d.stream_id);
+                break;
+            case 'space_live':
+                if (window.diarySpaces) window.diarySpaces.open(d.space_id);
+                else app.setView('spaces');
                 break;
             case 'new_follower':
                 I.loadFollows().then(() => app.render());
