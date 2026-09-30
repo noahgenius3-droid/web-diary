@@ -131,7 +131,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const btn = (act, icon, label, cls = '') => `<button type="button" class="pf-btn ${cls}" data-pf="${act}"><svg class="i"><use href="#${icon}"/></svg><span>${label}</span></button>`;
         let actions;
         if (mine) {
-            actions = btn('edit', 'i-pencil', 'Edit profile', 'primary') + btn('share', 'i-share', 'Share profile');
+            actions = btn('edit', 'i-pencil', 'Edit profile', 'primary') + btn('share', 'i-share', 'Share profile') + btn('invite', 'i-user-plus', 'Invite friends');
         } else if (p.blocked) {
             actions = btn('unblock', 'i-block', 'Unblock', 'primary');
         } else {
@@ -469,6 +469,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 try { await navigator.share({ title: `${p.display_name} on Cordial`, url }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
             }
             I.copyText(url, 'Profile link copied');
+        } else if (what === 'invite') {
+            app.setView('invite');
         } else if (what === 'privacy') {
             app.setView('settings');
         } else if (what === 'interest') {

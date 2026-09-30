@@ -678,7 +678,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const MEMBER_ACTIONS = new Set(['like', 'react', 'repost', 'follow', 'people-add', 'people-accept', 'suggest-add', 'accept-request', 'message-friend',
         'open-chat', 'call-friend', 'call-group', 'gc-call', 'live-start', 'story-add', 'reel-add', 'reel-like', 'reel-convert', 'reel-story', 'mk-new', 'mk-req',
         'mk-deal', 'lib-new', 'feed-add-photos', 'feed-camera', 'feed-audio', 'feed-video', 'quick-reply', 'share-own', 'st-verify', 'find-friends']);
-    const MEMBER_FORMS = new Set(['add-friend', 'cm-post', 'comment', 'feed-post', 'gc-send', 'mk-request', 'mk-save', 'mk-send', 'send-message']);
+    const MEMBER_FORMS = new Set(['add-friend', 'cm-post', 'comment', 'comment-reply', 'feed-post', 'gc-send', 'mk-request', 'mk-save', 'mk-send', 'send-message']);
     document.addEventListener('click', e => {
         if (!isGuest()) return;
         const el = e.target.closest('[data-action], [data-wpm="new"]');
@@ -3832,8 +3832,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const TAG_RE = /(^|[^\p{L}\p{N}_&#])#([\p{L}\p{N}_]{2,30})/gu;
     const tagButton = t => `<button type="button" class="hashtag" data-action="ex-tag" data-tag="${esc(t.toLowerCase())}">#${esc(t)}</button>`;
 
+    const MENTION_RE = /(^|[^\p{L}\p{N}_@.&])@([a-zA-Z0-9_]{3,20})(?![\p{L}\p{N}_])/gu;
     function linkTags(html) {
-        if (!html || !html.includes('#')) return html;
+        if (!html || (!html.includes('#') && !html.includes('@'))) return html;
         const tpl = document.createElement('template');
         tpl.innerHTML = html;
         const walker = document.createTreeWalker(tpl.content, NodeFilter.SHOW_TEXT);
@@ -3841,11 +3842,12 @@ document.addEventListener('DOMContentLoaded', () => {
         while (walker.nextNode()) {
             const node = walker.currentNode;
             if (node.parentElement && node.parentElement.closest('a, button, code, pre')) continue;
-            if (/#[\p{L}\p{N}_]{2,}/u.test(node.nodeValue)) hits.push(node);
+            if (/#[\p{L}\p{N}_]{2,}/u.test(node.nodeValue) || /@[a-zA-Z0-9_]{3,20}/.test(node.nodeValue)) hits.push(node);
         }
         hits.forEach(node => {
             const span = document.createElement('span');
-            span.innerHTML = esc(node.nodeValue).replace(TAG_RE, (m, pre, tag) => `${pre}${tagButton(tag)}`);
+            span.innerHTML = esc(node.nodeValue).replace(TAG_RE, (m, pre, tag) => `${pre}${tagButton(tag)}`)
+                .replace(MENTION_RE, (m, pre, user) => `${pre}<button type="button" class="mention-link" data-mention="${user.toLowerCase()}">@${user}</button>`);
             node.replaceWith(...span.childNodes);
         });
         return tpl.innerHTML;
@@ -3995,10 +3997,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 : tops.map(c => {
                     const kids = kidsOf(c.id);
                     const open = openSet.has(c.id);
-                    return `<div class="igc-thread">${igRow(c, c.id, false)}${kids.length ? `
+                    const replying = s.replyTo && s.replyTo.key === key && s.replyTo.id === c.id ? s.replyTo : null;
+                    return `<div class="igc-thread">${igRow(c, c.id, false)}${kids.length || replying ? `
                         <div class="igc-replies">
-                            <button type="button" class="igc-toggle" data-cmt="toggle" data-id="${esc(c.id)}" aria-expanded="${open}"><span aria-hidden="true"></span>${open ? 'Hide replies' : `View ${kids.length} ${kids.length === 1 ? 'reply' : 'replies'}`}</button>
+                            ${kids.length ? `<button type="button" class="igc-toggle" data-cmt="toggle" data-id="${esc(c.id)}" aria-expanded="${open}"><span aria-hidden="true"></span>${open ? 'Hide replies' : `View ${kids.length} ${kids.length === 1 ? 'reply' : 'replies'}`}</button>` : ''}
                             ${open ? kids.map(k => igRow(k, c.id, true)).join('') : ''}
+                            ${replying ? `
+                                <form class="igc-inline" data-form="comment-reply" data-key="${key}" data-id="${esc(c.id)}">
+                                    ${avatar(s.profile, 'xs')}
+                                    <input name="body" maxlength="2000" value="${esc(replying.draft || '')}" placeholder="Reply to ${esc(replying.name)}…" autocomplete="off" enterkeyhint="send" aria-label="Reply to ${esc(replying.name)}">
+                                    <button type="button" class="igc-inline-x" data-cmt="cancel-reply" aria-label="Cancel reply"><svg class="i"><use href="#i-close"/></svg></button>
+                                    <button type="submit" class="c-send" aria-label="Send reply"${(replying.draft || '').trim() ? '' : ' disabled'}><svg class="i"><use href="#i-send"/></svg></button>
+                                </form>` : ''}
                         </div>` : ''}</div>`;
                 }).join('') || `<div class="pv-c-empty"><svg class="i"><use href="#i-chat"/></svg><strong>No comments yet</strong><span>${canComment ? 'Start the conversation.' : 'Nobody has commented yet.'}</span></div>`;
             return `
@@ -4042,34 +4052,60 @@ document.addEventListener('DOMContentLoaded', () => {
         if (m < 10080) return `${Math.round(m / 1440)}d`;
         return `${Math.round(m / 10080)}w`;
     }
-    function composerFor(key) {
-        const pvForm = document.querySelector(`#post-view form[data-form="comment"][data-key="${CSS.escape(key)}"]`);
-        if (pvForm) return pvForm;
-        return document.querySelector(`[data-comments="${CSS.escape(key)}"] form[data-form="comment"], form[data-form="comment"][data-key="${CSS.escape(key)}"]`);
-    }
     function startReply(key, id, name) {
-        s.replyTo = { key, id, name };
-        const form = composerFor(key);
-        if (!form) return;
-        form.parentElement.querySelectorAll('.igc-replying').forEach(x => x.remove());
-        form.insertAdjacentHTML('beforebegin', `<div class="igc-replying" role="status"><span>Replying to <strong>${esc(name)}</strong></span><button type="button" data-cmt="cancel-reply" aria-label="Cancel reply"><svg class="i"><use href="#i-close"/></svg></button></div>`);
-        const input = form.querySelector('input[name="body"]');
-        if (input) {
-            if (!input.value.startsWith(`@${name} `)) input.value = `@${name} ${input.value.replace(/^@\S+\s*/, '')}`;
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.focus();
+        const thread = s.comments.get(key);
+        if (thread) (thread.openReplies = thread.openReplies || new Set()).add(id); // see the conversation you're joining
+        s.replyTo = { key, id, name, draft: `@${name} ` };
+        repaintComments(key);
+        focusReply(true);
+    }
+    // After any redraw, the reply box keeps what you typed and, if you were in it, your place
+    function focusReply(scroll = false) {
+        const r = s.replyTo;
+        if (!r) return;
+        document.querySelectorAll(`form.igc-inline[data-key="${CSS.escape(r.key)}"] input`).forEach(input => {
+            input.focus({ preventScroll: true });
             input.setSelectionRange(input.value.length, input.value.length);
-        }
+            if (scroll) {
+                // Bring the box into view vertically only (scrollIntoView could also shift the sheet sideways)
+                let sc = input.parentElement;
+                while (sc && sc !== document.body && !/(auto|scroll)/.test(getComputedStyle(sc).overflowY)) sc = sc.parentElement;
+                const r = input.closest('form').getBoundingClientRect();
+                const limit = (sc && sc !== document.body ? sc.getBoundingClientRect().bottom : innerHeight) - 24;
+                if (sc && r.bottom > limit) sc.scrollBy({ top: r.bottom - limit, behavior: 'smooth' });
+            }
+        });
     }
     function cancelReply() {
         const r = s.replyTo;
         s.replyTo = null;
-        document.querySelectorAll('.igc-replying').forEach(x => x.remove());
-        if (!r) return;
-        const form = composerFor(r.key);
-        const input = form && form.querySelector('input[name="body"]');
-        if (input && input.value.trim() === `@${r.name}`) { input.value = ''; input.dispatchEvent(new Event('input', { bubbles: true })); }
+        if (r) repaintComments(r.key);
     }
+    // Typing in a reply box: remember it (so a redraw never loses it) and wake the send button
+    document.addEventListener('input', e => {
+        const form = e.target.closest && e.target.closest('form.igc-inline');
+        if (!form || !s.replyTo) return;
+        s.replyTo.draft = e.target.value;
+        form.querySelector('.c-send').disabled = !e.target.value.trim();
+    });
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && e.target.closest && e.target.closest('form.igc-inline')) { e.preventDefault(); e.stopPropagation(); cancelReply(); }
+    }, true);
+    // Sending a reply from its own box (post view, feed or a reel's comment sheet)
+    document.addEventListener('submit', async e => {
+        const form = e.target.closest && e.target.closest('form.igc-inline');
+        if (!form) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const input = form.querySelector('input');
+        const body = input.value.trim();
+        if (!body || form.classList.contains('sending')) return;
+        if (window.diarySocial && window.diarySocial.isGuest && window.diarySocial.isGuest()) return openUpgrade();
+        form.classList.add('sending');
+        form.querySelector('.c-send').disabled = true;
+        const ok = await addComment(form.dataset.key, body, { reply_to: form.dataset.id });
+        if (!ok) { form.classList.remove('sending'); form.querySelector('.c-send').disabled = false; }
+    }, true);
     async function toggleCommentLike(key, id) {
         const thread = s.comments.get(key);
         if (!thread) return;
@@ -4157,8 +4193,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function addComment(key, body, extra = {}) {
         if (!addComment.checked) { addComment.checked = true; setTimeout(checkBadges, 2500); }
         const target = commentTarget(key);
-        const replying = s.replyTo && s.replyTo.key === key ? s.replyTo : null;
-        if (replying && !('reply_to' in extra)) extra = { ...extra, reply_to: replying.id };
+        const replying = extra.reply_to && s.replyTo && s.replyTo.key === key ? s.replyTo : null; // only the reply box makes replies
         const { data, error } = await client.from('diary_comments')
             .insert({ [target.column]: target.id, body: body.slice(0, 2000), ...extra })
             .select('id, body, audio_path, audio_duration, created_at, author, reply_to, author_profile:diary_profiles!diary_comments_author_fkey(username, display_name, avatar_path)')
@@ -4295,9 +4330,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const [kind, id] = key.split(':');
         const post = postsFor(kind).find(p => p.id === id);
         const canComment = kind !== 'post' || (window.diaryCommunities && window.diaryCommunities.canInteract());
+        const typing = document.activeElement && document.activeElement.closest && document.activeElement.closest(`form.igc-inline[data-key="${CSS.escape(key)}"]`);
         document.querySelectorAll(`[data-comments="${CSS.escape(key)}"]`).forEach(el => {
             el.outerHTML = commentsBlock(kind, id, post ? commentCount(post) : 0, canComment, el.dataset.mode || 'card');
         });
+        if (typing) focusReply();
         const countSel = `[data-post="${CSS.escape(key)}"] .post-actions [data-focus="input"] .act-count`;
         if (kind !== 'reel') document.querySelectorAll(s.detail === key ? `${countSel}, #post-view [data-pd="actions"] [data-focus="input"] .act-count` : countSel).forEach(n => {
             n.textContent = (post && commentCount(post)) || '';
