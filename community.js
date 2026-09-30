@@ -569,7 +569,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (people.length) {
             return `<button class="call-join live" data-action="cm-call">
                 <span class="avatar-stack">${people.slice(0, 3).map(p => avatar({ id: p.id, display_name: p.name, avatar_path: p.avatar_path }, 'xs')).join('')}</span>
-                Join call · ${people.length}</button>`;
+                <span class="call-join-text"><strong>Join call</strong><small>${esc(people.slice(0, 2).map(p => String(p.name || 'Someone').split(' ')[0]).join(', '))}${people.length > 2 ? ` and ${people.length - 2} more` : ''} ${people.length === 1 ? 'is' : 'are'} in it</small></span></button>`;
         }
         return '<button class="chip call-chip" data-action="cm-call"><svg class="i"><use href="#i-phone"/></svg>Voice call</button>';
     }

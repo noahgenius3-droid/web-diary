@@ -246,18 +246,24 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Send to someone else's ring channel without listening on it (HTTP broadcast)
+    // Always a brand-new channel: calling the same person again straight away must never reuse the last one
+    // (Supabase hands back an existing channel with the same name, even one that's already closing)
     async function ring(userId, event, payload) {
-        const channel = client.channel(`diary_ring:${userId}`, { config: { private: true } });
+        const topic = `diary_ring:${userId}`;
+        client.getChannels().filter(c => c.topic === `realtime:${topic}`).forEach(forget);
+        const channel = client.channel(topic, { config: { private: true } });
         try {
             await channel.send({ type: 'broadcast', event, payload });
         } finally {
-            client.removeChannel(channel);
+            forget(channel);
+            client.removeChannel(channel).catch(() => {});
         }
     }
 
     function onRing(p) {
         if (!p || !p.topic || !p.from) return;
         if (call && call.topic === p.topic) return; // already in that call
+        if (incoming && incoming.from === p.from && !p.group) dismissIncoming(true); // they called again: the new ring replaces the old one
         if (incoming) { // already ringing with someone else: they get "busy"
             if (p.group) return; // a group call carries on without us; the banner still shows it
             ring(p.from, 'decline', { from: me(), busy: true });
@@ -676,18 +682,42 @@ document.addEventListener('DOMContentLoaded', () => {
         panel.classList.remove('min', 'video', 'sharing');
         panel.classList.add('ended');
         $('call-status').textContent = lasted ? `Call ended · ${lasted}` : 'Call ended';
-        $('call-stage').innerHTML = `<div class="call-ended-card">${c.person ? avatar(c.person, 'xl') : `<span class="call-ended-emoji">${esc(c.emoji || '📞')}</span>`}<strong>Call ended</strong>${lasted ? `<small>${lasted}</small>` : ''}</div>`;
+        const unanswered = !c.started && !!c.person && !!c.log && c.log.direction === 'out';
+        const why = c.endStatus === 'no_answer' ? 'No answer' : c.endStatus === 'declined' ? 'Declined' : c.endStatus === 'busy' ? 'On another call' : 'Call ended';
+        $('call-stage').innerHTML = `<div class="call-ended-card">${c.person ? avatar(c.person, 'xl') : `<span class="call-ended-emoji">${esc(c.emoji || '📞')}</span>`}<strong>${unanswered ? why : 'Call ended'}</strong>${lasted ? `<small>${lasted}</small>` : ''}
+            ${unanswered ? `<div class="call-again"><button type="button" class="call-again-btn" data-again="call"><svg class="i"><use href="#${c.log.video ? 'i-video' : 'i-phone'}"/></svg>Call again</button><button type="button" class="call-again-close" data-again="close">Close</button></div>` : ''}</div>`;
+        $('call-stage').dataset.key = '';
+        lastEnded = unanswered ? { person: c.person, video: !!c.log.video } : null;
         $('call-float').hidden = true;
         // A call on hold comes back when this one ends
         if (held) { setTimeout(() => { if (!call && held) switchCalls(); }, 900); }
-        setTimeout(() => {
+        clearTimeout(endedTimer);
+        endedTimer = setTimeout(() => {
             if (call) return;
+            lastEnded = null;
             panel.hidden = true;
             panel.classList.remove('ended');
             document.body.classList.remove('in-call');
-        }, 1600);
+        }, unanswered ? 15000 : 1600);
         app.requestRender ? app.requestRender() : app.render();
     }
+    let lastEnded = null, endedTimer = null;
+    $('call-stage').addEventListener('click', e => {
+        const b = e.target.closest('[data-again]');
+        if (!b || call) return;
+        e.stopPropagation();
+        const again = lastEnded;
+        clearTimeout(endedTimer);
+        lastEnded = null;
+        if (b.dataset.again === 'call' && again) {
+            panel.classList.remove('ended');
+            startDirect(again.person, { video: again.video });
+        } else {
+            panel.hidden = true;
+            panel.classList.remove('ended');
+            document.body.classList.remove('in-call');
+        }
+    }, true);
 
     window.addEventListener('pagehide', () => { if (call) leave(true); });
 
@@ -1173,7 +1203,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setInterval(() => {
         if (!call || panel.hidden) return;
         const talking = [];
-        $('call-stage').querySelectorAll('[data-person]').forEach(el => {
+        panel.querySelectorAll('#call-stage [data-person], #call-people-sheet [data-person]').forEach(el => {
             const id = el.dataset.person;
             const muted = id === me() ? call.muted : (call.people.get(id) || {}).muted;
             const on = !muted && speaking(id);
@@ -1225,7 +1255,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (call.ringing) return { text: 'Ringing…', state: 'ringing' };
         if (!others.length) return { text: call.person ? 'Calling…' : 'Waiting for others to join…', state: 'waiting' };
         if (connected < others.length) return { text: 'Connecting…', state: 'connecting' };
-        return { text: `${others.length > 1 ? `${others.length + 1} people · ` : ''}${duration()}`, state: 'connected' };
+        const names = others.map(id => nameOf(id).split(' ')[0]);
+        const with_ = others.length > 1 ? `With ${names.length > 2 ? `${names.slice(0, 2).join(', ')} +${names.length - 2}` : names.join(' and ')} · ` : '';
+        return { text: `${with_}${duration()}`, state: 'connected' };
     }
 
     // Whose screen or video is shown big: someone sharing their screen, else the pinned person
@@ -1392,9 +1424,71 @@ document.addEventListener('DOMContentLoaded', () => {
         $('call-share-stop').hidden = !call.screen;
         $('call-add').hidden = false;
         $('call-pip').hidden = !canPip || !featuredVideo();
+        const recOn = !!call.recorder;
+        const recBtn = $('call-rec');
+        recBtn.setAttribute('aria-pressed', String(recOn));
+        recBtn.classList.toggle('on', recOn);
+        recBtn.hidden = !window.MediaRecorder;
+        recBtn.innerHTML = `<svg class="i"><use href="#i-record"/></svg><span>${recOn ? Media.formatDuration((Date.now() - call.recorder.started) / 1000) : 'Record'}</span>`;
+        const count = [me(), ...others].length;
+        $('call-people').innerHTML = `<svg class="i"><use href="#i-users"/></svg><span>People · ${count}</span>`;
+        paintPeople();
         $('call-float-mute').setAttribute('aria-pressed', String(call.muted));
         $('call-float-mute').innerHTML = `<svg class="i"><use href="#${call.muted ? 'i-mic-off' : 'i-mic'}"/></svg>`;
     }
+
+    function paintPeople() {
+        const sheet = $('call-people-sheet');
+        const open = !sheet.hidden;
+        $('call-people').setAttribute('aria-expanded', String(open));
+        if (!open || !call) return;
+        const others = [...call.people.keys()].filter(id => id !== me());
+        const rows = [me(), ...others];
+        if (call.person && !others.length) rows.push(call.person.id); // ringing: show who you're calling
+        const key = rows.map(id => {
+            const m = id === me() ? myMeta() : (call.people.get(id) || {});
+            return `${id}:${m.muted ? 1 : 0}${m.cam ? 1 : 0}${m.hand ? 1 : 0}${m.rec ? 1 : 0}${m.screen ? 1 : 0}:${(call.peers.get(id) || {}).quality || ''}:${m.name || ''}`;
+        }).join('|') + (call.ringing ? ':ringing' : '');
+        if (sheet.dataset.key === key) return;
+        sheet.dataset.key = key;
+        const flag = (icon, label, cls = '') => `<span class="cp-flag ${cls}" title="${label}" aria-label="${label}"><svg class="i"><use href="#${icon}"/></svg></span>`;
+        sheet.innerHTML = `
+            <header class="cp-head"><strong>In this call · ${others.length + 1}</strong>
+                <button type="button" class="icon-btn" data-cp="close" aria-label="Close the list"><svg class="i"><use href="#i-close"/></svg></button></header>
+            <ul class="cp-list">${rows.map(id => {
+                const mine = id === me();
+                const m = mine ? myMeta() : (call.people.get(id) || {});
+                const joined = mine || call.people.has(id);
+                const person = { id, display_name: mine ? s.profile.display_name : (m.name || nameOf(id)), avatar_path: mine ? s.profile.avatar_path : m.avatar_path };
+                const q = mine ? 'good' : ((call.peers.get(id) || {}).quality || 'good');
+                return `
+                    <li class="cp-row${joined ? '' : ' waiting'}" data-person="${esc(id)}">
+                        <span class="cp-av">${avatar(person, 'md')}</span>
+                        <span class="cp-name"><strong>${esc(person.display_name)}${mine ? ' <small>(you)</small>' : ''}</strong>
+                            <small>${!joined ? (call.ringing ? 'Ringing…' : 'Not joined yet') : m.rec ? 'Recording' : m.screen ? 'Sharing their screen' : m.hand ? 'Hand raised' : m.muted ? 'Muted' : 'Connected'}</small></span>
+                        <span class="cp-flags">
+                            ${m.rec ? flag('i-record', 'Recording', 'rec') : ''}${m.hand ? flag('i-hand', 'Hand raised', 'hand') : ''}${m.cam ? flag('i-video', 'Camera on') : ''}${m.screen ? flag('i-screen', 'Sharing screen') : ''}
+                            ${joined ? (m.muted ? flag('i-mic-off', 'Muted', 'muted') : flag('i-mic', 'Microphone on', 'mic')) : ''}
+                            ${q !== 'good' ? flag('i-wifi-off', q === 'lost' ? 'Reconnecting' : 'Weak connection', 'weak') : ''}
+                        </span>
+                    </li>`;
+            }).join('')}</ul>
+            <button type="button" class="cp-add" data-cp="add"><svg class="i"><use href="#i-user-plus"/></svg>Add people</button>`;
+    }
+    $('call-people').addEventListener('click', () => {
+        const sheet = $('call-people-sheet');
+        sheet.hidden = !sheet.hidden;
+        sheet.dataset.key = '';
+        paintPeople();
+    });
+    $('call-people-sheet').addEventListener('click', e => {
+        const b = e.target.closest('[data-cp]');
+        if (b && b.dataset.cp === 'close') { $('call-people-sheet').hidden = true; paintPeople(); return; }
+        if (b && b.dataset.cp === 'add') return addPeople(b);
+        const row = e.target.closest('.cp-row[data-person]');
+        if (row && row.dataset.person !== me() && !row.classList.contains('waiting')) personMenu(row, row.dataset.person);
+    });
+    $('call-rec').addEventListener('click', () => { if (!call) return; call.recorder ? stopRecording() : startRecording(); });
 
     function duration() {
         if (!call || !call.started) return '0:00';
@@ -1413,7 +1507,6 @@ document.addEventListener('DOMContentLoaded', () => {
         app.openPopover(anchor, [
             { label: call.hand ? 'Lower hand' : 'Raise hand', icon: 'i-hand', onClick: () => toggleHand() },
             { label: 'React', icon: 'i-smile', onClick: () => { $('call-reactions').hidden = false; } },
-            call.recorder ? { label: 'Stop recording', icon: 'i-record', onClick: () => stopRecording() } : { label: 'Record call', icon: 'i-record', onClick: startRecording },
             ...(canPip && featuredVideo() ? [{ label: 'Pop out video', icon: 'i-expand', onClick: popOut }] : []),
             { label: 'Add people', icon: 'i-user-plus', onClick: () => addPeople(anchor) }
         ]);

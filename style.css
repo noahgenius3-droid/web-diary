@@ -13394,3 +13394,51 @@ html.kb-open dialog.auth:modal { top: var(--vvtop, 0px); bottom: auto; height: v
 /* …and the sections around them: a grid column there also grew to fit its widest content */
 .notes-home, .nh-sec { grid-template-columns: minmax(0, 1fr); }
 .nh-sec > *, .notes-home > * { min-width: 0; }
+
+/* ---------- Calls: who's on the line, and recording ---------- */
+.call-btn.rec.on .i { background: #ef4444 !important; color: #fff !important; animation: rec-pulse 1.6s ease-in-out infinite; }
+.call-btn.rec.on span { color: #fca5a5; font-variant-numeric: tabular-nums; }
+@keyframes rec-pulse { 50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0.18); } }
+#call-people { order: 7; } #call-rec { order: 8; } #call-more { order: 9; }
+.call-people { margin: 0 0 12px; padding: 6px 6px 8px; border-radius: 16px; background: rgba(255, 255, 255, 0.08); color: #fff; max-height: 42vh; overflow-y: auto; overscroll-behavior: contain; }
+.call-people[hidden] { display: none; }
+.cp-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 4px 10px; }
+.cp-head strong { font-size: 0.95rem; }
+.cp-head .icon-btn { color: #fff; }
+.cp-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.cp-row { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 12px; cursor: pointer; }
+@media (hover: hover) and (pointer: fine) { .cp-row:hover { background: rgba(255, 255, 255, 0.08); } }
+.cp-row.waiting { opacity: 0.6; cursor: default; }
+.cp-av { position: relative; flex: none; border-radius: 50%; transition: box-shadow 150ms; }
+.cp-row.speaking .cp-av { box-shadow: 0 0 0 3px #34d399; }
+.cp-name { flex: 1; min-width: 0; display: grid; line-height: 1.25; }
+.cp-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.95rem; }
+.cp-name strong small { font-weight: 500; opacity: 0.7; }
+.cp-name > small { color: rgba(255, 255, 255, 0.65); font-size: 0.8rem; }
+.cp-flags { display: flex; gap: 4px; flex: none; }
+.cp-flag { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: rgba(255, 255, 255, 0.1); }
+.cp-flag .i { width: 15px; height: 15px; }
+.cp-flag.muted { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
+.cp-flag.rec { background: #ef4444; color: #fff; }
+.cp-flag.hand { background: rgba(251, 191, 36, 0.25); color: #fde68a; }
+.cp-flag.weak { background: rgba(251, 191, 36, 0.2); color: #fcd34d; }
+.cp-add { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 44px; margin-top: 6px; border: 0; border-radius: 12px; background: rgba(255, 255, 255, 0.1); color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+.cp-add .i { width: 18px; height: 18px; }
+.call-join-text { display: grid; line-height: 1.2; text-align: left; }
+.call-join-text small { font-size: 0.74rem; font-weight: 600; opacity: 0.85; }
+.call-people:not([hidden]) { display: grid !important; grid-template-columns: minmax(0, 1fr); gap: 4px; flex: none; align-content: start; }
+.call-panel:has(.call-people:not([hidden])) .call-stage { min-height: 150px !important; }
+.call-panel:has(.call-people:not([hidden])) .call-voice-ring { width: 104px; height: 104px; }
+.call-panel:has(.call-people:not([hidden])) .call-voice-ring .avatar.xl { width: 88px; height: 88px; font-size: 1.8rem; }
+.call-panel:has(.call-people:not([hidden])) .call-voice-name { font-size: 1.3rem; margin-top: 2px; }
+.call-panel:has(.call-people:not([hidden])) .call-stage { display: none !important; }
+.call-people:not([hidden]) { max-height: 46vh; }
+.call-panel:has(.call-people:not([hidden])) .call-head-text { visibility: visible !important; }
+
+/* Unanswered call: Call again */
+.call-again { display: flex; justify-content: center; gap: 10px; margin-top: 16px; }
+.call-again-btn { display: inline-flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 20px; border: 0; border-radius: 999px; background: #22c55e; color: #fff; font: inherit; font-weight: 800; cursor: pointer; box-shadow: 0 10px 22px -10px rgba(34, 197, 94, 0.8); }
+.call-again-btn .i { width: 18px; height: 18px; }
+.call-again-btn:active { transform: scale(0.97); }
+.call-again-close { min-height: 48px; padding: 0 18px; border: 0; border-radius: 999px; background: rgba(255, 255, 255, 0.14); color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+.call-panel.ended .call-stage { visibility: visible; }
