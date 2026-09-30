@@ -594,24 +594,32 @@ document.addEventListener('DOMContentLoaded', () => {
                 const { error } = await client.auth.signInWithPassword({ email, password });
                 if (error) {
                     if (error.code === 'email_not_confirmed' || /not confirmed/i.test(error.message)) {
-                        return awaitEmail(email, 'signup', `You haven’t confirmed ${email} yet. Tap the link in the email we sent (check spam too), then come back here — we’ll sign you in automatically. Or send it again.`, password);
+                        // Older sign-ups that never got confirmed: finishing is now just "Create an account" again
+                        setAuthMode('signup');
+                        $('auth-email').value = email;
+                        return showAuthMessage(`${email} was never confirmed. No email needed any more — fill in your name, a username and a password here to finish your account instantly.`, true);
                     }
                     throw error;
                 }
                 authDialog.close();
             } else if (authMode === 'signup') {
-                const { data, error } = await client.auth.signUp({
-                    email, password,
-                    options: { data: { username, display_name: name }, emailRedirectTo: BACK_TO() }
-                });
-                if (error) throw error;
-                // Supabase hides whether an email is taken: an existing address comes back with no identities
-                if (data.user && Array.isArray(data.user.identities) && !data.user.identities.length) {
-                    setAuthMode('signin');
-                    return showAuthMessage('There’s already an account with that email — sign in instead.', true);
+                // Cordial's own server makes the account ready to use — no confirmation email to wait for
+                showAuthMessage('Creating your account…');
+                const res = await fetch(`${cfg.supabaseUrl}/functions/v1/diary-signup`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', apikey: cfg.supabaseKey },
+                    body: JSON.stringify({ email, password, username, name })
+                }).catch(() => null);
+                const out = res ? await res.json().catch(() => ({})) : { error: 'Couldn’t reach Cordial — check your connection and try again.' };
+                if (!res || !res.ok) {
+                    if (out.code === 'email_taken') setAuthMode('signin');
+                    if (out.code === 'username_taken') $('auth-username').focus();
+                    return showAuthMessage(out.error || 'Couldn’t create your account — try again.', true);
                 }
-                if (data.session) authDialog.close();
-                else awaitEmail(email, 'signup', '', password);
+                const { error } = await client.auth.signInWithPassword({ email, password });
+                if (error) throw error;
+                authDialog.close();
+                app.showToast(`Welcome to Cordial, ${name.split(' ')[0]}! 🎉`);
             } else if (authMode === 'verify') {
                 const { error } = await client.auth.verifyOtp({ email: pending.email, token: $('auth-code').value, type: pending.type });
                 if (error) throw error;
