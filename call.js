@@ -629,6 +629,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function leave(notify, target = call) {
+        const earBox = document.getElementById('call-ear');
+        if (earBox) earBox.hidden = true;
         if (!target) return;
         const c = target;
         const wasActive = c === call;
@@ -909,6 +911,87 @@ document.addEventListener('DOMContentLoaded', () => {
         call.peers.forEach(p => { if (p.audio) p.audio.muted = !call.speaker; });
         paintPanel();
     }
+
+    // ---------- Where the sound goes ----------
+    // Chrome (Android and desktop) can send the call to a chosen output: the loudspeaker, the earpiece when the
+    // phone exposes one, or wired / Bluetooth earphones. iPhone Safari doesn't let websites choose, so there we
+    // explain the Control Centre route picker instead.
+    const canRoute = !!(window.HTMLMediaElement && HTMLMediaElement.prototype.setSinkId);
+    const EAR_RE = /earpiece|receiver|handset|phone speaker/i;
+    const HEAD_RE = /head|ear(buds|phones)|airpods|buds|bluetooth|bt |wired|jabra|bose|sony|beats/i;
+    let outputs = [];
+    async function refreshOutputs() {
+        if (!canRoute || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return outputs = [];
+        try { outputs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audiooutput' && d.deviceId !== 'communications'); } catch (e) { outputs = []; }
+        return outputs;
+    }
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+        navigator.mediaDevices.addEventListener('devicechange', async () => {
+            const before = outputs.map(d => d.deviceId).join();
+            await refreshOutputs();
+            if (call && before && outputs.map(d => d.deviceId).join() !== before) {
+                const head = outputs.find(d => HEAD_RE.test(d.label));
+                if (head) app.showToast(`${head.label} connected`);
+                paintPanel();
+            }
+        });
+    }
+    const routeKind = d => (!d ? 'speaker' : EAR_RE.test(d.label) ? 'ear' : HEAD_RE.test(d.label) ? 'head' : 'speaker');
+    function currentRoute() {
+        const d = outputs.find(x => x.deviceId === call.sinkId) || (call.sinkId ? null : outputs.find(x => x.deviceId === 'default'));
+        const kind = routeKind(d);
+        const label = kind === 'ear' ? 'Phone' : kind === 'head' ? (d.label.replace(/\s*\(.*\)$/, '').replace(/^Default - /, '').slice(0, 14) || 'Earphones') : 'Speaker';
+        return { kind, label, icon: kind === 'ear' ? 'i-phone' : kind === 'head' ? 'i-headphones' : 'i-speaker' };
+    }
+    function setSink(id) {
+        call.sinkId = id;
+        call.peers.forEach(p => { if (p.audio && p.audio.setSinkId) p.audio.setSinkId(id).catch(() => {}); });
+        paintPanel();
+    }
+    async function routeMenu(anchor) {
+        if (!call) return;
+        await refreshOutputs();
+        const items = [];
+        if (canRoute && outputs.length) {
+            const seen = new Set();
+            outputs.forEach((d, i) => {
+                const kind = routeKind(d);
+                const name = (d.label || `Speaker ${i + 1}`).replace(/^Default - /, '');
+                if (seen.has(name)) return;
+                seen.add(name);
+                const on = call.sinkId ? call.sinkId === d.deviceId : d.deviceId === 'default';
+                items.push({ label: kind === 'ear' ? 'Phone (earpiece)' : name, icon: on ? 'i-check' : kind === 'ear' ? 'i-phone' : kind === 'head' ? 'i-headphones' : 'i-speaker', onClick: () => setSink(d.deviceId) });
+            });
+        } else {
+            items.push({ label: 'Speaker, iPhone or AirPods…', icon: 'i-speaker', onClick: () => app.showToast('On iPhone, open Control Centre and tap the audio button (next to the volume) to switch between Speaker, iPhone and AirPods', null, 7000) });
+        }
+        items.push({ label: 'Hold to my ear', icon: 'i-ear', onClick: () => earMode(true) });
+        items.push({ label: call.speaker ? 'Mute call sound' : 'Turn call sound back on', icon: call.speaker ? 'i-volume-off' : 'i-speaker', onClick: () => setSpeaker(!call.speaker) });
+        app.openPopover(anchor, items);
+    }
+    // Hold-to-ear: a dark screen (no accidental cheek taps) and, where the phone offers it, the earpiece
+    let earBefore = null;
+    function earMode(on) {
+        if (!call) return;
+        const box = $('call-ear');
+        if (on) {
+            earBefore = call.sinkId || null;
+            const ear = outputs.find(d => EAR_RE.test(d.label));
+            if (ear) setSink(ear.deviceId);
+            box.hidden = false;
+            $('call-ear-status').textContent = statusText().text;
+        } else {
+            box.hidden = true;
+            if (earBefore !== null || call.sinkId) setSink(earBefore || 'default');
+            earBefore = null;
+        }
+    }
+    (() => {
+        const box = $('call-ear');
+        let last = 0;
+        box.addEventListener('pointerup', () => { const now = Date.now(); if (now - last < 350) earMode(false); last = now; });
+        box.addEventListener('dblclick', () => earMode(false));
+    })();
 
     // Desktop browsers can route the call to a chosen speaker or headset
     async function pickOutput(anchor) {
@@ -1248,9 +1331,22 @@ document.addEventListener('DOMContentLoaded', () => {
             return `${id}:${kind}:${big ? 1 : 0}:${m.muted ? 1 : 0}:${m.hand ? 1 : 0}:${m.cam ? 1 : 0}:${m.screen || 0}:${q}:${m.name || ''}`;
         }).join('|');
         const stage = $('call-stage');
+        const voice = !anyVideo && !feat && others.length <= 1;
+        panel.classList.toggle('voice', voice);
+        if (voice) {
+            const who = call.person || (others[0] ? { id: others[0], display_name: nameOf(others[0]), avatar_path: (call.people.get(others[0]) || {}).avatar_path } : { id: me(), display_name: call.title });
+            const vkey = `voice:${who.id}:${who.avatar_path || ''}:${call.title}`;
+            stage.classList.remove('has-feature');
+            stage.dataset.count = '1';
+            if (stage.dataset.key !== vkey) {
+                stage.dataset.key = vkey;
+                stage.innerHTML = `<div class="call-voice" data-person="${esc(who.id)}"><span class="call-voice-ring">${avatar(who, 'xl')}</span><strong class="call-voice-name">${esc(call.title)}</strong><span class="call-voice-status" id="call-voice-status"></span></div>`;
+            }
+            $('call-voice-status').textContent = status;
+        }
         stage.classList.toggle('has-feature', !!feat);
         stage.dataset.count = String(tiles.length);
-        if (stage.dataset.key !== key) {
+        if (!voice && stage.dataset.key !== key) {
             stage.dataset.key = key;
             stage.innerHTML = tiles.map(([id, kind, big]) => tileHTML(id, kind, big)).join('');
         }
@@ -1280,7 +1376,9 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         setBtn('call-mute', call.muted, call.muted ? 'i-mic-off' : 'i-mic', call.muted ? 'Unmute' : 'Mute');
         setBtn('call-cam', !!call.cam, call.cam ? 'i-video' : 'i-video-off', call.cam ? 'Camera' : 'Camera off');
-        setBtn('call-speaker', !call.speaker, call.speaker ? 'i-speaker' : 'i-volume-off', call.speaker ? 'Speaker' : 'Sound off');
+        const route = currentRoute();
+        setBtn('call-speaker', !call.speaker || route.kind !== 'speaker', call.speaker ? route.icon : 'i-volume-off', call.speaker ? route.label : 'Sound off');
+        if (!$('call-ear').hidden) $('call-ear-status').textContent = status;
         setBtn('call-share', !!call.screen, 'i-screen', call.screen ? 'Sharing' : 'Share');
         $('call-share').hidden = !canShare;
         $('call-flip').hidden = !call.cam || !('ontouchstart' in window);
@@ -1311,7 +1409,6 @@ document.addEventListener('DOMContentLoaded', () => {
             { label: call.hand ? 'Lower hand' : 'Raise hand', icon: 'i-hand', onClick: () => toggleHand() },
             { label: 'React', icon: 'i-smile', onClick: () => { $('call-reactions').hidden = false; } },
             call.recorder ? { label: 'Stop recording', icon: 'i-record', onClick: () => stopRecording() } : { label: 'Record call', icon: 'i-record', onClick: startRecording },
-            ...(HTMLMediaElement.prototype.setSinkId ? [{ label: 'Audio output', icon: 'i-speaker', onClick: () => pickOutput(anchor) }] : []),
             ...(canPip && featuredVideo() ? [{ label: 'Pop out video', icon: 'i-expand', onClick: popOut }] : []),
             { label: 'Add people', icon: 'i-user-plus', onClick: () => addPeople(anchor) }
         ]);
@@ -1329,7 +1426,8 @@ document.addEventListener('DOMContentLoaded', () => {
     $('call-share').addEventListener('click', () => { if (!call) return; call.screen ? stopShare() : startShare(); });
     $('call-share-pause').addEventListener('click', () => pauseShare());
     $('call-share-stop').addEventListener('click', () => stopShare());
-    $('call-speaker').addEventListener('click', () => { if (call) setSpeaker(!call.speaker); });
+    $('call-speaker').addEventListener('click', e => routeMenu(e.currentTarget));
+    refreshOutputs();
     $('call-more').addEventListener('click', e => morePopover(e.currentTarget));
     $('call-pip').addEventListener('click', popOut);
     $('call-reactions').innerHTML = REACTIONS.map(e => `<button type="button" data-react="${e}" aria-label="React ${e}">${e}</button>`).join('');

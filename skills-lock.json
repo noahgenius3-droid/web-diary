@@ -1,6 +1,18 @@
 {
   "version": 1,
   "skills": {
+    "aceternity-ui": {
+      "source": "secondsky/claude-skills",
+      "sourceType": "github",
+      "skillPath": "plugins/aceternity-ui/skills/aceternity-ui/SKILL.md",
+      "computedHash": "46163dff7c0d895685b71f38179bd5feebd42cd66177addf20e21ecff95ce4b7"
+    },
+    "daisyui": {
+      "source": "saadeghi/daisyui",
+      "sourceType": "github",
+      "skillPath": "skills/daisyui/SKILL.md",
+      "computedHash": "51be9420b195cc8935591595c315d5bca38f889f3750942d816134bd70f72a6b"
+    },
     "deep-agents-core": {
       "source": "langchain-ai/langchain-skills",
       "sourceType": "github",

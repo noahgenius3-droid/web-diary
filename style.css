@@ -13253,3 +13253,134 @@ html.kb-open dialog.auth:modal { top: var(--vvtop, 0px); bottom: auto; height: v
 }
 @media (min-width: 900px) { .pf-cover { height: 200px; } .pf-photos { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (max-width: 760px) { .pf-cover.has-img ~ .pf-id .pf-names { margin-bottom: -12px; } }
+
+/* ==========================================================================
+   Calls, refined: a one-to-one voice call is a calm full picture of the person; round controls with labels;
+   the audio button shows where the sound goes; hold-to-ear goes dark
+   ========================================================================== */
+.call-panel.voice .call-stage { display: grid; place-items: center; flex: 1; min-height: 260px; padding: 12px 0 8px; overflow: visible; }
+.call-voice { display: grid; justify-items: center; gap: 10px; text-align: center; cursor: pointer; }
+.call-voice-ring { position: relative; display: grid; place-items: center; width: 148px; height: 148px; border-radius: 50%; }
+.call-voice-ring .avatar.xl { width: 128px; height: 128px; font-size: 2.6rem; box-shadow: 0 18px 40px -16px rgba(0, 0, 0, 0.7); }
+.call-voice-ring::before, .call-voice-ring::after { content: ''; position: absolute; inset: 0; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.18); opacity: 0; }
+.call-panel[data-state="ringing"] .call-voice-ring::before, .call-panel[data-state="waiting"] .call-voice-ring::before,
+.call-panel[data-state="ringing"] .call-voice-ring::after, .call-panel[data-state="waiting"] .call-voice-ring::after { animation: call-pulse 2.2s cubic-bezier(0.2, 0.7, 0.3, 1) infinite; }
+.call-voice-ring::after { animation-delay: 1.1s !important; }
+@keyframes call-pulse { from { transform: scale(0.86); opacity: 0.9; } to { transform: scale(1.45); opacity: 0; } }
+.call-voice.speaking .call-voice-ring .avatar { box-shadow: 0 0 0 4px #34d399, 0 18px 40px -16px rgba(0, 0, 0, 0.7); }
+.call-voice-name { max-width: 16ch; margin-top: 8px; color: #fff; font-size: 1.7rem; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; text-wrap: balance; }
+.call-voice-status { color: rgba(255, 255, 255, 0.72); font-size: 1rem; font-variant-numeric: tabular-nums; }
+.call-panel[data-state="connected"] .call-voice-status { color: #86efac; }
+.call-panel.voice .call-head-text { visibility: hidden; }
+.call-panel.voice .call-speaking { display: none; }
+
+/* Controls: round buttons, labels underneath, End on its own */
+.call-controls { display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 10px; justify-items: center; padding-top: 6px; }
+.call-btn { display: grid; justify-items: center; gap: 7px; min-width: 0; color: rgba(255, 255, 255, 0.9); font-size: 0.78rem; font-weight: 600; }
+.call-btn .i { width: 64px !important; height: 64px !important; padding: 20px !important; border-radius: 50%; background: rgba(255, 255, 255, 0.14); color: #fff;
+    -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); transition: background-color 160ms, transform 120ms; }
+.call-btn[aria-pressed="true"] .i { background: #fff; color: #111318; }
+.call-btn[hidden] { display: none !important; }
+.call-btn span { max-width: 88px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.call-btn.end { grid-column: 1 / -1; order: 99; }
+.call-btn.end .i { width: 72px !important; height: 72px !important; padding: 23px !important; background: #ef4444; box-shadow: 0 12px 26px -10px rgba(239, 68, 68, 0.8); }
+.call-btn.end span { display: none; }
+@media (hover: hover) and (pointer: fine) { .call-btn:hover .i { background: rgba(255, 255, 255, 0.24); } .call-btn[aria-pressed="true"]:hover .i { background: #e5e7eb; } .call-btn.end:hover .i { background: #dc2626; } }
+.call-panel.video .call-controls { grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); }
+.call-panel.video .call-btn.end { grid-column: auto; order: 0; }
+.call-panel.video .call-btn.end span { display: block; }
+
+/* Hold-to-ear */
+.call-ear { position: fixed; inset: 0; z-index: 90; display: grid; place-content: center; justify-items: center; gap: 10px; padding: 24px; background: #000; color: rgba(255, 255, 255, 0.75); text-align: center; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+.call-ear[hidden] { display: none; }
+.call-ear-ic { width: 44px; height: 44px; color: rgba(255, 255, 255, 0.55); }
+.call-ear strong { color: #fff; font-size: 1.2rem; font-weight: 700; }
+.call-ear span { font-variant-numeric: tabular-nums; color: #86efac; }
+.call-ear small { margin-top: 18px; font-size: 0.85rem; color: rgba(255, 255, 255, 0.5); }
+@media (prefers-reduced-motion: reduce) { .call-voice-ring::before, .call-voice-ring::after { animation: none !important; } }
+.call-controls { display: flex !important; flex-wrap: wrap; justify-content: center; }
+.call-btn { flex: 0 0 30%; }
+.call-btn.end { flex-basis: 100%; }
+#call-mute { order: 1; } #call-speaker { order: 2; } #call-cam { order: 3; } #call-flip { order: 4; } #call-share { order: 5; } #call-more { order: 6; }
+.call-panel.voice { background: radial-gradient(90% 55% at 50% 18%, rgba(99, 102, 241, 0.32), transparent 70%), radial-gradient(70% 45% at 50% 100%, rgba(219, 39, 119, 0.16), transparent 70%), #0f1117; }
+.call-panel.video .call-btn { flex: 0 0 auto; }
+
+/* ==========================================================================
+   Notes, bold: the day on a vivid stage, clean scrolling rows, heavier headings, crisper cards
+   ========================================================================== */
+.notes-home .nh-hero {
+    position: relative; isolation: isolate; overflow: hidden;
+    padding: 30px 28px 26px; border: 0; border-radius: 16px; color: #fff;
+    background:
+        radial-gradient(55% 70% at 6% 0%, rgba(236, 72, 153, 0.85), transparent 70%),
+        radial-gradient(45% 75% at 100% 0%, rgba(245, 158, 11, 0.75), transparent 70%),
+        radial-gradient(60% 80% at 88% 100%, rgba(124, 58, 237, 0.95), transparent 70%),
+        radial-gradient(60% 80% at 0% 100%, rgba(79, 70, 229, 0.95), transparent 70%),
+        #0d0a24;
+    box-shadow: 0 24px 50px -28px rgba(13, 10, 36, 0.8);
+}
+.notes-home .nh-title { color: #fff; font-weight: 900; }
+.notes-home .nh-title span { color: rgba(255, 255, 255, 0.78); font-weight: 600; }
+.notes-home .nh-greet { color: rgba(255, 255, 255, 0.86); }
+.notes-home .nh-stats { gap: 8px; font-size: 0.86rem; color: rgba(255, 255, 255, 0.86); }
+.notes-home .nh-stats > span { padding: 6px 12px; border-radius: 999px; background: rgba(255, 255, 255, 0.16); }
+.notes-home .nh-stats b { color: #fff; font-weight: 800; }
+.notes-home .nh-streak .i { color: rgba(255, 255, 255, 0.7); }
+.notes-home .nh-streak.on { background: rgba(251, 146, 60, 0.3) !important; }
+.notes-home .nh-streak.on .i { color: #fdba74; }
+.notes-home .nh-day i { width: 28px; height: 28px; border-radius: 50%; border: 0; background: rgba(255, 255, 255, 0.16); }
+.notes-home .nh-day.on i { background: #fff; }
+.notes-home .nh-day.today i { box-shadow: 0 0 0 2px rgba(13, 10, 36, 0.4), 0 0 0 4px #fff; }
+.notes-home .nh-day small { color: rgba(255, 255, 255, 0.7); }
+.notes-home .nh-day.today small { color: #fff; font-weight: 800; }
+.notes-home .nh-write { background: #fff !important; color: #1e1b4b !important; box-shadow: 0 12px 26px -12px rgba(13, 10, 36, 0.8); }
+.notes-home .nh-write .i { color: #4f46e5; }
+.notes-home .nh-voice { background: rgba(255, 255, 255, 0.16) !important; border-color: transparent !important; color: #fff !important; }
+.notes-home .nh-voice .i { color: #fff !important; }
+.notes-home .nh-private, .notes-home .nh-friends { color: rgba(255, 255, 255, 0.8); }
+.notes-home .nh-private .i { color: rgba(255, 255, 255, 0.8); }
+.notes-home .nh-write:focus-visible, .notes-home .nh-voice:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+
+/* Headings with a badge, like Explore */
+.notes-home .nh-h { gap: 10px; font-size: 1.2rem; font-weight: 900; letter-spacing: -0.025em; }
+.notes-home .nh-h > .i { box-sizing: content-box; width: 17px; height: 17px; padding: 8px; border-radius: 11px; background: linear-gradient(135deg, #4f46e5, #7c3aed 55%, #db2777); color: #fff; box-shadow: 0 6px 14px -8px rgba(124, 58, 237, 0.8); }
+
+/* Sideways rows: no scrollbar, edges fade out */
+.notes-home :is(.nh-templates, .nh-pinned) { scrollbar-width: none; -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 12px, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, transparent 0, #000 12px, #000 calc(100% - 28px), transparent); padding-inline: 12px; margin-inline: -12px; }
+.notes-home :is(.nh-templates, .nh-pinned)::-webkit-scrollbar { display: none; }
+.notes-home .nh-template { border-radius: 16px; transition: transform 140ms cubic-bezier(0.2, 0.9, 0.3, 1), box-shadow 160ms; }
+.notes-home .nh-template:active { transform: scale(0.98); }
+@media (hover: hover) and (pointer: fine) { .notes-home .nh-template:hover { transform: translateY(-2px); box-shadow: 0 12px 24px -16px rgba(13, 10, 36, 0.5); } }
+
+/* Cards */
+.notes-home .mcard { border-radius: 16px; }
+.notes-home .mcard .mcard-title, .notes-home .mcard h3, .notes-home .mcard strong:first-child { letter-spacing: -0.015em; }
+@media (hover: hover) and (pointer: fine) { .notes-home .mcard[role="button"]:hover { transform: translateY(-2px); box-shadow: 0 16px 30px -18px rgba(13, 10, 36, 0.55); } }
+.mcard .hashtag-inline { color: inherit !important; font-weight: 800; text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); }
+
+/* The filter row: one tidy line that scrolls sideways on phones */
+@media (max-width: 760px) {
+    .notes-home .nh-hero { padding: 24px 18px 20px; }
+    .notes-home .nh-controls { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-inline: -16px; padding: 2px 16px; }
+    .notes-home .nh-controls::-webkit-scrollbar { display: none; }
+    .notes-home .nh-controls > * { flex: none; }
+}
+
+/* ==========================================================================
+   Effects ported from Aceternity UI (Aurora background, Card spotlight) to plain CSS:
+   the vivid headers drift very slowly; on a mouse, a soft light follows the pointer across cards
+   ========================================================================== */
+@media (prefers-reduced-motion: no-preference) {
+    :is(.notes-home .nh-hero, .explore .ex-hero) { background-size: 170% 170%; animation: aurora-drift 22s ease-in-out infinite alternate; }
+}
+@keyframes aurora-drift { 0% { background-position: 0% 0%; } 50% { background-position: 60% 40%; } 100% { background-position: 100% 100%; } }
+@media (hover: hover) and (pointer: fine) {
+    :is(.mcard, .nh-template, .ex-tile, .gm-tile) { position: relative; isolation: isolate; }
+    :is(.mcard, .nh-template, .ex-tile, .gm-tile)::after {
+        content: ''; position: absolute; inset: 0; z-index: 3; border-radius: inherit; pointer-events: none; opacity: 0;
+        background: radial-gradient(280px circle at var(--mx, 50%) var(--my, 50%), rgba(255, 255, 255, 0.28), transparent 62%);
+        mix-blend-mode: soft-light; transition: opacity 220ms ease-out;
+    }
+    :is(.mcard, .nh-template, .ex-tile, .gm-tile):hover::after { opacity: 1; }
+}
+.notes-home :is(.nh-templates, .nh-pinned) { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }

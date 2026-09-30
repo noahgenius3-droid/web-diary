@@ -881,7 +881,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </header>
 
                 <section class="nh-sec">
-                    <h3 class="nh-h">Start from a template</h3>
+                    <h3 class="nh-h"><svg class="i"><use href="#i-sparkle"/></svg>Start from a template</h3>
                     <div class="nh-templates" role="list">
                         ${TEMPLATES.map(t => `
                             <button class="template-card nh-template" role="listitem" data-action="template" data-id="${t.id}">
@@ -907,7 +907,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 <section class="nh-sec">
                     <div class="nh-bar">
-                        <h3 class="nh-h">All notes <span class="nh-count">${list.length}</span></h3>
+                        <h3 class="nh-h"><svg class="i"><use href="#i-book"/></svg>All notes <span class="nh-count">${list.length}</span></h3>
                         <div class="nh-controls">
                             ${tabs('noteRange')}
                             ${pourControl()}
@@ -3064,3 +3064,21 @@ document.addEventListener('DOMContentLoaded', () => {
         );
     }
 });
+
+// Card spotlight (after Aceternity UI's spotlight card): cards on a mouse get a soft light that follows the pointer
+(() => {
+    if (!window.matchMedia || !window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+    let raf = 0, target = null, x = 0, y = 0;
+    document.addEventListener('pointermove', e => {
+        const el = e.target.closest && e.target.closest('.mcard, .nh-template, .ex-tile, .gm-tile');
+        if (!el) return;
+        target = el; x = e.clientX; y = e.clientY;
+        if (raf) return;
+        raf = requestAnimationFrame(() => {
+            raf = 0;
+            const r = target.getBoundingClientRect();
+            target.style.setProperty('--mx', `${x - r.left}px`);
+            target.style.setProperty('--my', `${y - r.top}px`);
+        });
+    }, { passive: true });
+})();
