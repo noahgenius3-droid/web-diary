@@ -54,9 +54,10 @@ Deno.serve(async (req) => {
   if (!name) return fail("name", "Tell us your name.");
 
   const ip = (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() || req.headers.get("cf-connecting-ip") || "unknown";
-  const { data: allowed, error: gateErr } = await admin.rpc("diary_signup_gate", { p_ip: ip, p_email: email });
+  // Per network: 35 new accounts an hour
+  const { data: limit, error: gateErr } = await admin.rpc("diary_signup_check", { p_ip: ip });
   if (gateErr) return fail("server", "Sign-up is having a moment — try again shortly.", 500);
-  if (!allowed) return fail("rate_limited", "Lots of new accounts from this network just now — try again in an hour.", 429);
+  if (limit !== "ok") return fail("rate_limited", "Lots of new accounts from this network in the last hour — try again a bit later.", 429);
 
   const { data: free, error: freeErr } = await admin.rpc("diary_username_free", { p_username: username });
   if (freeErr) return fail("server", "Sign-up is having a moment — try again shortly.", 500);
@@ -64,7 +65,10 @@ Deno.serve(async (req) => {
 
   const user_metadata = { username, display_name: name };
   const { error } = await admin.auth.admin.createUser({ email, password, email_confirm: true, user_metadata });
-  if (!error) return reply({ ok: true });
+  if (!error) {
+    await admin.rpc("diary_signup_record", { p_ip: ip, p_email: email });
+    return reply({ ok: true });
+  }
 
   if (!/already|registered|exists/i.test(error.message)) {
     return fail("server", "Couldn’t create your account — try again.", 500);
@@ -76,7 +80,10 @@ Deno.serve(async (req) => {
       const { error: upErr } = await admin.auth.admin.updateUserById(existing.id, {
         password, email_confirm: true, user_metadata,
       });
-      if (!upErr) return reply({ ok: true, finished: true });
+      if (!upErr) {
+        await admin.rpc("diary_signup_record", { p_ip: ip, p_email: email });
+        return reply({ ok: true, finished: true });
+      }
     }
   } catch { /* fall through */ }
   return fail("email_taken", "There’s already an account with that email — sign in instead.", 409);
