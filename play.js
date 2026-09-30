@@ -137,54 +137,123 @@ document.addEventListener('DOMContentLoaded', () => {
             </section>`;
     }
 
+    // Each board: tab label, icon, what it measures, and the unit its numbers are in
+    const BOARDS = {
+        trivia: { label: 'Trivia', icon: 'i-g-question', about: 'Points from the daily, weekly, Bible and brain challenges and the question of the day.', unit: 'pts', empty: 'Play today’s trivia to get on the board.', go: 'start', goKind: 'daily', goLabel: 'Play daily trivia' },
+        games: { label: 'Games', icon: 'i-g-puzzle', about: 'Points from your first go at each daily puzzle.', unit: 'pts', empty: 'Solve a daily puzzle to get on the board.', go: 'scroll-games', goLabel: 'Pick a puzzle' },
+        xp: { label: 'Level', icon: 'i-trophy', about: 'Total XP from trivia, games, posts and comments.', unit: 'XP', empty: 'Everything you do on Cordial earns XP.' },
+        contributors: { label: 'Contributors', icon: 'i-users', about: '5 points for every post and 2 for every comment.', unit: 'pts', empty: 'Share a post to get on the board.' },
+        helpful: { label: 'Most helpful', icon: 'i-chat', about: 'Comments and replies left on other people’s posts.', unit: 'replies', empty: 'Reply to someone’s post to get on the board.' },
+        active: { label: 'Most active', icon: 'i-activity', about: 'Posts, comments, reactions, trivia rounds and puzzles, all counted.', unit: 'actions', empty: 'Post, react or play to get on the board.' },
+        posts: { label: 'Top posts', icon: 'i-thumb', about: 'The posts with the most reactions — of those you can see.', unit: 'reactions', empty: 'No posts in this period yet.' }
+    };
+    const PERIOD_WORDS = { today: 'today', week: 'this week', month: 'this month', all: 'of all time' };
+    const ordinal = n => { const v = n % 100; return n + (['th', 'st', 'nd', 'rd'][(v - 20) % 10] || ['th', 'st', 'nd', 'rd'][v] || 'th'); };
+
+    // "You're 2nd of 14 this week — 31 pts behind Ada", or an invitation when you're not on the board yet
+    function standingHTML(b, rows) {
+        const B = BOARDS[b.kind];
+        const mine = rows.find(r => r.is_me);
+        const when = PERIOD_WORDS[b.period];
+        const among = b.scope === 'friends' ? ' among friends' : '';
+        if (!mine) {
+            return `
+                <div class="pl-standing out">
+                    <span class="pl-standing-rank" aria-hidden="true">${ic(B.icon)}</span>
+                    <p><strong>You’re not on this board ${when}${among}.</strong> ${esc(B.empty)}</p>
+                    ${B.go === 'start' ? `<button type="button" class="chip accent" data-pl="start" data-kind="${B.goKind}">${B.goLabel}</button>`
+                        : B.go === 'scroll-games' ? `<button type="button" class="chip accent" data-pl="scroll-games">${B.goLabel}</button>` : ''}
+                </div>`;
+        }
+        const rank = Number(mine.rank);
+        const above = rows.filter(r => Number(r.rank) < rank).sort((x, y) => Number(y.rank) - Number(x.rank))[0];
+        const below = rows.find(r => Number(r.rank) === rank + 1) || rows.filter(r => Number(r.rank) > rank)[0];
+        const total = rows.length >= 50 ? '50+' : rows.length;
+        let line;
+        if (rank === 1 && below) line = `You’re leading by <b>${fmt(Number(mine.score) - Number(below.score))} ${B.unit}</b> over ${esc(below.display_name.split(' ')[0])}.`;
+        else if (rank === 1) line = 'You’re the only one on the board so far — keep it that way.';
+        else if (above) {
+            const gap = Number(above.score) - Number(mine.score);
+            line = gap > 0 ? `<b>${fmt(gap)} ${B.unit}</b> behind ${esc(above.display_name.split(' ')[0])} in ${ordinal(Number(above.rank))}.` : `Level with ${esc(above.display_name.split(' ')[0])}.`;
+        } else line = '';
+        return `
+            <div class="pl-standing${rank <= 3 ? ` top r${rank}` : ''}">
+                <span class="pl-standing-rank"><b>${ordinal(rank)}</b></span>
+                <p><strong>You’re ${ordinal(rank)} of ${total} ${when}${among}</strong><span>${line}</span></p>
+                <span class="pl-standing-score"><b>${fmt(mine.score)}</b><small>${B.unit}</small></span>
+            </div>`;
+    }
+
     function boardHTML() {
         const b = P.board;
-        const seg = (name, opts, cur) => `<div class="pl-seg" role="radiogroup" aria-label="${name === 'scope' ? 'Who' : 'When'}">${opts.map(([v, l]) =>
+        const B = BOARDS[b.kind];
+        const seg = (name, opts, cur, label) => `<div class="pl-seg" role="radiogroup" aria-label="${label}">${opts.map(([v, l]) =>
             `<button type="button" role="radio" aria-checked="${cur === v}" data-pl="${name}" data-v="${v}">${l}</button>`).join('')}</div>`;
         const person = r => ({ id: r.user_id, display_name: r.display_name, avatar_path: r.avatar_path });
         const detail = r => (r.detail !== undefined ? esc(r.detail || '') : `${r.rounds} ${r.rounds === 1 ? 'round' : 'rounds'} · ${r.accuracy || 0}% right`);
-        const BOARDS = [['trivia', 'Trivia'], ['games', 'Games'], ['contributors', 'Contributors'], ['helpful', 'Most helpful'], ['active', 'Most active'], ['xp', 'Level'], ['posts', 'Top posts']];
-        const picker = `<div class="pl-boards" role="tablist" aria-label="Leaderboard">${BOARDS.map(([k, l]) => `<button type="button" role="tab" class="pl-board-tab" aria-selected="${b.kind === k}" data-pl="board" data-v="${k}">${l}</button>`).join('')}</div>`;
+        const tabs = `<div class="lb-tabs" role="tablist" aria-label="Leaderboards">${Object.entries(BOARDS).map(([k, x]) =>
+            `<button type="button" role="tab" class="lb-tab" aria-selected="${b.kind === k}" data-pl="board" data-v="${k}">${ic(x.icon)}<span>${x.label}</span></button>`).join('')}</div>`;
+        const controls = `
+            <div class="lb-controls">
+                ${seg('period', [['today', 'Today'], ['week', 'Week'], ['month', 'Month'], ['all', 'All']], b.period, 'When')}
+                ${b.kind === 'posts' ? '' : `<button type="button" class="lb-friends" data-pl="scope" data-v="${b.scope === 'friends' ? 'everyone' : 'friends'}" aria-pressed="${b.scope === 'friends'}">${ic('i-users')}Friends</button>`}
+            </div>`;
         let body;
-        if (b.rows === null || b.loading) body = '<div class="pl-board-skel" aria-busy="true"><i></i><i></i><i></i></div>';
-        else if (b.kind === 'posts') body = b.rows.length ? `<ol class="pl-posts">${b.rows.map((p, i) => `
-                <li><button type="button" class="pl-post" data-pl="open-post" data-id="${esc(p.id)}">
-                    <span class="pl-rank">${i + 1}</span>
-                    <span class="pl-post-text"><strong>${esc(p.title || (p.body || '').slice(0, 90) || 'Photo post')}</strong><small>${esc(p.display_name)} · ${fmt(p.reactions)} ${p.reactions === 1 ? 'reaction' : 'reactions'}</small></span>
-                    ${ic('i-thumb')}</button></li>`).join('')}</ol>` : '<p class="pl-empty">No posts in this period yet.</p>';
-        else if (!b.rows.length) body = `<p class="pl-empty">No scores ${b.period === 'today' ? 'today' : b.period === 'all' ? 'yet' : `this ${b.period}`}${b.scope === 'friends' ? ' among your friends' : ''}. Play today’s trivia to take first place.</p>`;
-        else {
-            const podium = b.rows.filter(r => Number(r.rank) <= 3).slice(0, 3);
-            const rest = b.rows.filter(r => !podium.includes(r));
+        if (b.rows === null || b.loading) {
+            body = '<div class="pl-board-skel" aria-busy="true" aria-label="Loading the leaderboard"><i></i><i></i><i></i><i></i></div>';
+        } else if (b.kind === 'posts') {
+            const max = Math.max(1, ...b.rows.map(p => Number(p.reactions)));
+            body = b.rows.length ? `<ol class="lb-list">${b.rows.map((p, i) => `
+                <li class="lb-row">
+                    <span class="lb-rank${i < 3 ? ` m${i + 1}` : ''}">${i + 1}</span>
+                    <button type="button" class="row-av" data-profile="${esc(p.author)}" aria-label="${esc(p.display_name)}’s profile">${avatar({ id: p.author, display_name: p.display_name, avatar_path: p.avatar_path }, 'sm')}</button>
+                    <button type="button" class="lb-who" data-pl="open-post" data-id="${esc(p.id)}">
+                        <strong>${esc(p.title || (p.body || '').slice(0, 90) || 'Photo post')}</strong>
+                        <small>${esc(p.display_name)}</small>
+                        <span class="lb-bar" style="--w:${Math.round(100 * Number(p.reactions) / max)}%" aria-hidden="true"></span>
+                    </button>
+                    <span class="lb-score"><b>${fmt(p.reactions)}</b><small>${Number(p.reactions) === 1 ? 'reaction' : 'reactions'}</small></span>
+                </li>`).join('')}</ol>` : `<p class="pl-empty">${esc(B.empty)}</p>`;
+        } else if (!b.rows.length) {
+            body = standingHTML(b, []);
+        } else {
+            const rows = b.rows;
+            const max = Math.max(1, ...rows.map(r => Number(r.score)));
+            const podium = rows.filter(r => Number(r.rank) <= 3).slice(0, 3);
+            const rest = rows.filter(r => !podium.includes(r));
             const order = [podium[1], podium[0], podium[2]].filter(Boolean); // 2 · 1 · 3
             body = `
-                ${podium.length ? `<ol class="pl-podium" aria-label="Top three">${order.map(r => `
-                    <li class="pl-step p${r.rank}${r.is_me ? ' me' : ''}">
-                        <button type="button" class="pl-step-who" data-profile="${esc(r.user_id)}" aria-label="${esc(r.display_name)}, place ${r.rank}, ${fmt(r.score)} points">
-                            ${avatar(person(r), r.rank === 1 ? 'lg' : 'md')}
+                ${standingHTML(b, rows)}
+                ${podium.length ? `<ol class="lb-podium" aria-label="Top three">${order.map(r => `
+                    <li class="lb-step m${r.rank}${r.is_me ? ' me' : ''}">
+                        <button type="button" class="lb-step-who" data-profile="${esc(r.user_id)}" aria-label="${esc(r.is_me ? 'You' : r.display_name)}, ${ordinal(Number(r.rank))}, ${fmt(r.score)} ${B.unit}">
+                            <span class="lb-medal-ring">${avatar(person(r), Number(r.rank) === 1 ? 'lg' : 'md')}<span class="lb-medal" aria-hidden="true">${r.rank}</span></span>
                             <strong>${esc(r.is_me ? 'You' : r.display_name.split(' ')[0])}</strong>
-                            <span class="pl-step-score">${fmt(r.score)}</span>
+                            <span class="lb-step-score">${fmt(r.score)} <small>${B.unit}</small></span>
                         </button>
-                        <span class="pl-step-block"><b>${r.rank}</b></span>
+                        <span class="lb-plinth" aria-hidden="true"></span>
                     </li>`).join('')}</ol>` : ''}
-                ${rest.length ? `<ol class="pl-board" start="4">${rest.map(r => `
-                    <li class="pl-row${r.is_me ? ' me' : ''}">
-                        <span class="pl-rank">${r.rank}</span>
+                ${rest.length ? `<ol class="lb-list">${rest.map(r => `
+                    <li class="lb-row${r.is_me ? ' me' : ''}">
+                        <span class="lb-rank">${r.rank}</span>
                         <button type="button" class="row-av" data-profile="${esc(r.user_id)}" aria-label="${esc(r.display_name)}’s profile">${avatar(person(r), 'sm')}</button>
-                        <button type="button" class="pl-who" data-profile="${esc(r.user_id)}"><strong>${esc(r.is_me ? 'You' : r.display_name)}</strong><small>${detail(r)}</small></button>
-                        <span class="pl-score">${fmt(r.score)}</span>
+                        <button type="button" class="lb-who" data-profile="${esc(r.user_id)}">
+                            <strong>${esc(r.is_me ? 'You' : r.display_name)}</strong>
+                            <small>${detail(r)}</small>
+                            <span class="lb-bar" style="--w:${Math.round(100 * Number(r.score) / max)}%" aria-hidden="true"></span>
+                        </button>
+                        <span class="lb-score"><b>${fmt(r.score)}</b><small>${B.unit}</small></span>
                     </li>`).join('')}</ol>` : ''}`;
         }
         return `
             <section class="pl-section pl-leader" aria-labelledby="pl-board-h">
-                <header class="pl-sec-head">
-                    <h3 id="pl-board-h">Leaderboard</h3>
-                    ${seg('scope', [['everyone', 'Everyone'], ['friends', 'Friends']], b.scope)}
+                <header class="lb-head">
+                    <h3 id="pl-board-h">Leaderboards</h3>
+                    <p>${esc(B.about)}</p>
                 </header>
-                ${picker}
-                ${seg('period', [['today', 'Today'], ['week', 'This week'], ['month', 'This month'], ['all', 'All time']], b.period)}
-                ${body}
-                <p class="pl-note">${{ trivia: 'Daily, weekly, Bible, brain and question-of-the-day scores count. Practice rounds don’t.', games: 'Your first go at each daily puzzle counts.', contributors: '5 points a post, 2 a comment.', helpful: 'Replies and comments on other people’s posts.', active: 'Posts, comments, reactions, trivia rounds and puzzles.', xp: 'XP from trivia, games, posts and comments.', posts: 'The posts with the most reactions that you can see.' }[b.kind]}</p>
+                ${tabs}
+                ${controls}
+                <div class="lb-body${b.rows !== null && !b.loading ? ' ready' : ''}" aria-live="polite">${body}</div>
             </section>`;
     }
 
@@ -566,6 +635,7 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (act === 'practice') start('practice', b.dataset.cat);
         else if (act === 'scope' || act === 'period' || act === 'board') { P.board[act === 'board' ? 'kind' : act] = b.dataset.v; P.board.rows = null; paint(); loadBoard(); }
         else if (act === 'open-post') { app.setView('feed'); I.openEntry(b.dataset.id); }
+        else if (act === 'scroll-games') document.getElementById('pl-games-h')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         else if (act === 'vote') {
             const { data, error } = await client.rpc('diary_daily_vote', { p_choice: Number(b.dataset.i) });
             if (error) return app.showToast(error.message || 'Couldn’t save your vote');
