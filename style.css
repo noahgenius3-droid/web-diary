@@ -12947,3 +12947,95 @@ body.is-guest .post-composer, body.is-guest .fab { display: none !important; }
 .auth-resend { justify-self: start; margin-top: -4px; }
 .auth .tabs[hidden], .auth [data-show][hidden] { display: none !important; }
 .gate-guest { display: block; margin: 12px auto 0; }
+
+/* ==========================================================================
+   Chats, refined: one header (back · who · call · video · more), wallpaper edge to edge,
+   frosted header and composer floating on it. Direct messages and group chats share the look.
+   ========================================================================== */
+/* Header */
+.chat-head, .gc-head {
+    gap: 6px; padding: 8px 10px; min-height: 64px;
+    border-bottom: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    -webkit-backdrop-filter: saturate(170%) blur(18px); backdrop-filter: saturate(170%) blur(18px);
+    position: relative; z-index: 2;
+}
+.chat-head .back-chat, .gc-back { display: grid; place-items: center; width: 40px; height: 40px; margin-right: -2px; border-radius: 50%; background: none !important; color: var(--text) !important; flex: none; }
+.chat-head .back-chat .i, .gc-back .i { width: 26px; height: 26px; }
+@media (hover: hover) and (pointer: fine) { .chat-head .back-chat:hover, .gc-back:hover { background: var(--input) !important; } }
+.chat-head .chat-who { flex: none; padding: 0; border: 0; background: none; border-radius: 50%; }
+.chat-head .avatar.sm { width: 40px; height: 40px; }
+.chat-head .friend-name { padding-left: 4px; line-height: 1.2; }
+.chat-head .chat-who-name { font-size: 1.02rem; font-weight: 800; letter-spacing: -0.01em; }
+.chat-head .friend-name small { font-size: 0.78rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Round actions: calls tinted, the rest quiet */
+.chat-head .icon-btn:not(.back-chat), .gc-head .icon-btn:not(.gc-back) { width: 40px; height: 40px; flex: none; border-radius: 50%; background: none; color: var(--text); }
+.chat-head .icon-btn[data-action="call-friend"], .gc-head .gc-hbtn { background: var(--accent-soft) !important; color: var(--accent) !important; }
+.chat-head .icon-btn .i, .gc-head .icon-btn .i { width: 21px; height: 21px; }
+@media (hover: hover) and (pointer: fine) { .chat-head .icon-btn:not(.back-chat):hover, .gc-head .icon-btn:not(.gc-back):hover { background: var(--input); } }
+.chat-head .icon-btn:active, .gc-head .icon-btn:active { transform: scale(0.92); }
+.chat-head .icon-btn[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+@media (max-width: 760px) { .head-wide { display: none !important; } }
+.gc-head .gc-emoji { width: 40px; height: 40px; border-radius: 50%; font-size: 1.25rem; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 22%, var(--surface)), color-mix(in srgb, var(--accent) 8%, var(--surface))); }
+.gc-head .gc-title { padding-left: 4px; cursor: pointer; }
+.gc-head .gc-title strong { font-size: 1.02rem; font-weight: 800; letter-spacing: -0.01em; }
+.gc-head .gc-title small { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gc-online-wrap:has(#gc-online:empty) { display: none; }
+#gc-online { color: #16a34a; }
+
+/* Wallpaper: the whole chat wears it; the thread itself is see-through */
+.chat-pane.has-wallpaper .chat-thread, .gc.has-wallpaper .gc-thread { background: transparent !important; }
+.chat-pane.has-wallpaper, .gc.has-wallpaper { background-size: cover !important; }
+.has-wallpaper :is(.chat-head, .gc-head) { background: color-mix(in srgb, var(--surface) 62%, transparent); border-bottom-color: rgba(255, 255, 255, 0.08); }
+.has-wallpaper :is(.composer, .gc-compose) { background: color-mix(in srgb, var(--surface) 62%, transparent) !important; border-top-color: rgba(255, 255, 255, 0.08) !important;
+    -webkit-backdrop-filter: saturate(170%) blur(18px); backdrop-filter: saturate(170%) blur(18px); }
+.has-wallpaper .gc-pinned { background: color-mix(in srgb, var(--surface) 70%, transparent); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+.has-wallpaper .quick-reply { background: color-mix(in srgb, var(--surface) 70%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+.has-wallpaper.wp-dark .gc-typing { color: rgba(255, 255, 255, 0.85); }
+@media (prefers-reduced-transparency: reduce) {
+    .chat-head, .gc-head, .has-wallpaper :is(.composer, .gc-compose, .chat-head, .gc-head) { background: var(--surface) !important; -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+
+/* Group composer: + · message · mic (becomes send once you type) */
+.gc-compose { background: color-mix(in srgb, var(--surface) 88%, transparent); -webkit-backdrop-filter: saturate(170%) blur(18px); backdrop-filter: saturate(170%) blur(18px); }
+.gc-row { align-items: flex-end; gap: 8px; }
+.gc-plus { background: var(--input); color: var(--accent); }
+.gc-plus .i { width: 22px; height: 22px; }
+#gc-input { border-radius: 22px; background: var(--input); border-color: transparent; }
+.gc-mic { background: var(--accent); color: var(--on-accent); }
+.gc-compose:has(#gc-input:not(:placeholder-shown)) .gc-mic { display: none; }
+.gc-compose:has(#gc-input:placeholder-shown) .gc-send { display: none; }
+.gc-compose:has(.gc-rec:not([hidden])) .gc-plus { display: none; }
+
+/* Group bubbles: a touch more air, names in the author's colour-free accent, softer incoming bubbles */
+.gc-thread { padding: 12px 12px 8px; }
+.gc-bubble { box-shadow: 0 1px 1px rgba(0, 0, 0, 0.06); }
+.has-wallpaper .gc-msg:not(.mine) .gc-bubble { border-color: transparent; }
+.gc-name .gc-who-name { color: var(--accent); }
+.has-wallpaper.wp-dark .gc-name .gc-who-name { color: #fff; }
+
+/* Desktop: the back arrow on a DM closes the chat; the group chat card grows a little */
+@media (min-width: 761px) {
+    .gc { height: min(78vh, 820px); }
+}
+
+/* ---------- Phones ---------- */
+@media (max-width: 760px) {
+    /* An open chat owns the screen: the page's own top bar steps aside (it was painting over the chat header) */
+    body.chat-open .topbar { visibility: hidden; }
+    body.chat-open .chat-head { padding: max(8px, env(safe-area-inset-top)) 8px 8px 4px; }
+
+    /* Group chat: full screen like a direct message */
+    body[data-view="community"]:has(#content .gc) .topbar { visibility: hidden; }
+    body[data-view="community"]:has(#content .gc) :is(.tabbar, .fab) { display: none !important; }
+    body[data-view="community"] #content .gc {
+        position: fixed; inset: 0; z-index: 30; height: var(--vvh, 100dvh); margin: 0; border: 0; border-radius: 0;
+        grid-template-rows: auto auto minmax(0, 1fr) auto auto auto; background: var(--bg);
+    }
+    html.kb-open body[data-view="community"] #content .gc { top: var(--vvtop, 0px); }
+    body[data-view="community"] #content .gc-head { padding: max(8px, env(safe-area-inset-top)) 8px 8px 4px; }
+    body[data-view="community"] #content .gc-compose { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+}
+@media (min-width: 761px) { .gc-back { display: grid; } }
+.chat-head .friend-name { min-width: 0; }
+.chat-head .chat-who-name { display: block; max-width: 100%; padding: 0; border: 0; background: none; color: inherit; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

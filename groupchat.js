@@ -180,17 +180,15 @@ document.addEventListener('DOMContentLoaded', () => {
         return `
             <section class="gc" data-cid="${esc(community.id)}">
                 <header class="gc-head">
+                    <button type="button" class="icon-btn gc-back" data-action="gc-back" aria-label="Back to the group" title="Back to the group"><svg class="i"><use href="#i-chevron-left"/></svg></button>
                     <span class="gc-emoji" aria-hidden="true">${esc(community.emoji || '💬')}</span>
                     <div class="gc-title" role="button" tabindex="0" data-action="gc-info" aria-label="Group info">
-                        <strong>${esc(community.name)} chat</strong>
-                        <small>${members} ${members === 1 ? 'member' : 'members'} · <span id="gc-online"></span></small>
+                        <strong>${esc(community.name)}</strong>
+                        <small>${members} ${members === 1 ? 'member' : 'members'}<span class="gc-online-wrap"> · <span id="gc-online"></span></span></small>
                     </div>
-                    ${window.diaryCalls ? '<button type="button" class="gc-call" data-action="gc-call" aria-label="Start or join the group call" aria-haspopup="menu"><svg class="i"><use href="#i-phone"/></svg><span>Call</span></button>' : ''}
-                    ${window.ChatWallpaper ? '<button type="button" class="icon-btn" data-action="gc-wallpaper" aria-label="Chat wallpaper" title="Wallpaper"><svg class="i"><use href="#i-palette"/></svg></button>' : ''}
-                    <button type="button" class="icon-btn" data-action="gc-search" aria-label="Search this group chat" title="Search"><svg class="i"><use href="#i-search"/></svg></button>
-                    <button type="button" class="icon-btn" data-action="gc-gallery" aria-label="Shared media, voice, files and links" title="Media & links"><svg class="i"><use href="#i-image"/></svg></button>
-                    <button type="button" class="icon-btn" data-action="gc-recent-deleted" aria-label="Recently deleted messages" title="Recently deleted"><svg class="i"><use href="#i-history"/></svg></button>
-                    ${admin ? '<button type="button" class="icon-btn" data-action="cm-chat-settings" aria-label="Chat settings" aria-haspopup="menu"><svg class="i"><use href="#i-settings"/></svg></button>' : ''}
+                    ${window.diaryCalls ? '<button type="button" class="icon-btn gc-hbtn" data-action="gc-call-voice" aria-label="Voice call with the group" title="Voice call"><svg class="i"><use href="#i-phone"/></svg></button><button type="button" class="icon-btn gc-hbtn" data-action="gc-call-video" aria-label="Video call with the group" title="Video call"><svg class="i"><use href="#i-video"/></svg></button>' : ''}
+                    <button type="button" class="icon-btn head-wide" data-action="gc-search" aria-label="Search this group chat" title="Search"><svg class="i"><use href="#i-search"/></svg></button>
+                    <button type="button" class="icon-btn gc-more-btn" data-action="gc-head-more" data-admin="${admin ? 1 : ''}" aria-label="More options" title="More" aria-haspopup="menu"><svg class="i"><use href="#i-more"/></svg></button>
                 </header>
                 <div class="gc-pinned" id="gc-pinned" hidden></div>
                 <div class="gc-thread" id="gc-thread" role="log" aria-live="polite" aria-label="Messages"></div>
@@ -200,15 +198,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 <form class="gc-compose" data-form="gc-send" id="gc-compose">
                     <div class="gc-reply" id="gc-reply" hidden></div>
                     <div class="gc-row">
-                        <button type="button" class="gc-tool" data-action="gc-photo" aria-label="Send a photo"><svg class="i"><use href="#i-image"/></svg></button>
-                        ${window.LiveLocation && window.LiveLocation.supported ? '<button type="button" class="gc-tool" data-action="gc-location" aria-label="Share your live location"><svg class="i"><use href="#i-pin"/></svg></button>' : ''}
+                        <button type="button" class="gc-tool gc-plus" data-action="gc-attach" aria-label="Add a photo, location or contact" aria-haspopup="menu"><svg class="i"><use href="#i-plus"/></svg></button>
                         <div class="gc-rec" id="gc-rec" hidden aria-live="polite">
                             <button type="button" class="gc-tool" data-action="gc-rec-cancel" aria-label="Delete recording"><svg class="i"><use href="#i-trash"/></svg></button>
                             <span class="rec-dot" aria-hidden="true"></span><span class="gc-rec-time" id="gc-rec-time">0:00</span>
                             <span class="gc-rec-wave" id="gc-rec-wave" aria-hidden="true"></span>
                         </div>
                         <textarea id="gc-input" rows="1" maxlength="4000" placeholder="Message ${esc(community.name)}…" aria-label="Message" enterkeyhint="send"></textarea>
-                        <button type="button" class="gc-tool" data-action="gc-contact" aria-label="Share a contact"><svg class="i"><use href="#i-contact"/></svg></button>
                         <button type="button" class="gc-tool gc-mic" id="gc-mic" data-action="gc-mic" aria-label="Record a voice note"><svg class="i"><use href="#i-mic"/></svg></button>
                         <button type="submit" class="gc-send" aria-label="Send"><svg class="i"><use href="#i-send"/></svg></button>
                     </div>
@@ -289,7 +285,8 @@ document.addEventListener('DOMContentLoaded', () => {
         thread.innerHTML = threadHTML();
         hydrateStorage(thread);
         if (window.LiveLocation) window.LiveLocation.hydrate(thread);
-        if (window.ChatWallpaper && !thread.dataset.wp) { thread.dataset.wp = '1'; window.ChatWallpaper.apply(thread, 'gc:' + g.cid); }
+        const box = thread.closest('.gc');
+        if (window.ChatWallpaper && box && !box.dataset.wp) { box.dataset.wp = '1'; window.ChatWallpaper.apply(box, 'gc:' + g.cid); }
         if (stick || near) {
             thread.scrollTop = thread.scrollHeight;
             g.unseen = 0;
@@ -815,7 +812,29 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         'gc-wallpaper': () => {
             if (!window.ChatWallpaper || !g.cid) return;
-            window.ChatWallpaper.open('gc:' + g.cid, { label: cm() ? cm().name : '', onDone: () => window.ChatWallpaper.apply(document.getElementById('gc-thread'), 'gc:' + g.cid) });
+            window.ChatWallpaper.open('gc:' + g.cid, { label: cm() ? cm().name : '', onDone: () => window.ChatWallpaper.apply(document.querySelector('.gc'), 'gc:' + g.cid) });
+        },
+        'gc-call-voice': () => { if (window.diaryCalls && cm() && window.diaryCalls.activeTopic() === window.diaryCalls.topicFor(cm())) return C.joinCall(); C.joinCall({ video: false }); },
+        'gc-call-video': () => { if (window.diaryCalls && cm() && window.diaryCalls.activeTopic() === window.diaryCalls.topicFor(cm())) return C.joinCall(); C.joinCall({ video: true }); },
+        'gc-back': () => app.actions['cm-tab'] && app.actions['cm-tab']({ dataset: { tab: 'posts' } }),
+        'gc-attach': el => {
+            const run = name => setTimeout(() => app.actions[name](el), 0);
+            app.openPopover(el, [
+                { label: 'Photo', icon: 'i-image', onClick: () => run('gc-photo') },
+                window.LiveLocation && window.LiveLocation.supported ? { label: 'Live location', icon: 'i-pin', onClick: () => run('gc-location') } : null,
+                { label: 'Contact', icon: 'i-contact', onClick: () => run('gc-contact') }
+            ].filter(Boolean));
+        },
+        'gc-head-more': el => {
+            const run = name => setTimeout(() => app.actions[name] && app.actions[name](el), 0);
+            app.openPopover(el, [
+                { label: 'Group info', icon: 'i-info', onClick: () => run('gc-info') },
+                { label: 'Search in chat', icon: 'i-search', onClick: () => run('gc-search') },
+                { label: 'Media, files & links', icon: 'i-image', onClick: () => run('gc-gallery') },
+                window.ChatWallpaper ? { label: 'Wallpaper', icon: 'i-palette', onClick: () => run('gc-wallpaper') } : null,
+                { label: 'Recently deleted', icon: 'i-history', onClick: () => run('gc-recent-deleted') },
+                el.dataset.admin ? { label: 'Chat settings', icon: 'i-settings', onClick: () => run('cm-chat-settings') } : null
+            ].filter(Boolean));
         },
         'gc-retry': () => { g.loading = true; g.error = false; paint(); load(); },
         'gc-jump': () => {

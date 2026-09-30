@@ -291,7 +291,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // An open conversation takes the whole phone screen (see .chat-open in style.css)
         document.body.classList.toggle('chat-open', view === 'messages' && signedIn() && !!s.activeFriend);
         if (view === 'messages' && window.LiveLocation) window.LiveLocation.hydrate(content);
-        if (view === 'messages' && s.activeFriend && window.ChatWallpaper) window.ChatWallpaper.apply(document.getElementById('chat-thread'), 'dm:' + s.activeFriend);
+        if (view === 'messages' && s.activeFriend && window.ChatWallpaper) window.ChatWallpaper.apply(content.querySelector('.chat-pane'), 'dm:' + s.activeFriend);
         if (view === 'home') paintPresence();
         if (view === 'feed') {
             hydrateStorage(content);
@@ -4757,16 +4757,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         return `
             <header class="chat-head">
-                <button class="icon-btn back-chat" data-action="close-chat" aria-label="Back to inbox"><svg class="i"><use href="#i-back"/></svg></button>
+                <button class="icon-btn back-chat" data-action="close-chat" aria-label="Back to inbox" title="Back to inbox"><svg class="i"><use href="#i-chevron-left"/></svg></button>
                 <button type="button" class="chat-who" data-profile="${esc(friend.id)}" aria-label="View ${esc(friend.display_name)}’s profile">${avatar(friend, 'sm')}</button>
                 <div class="friend-name"><button type="button" class="chat-who-name" data-profile="${esc(friend.id)}">${esc(friend.display_name)}</button><small data-status="${esc(friend.id)}" data-with-status data-away="@${esc(friend.username)}">${esc([statusOf(friend.id) ? statusOf(friend.id).label : '', presenceText(friend.id)].filter(Boolean).join(' · ') || `@${friend.username}`)}</small></div>
                 ${window.diaryCalls && s.allowCalls.get(friend.id) !== 'nobody' && !(window.diarySafety && window.diarySafety.isBlocked(friend.id)) ? `<button class="icon-btn accent" data-action="call-friend" data-id="${esc(friend.id)}" aria-label="Voice call ${esc(friend.display_name)}" title="Voice call"><svg class="i"><use href="#i-phone"/></svg></button><button class="icon-btn accent" data-action="call-friend" data-video="1" data-id="${esc(friend.id)}" aria-label="Video call ${esc(friend.display_name)}" title="Video call"><svg class="i"><use href="#i-video"/></svg></button>` : ''}
-                <button class="icon-btn" data-action="chat-ai" aria-label="AI tools: summarise or suggest replies" title="AI tools" aria-haspopup="menu"><svg class="i"><use href="#i-sparkle"/></svg></button>
-                <button class="icon-btn" data-action="chat-search" aria-label="Search this chat" title="Search"><svg class="i"><use href="#i-search"/></svg></button>
-                <button class="icon-btn incognito-btn" data-action="chat-incognito" aria-pressed="${!!inc}" aria-label="Incognito chat${inc ? ' (on)' : ''}" title="Incognito chat"><svg class="i"><use href="#i-incognito"/></svg></button>
-                <button class="icon-btn refresh-btn" data-action="chat-refresh" aria-label="Refresh this chat" title="Refresh"><svg class="i"><use href="#i-refresh"/></svg></button>
-                <button class="icon-btn" data-action="chat-wallpaper" aria-label="Chat wallpaper" title="Wallpaper"><svg class="i"><use href="#i-palette"/></svg></button>
-                <button class="icon-btn" data-action="toggle-info" aria-pressed="${s.showInfo}" aria-label="Contact details" title="Contact details"><svg class="i"><use href="#i-info"/></svg></button>
+                <button class="icon-btn head-wide" data-action="chat-search" aria-label="Search this chat" title="Search"><svg class="i"><use href="#i-search"/></svg></button>
+                <button class="icon-btn head-wide" data-action="toggle-info" aria-pressed="${s.showInfo}" aria-label="Contact details" title="Contact details"><svg class="i"><use href="#i-info"/></svg></button>
+                <button class="icon-btn head-more" data-action="chat-more" aria-label="More options" title="More" aria-haspopup="menu"><svg class="i"><use href="#i-more"/></svg></button>
             </header>
             ${inc ? incognitoBanner(friend, inc) : ''}
             <div class="chat-thread" id="chat-thread">${body}</div>
@@ -5141,7 +5138,7 @@ document.addEventListener('DOMContentLoaded', () => {
         'chat-wallpaper': () => {
             const friend = s.friends.find(f => f.id === s.activeFriend);
             if (!friend || !window.ChatWallpaper) return;
-            window.ChatWallpaper.open('dm:' + friend.id, { label: friend.display_name, onDone: () => window.ChatWallpaper.apply(document.getElementById('chat-thread'), 'dm:' + friend.id) });
+            window.ChatWallpaper.open('dm:' + friend.id, { label: friend.display_name, onDone: () => window.ChatWallpaper.apply(content.querySelector('.chat-pane'), 'dm:' + friend.id) });
         },
         'vc-send': () => finishVoiceComment(true),
         'vc-cancel': () => finishVoiceComment(false),
@@ -5249,6 +5246,20 @@ document.addEventListener('DOMContentLoaded', () => {
             if (friend && window.diaryChatTools) window.diaryChatTools.openGallery(dmConv(friend));
         },
         'chat-incognito': el => incognitoMenu(el),
+        'chat-more': el => {
+            const friend = s.friends.find(f => f.id === s.activeFriend);
+            if (!friend) return;
+            const inc = incognitoOf(friend.id);
+            const run = (name, anchor = el) => setTimeout(() => app.actions[name] && app.actions[name](anchor), 0);
+            app.openPopover(el, [
+                { label: 'Search in chat', icon: 'i-search', onClick: () => run('chat-search') },
+                window.diaryChatTools ? { label: 'AI: summarise or suggest replies', icon: 'i-sparkle', onClick: () => run('chat-ai') } : null,
+                { label: inc ? 'Incognito: on' : 'Incognito chat', icon: 'i-incognito', onClick: () => run('chat-incognito') },
+                window.ChatWallpaper ? { label: 'Wallpaper', icon: 'i-palette', onClick: () => run('chat-wallpaper') } : null,
+                { label: s.showInfo ? 'Hide contact details' : 'Contact details', icon: 'i-info', onClick: () => run('toggle-info') },
+                { label: 'Refresh chat', icon: 'i-refresh', onClick: () => run('chat-refresh') }
+            ].filter(Boolean));
+        },
         'close-chat': () => {
             if (s.activeFriend) pruneVanished(s.activeFriend, true);
             // Going back through history keeps Back / Forward in step with what's on screen
