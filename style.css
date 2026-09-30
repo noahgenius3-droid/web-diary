@@ -13618,3 +13618,35 @@ body[data-view="feed"] .post.ig .post-text { font-size: 1.02rem; line-height: 1.
 .pop-item.pop-invite { color: var(--accent); font-weight: 700; }
 .pop-item.pop-invite span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pop-item.pop-invite .i { color: var(--accent); }
+
+/* ---------- Profile: compact numbers, and a welcome for newcomers ---------- */
+.pf-stats { display: flex !important; flex-wrap: wrap; align-items: baseline; gap: 4px 18px; margin-top: 14px; padding-top: 12px; }
+.pf-stats .pf-stat { display: inline; min-height: 0; padding: 0; border: 0; background: none; color: var(--text-muted); font: inherit; font-size: 0.92rem; text-align: left; }
+.pf-stats .pf-stat b { color: var(--text); font-size: 1rem; font-weight: 800; margin-right: 2px; font-variant-numeric: tabular-nums; }
+.pf-stats button.pf-stat { cursor: pointer; }
+.pf-stats button.pf-stat::after { content: ''; position: absolute; inset: -8px -4px; }
+.pf-stats button.pf-stat { position: relative; }
+@media (hover: hover) and (pointer: fine) { .pf-stats button.pf-stat:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; } }
+.pf-substats { margin: 6px 0 0; color: var(--text-muted); font-size: 0.84rem; }
+.pf-new { display: flex; align-items: center; gap: 12px; margin-top: 14px; padding: 12px 12px 12px 14px; border-radius: 16px; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, var(--surface)), var(--surface)); border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border)); }
+.pf-new-ic { display: grid; place-items: center; flex: none; width: 38px; height: 38px; border-radius: 12px; background: linear-gradient(135deg, #4f46e5, #db2777); color: #fff; }
+.pf-new-ic .i { width: 20px; height: 20px; }
+.pf-new-text { flex: 1; min-width: 0; display: grid; gap: 2px; line-height: 1.35; }
+.pf-new-text span { color: var(--text-muted); font-size: 0.88rem; }
+.pf-new .pf-btn { flex: none; }
+@media (max-width: 480px) { .pf-new { flex-wrap: wrap; } .pf-new .pf-btn { width: 100%; justify-content: center; } }
+.pf-welcome { display: grid; gap: 10px; margin-top: 14px; padding: 14px 16px; border-radius: 16px; border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border)); background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, var(--surface)), var(--surface)); }
+.pf-welcome header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.pf-welcome header strong { font-size: 1.02rem; font-weight: 800; letter-spacing: -0.01em; }
+.pf-welcome header span { color: var(--text-muted); font-size: 0.82rem; font-weight: 700; white-space: nowrap; }
+.pf-welcome-bar { height: 6px; border-radius: 999px; background: var(--input); overflow: hidden; }
+.pf-welcome-bar i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #4f46e5, #db2777); transition: width 400ms cubic-bezier(0.2, 0.9, 0.3, 1); }
+.pf-welcome ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.pf-welcome li { display: flex; align-items: center; gap: 10px; min-height: 36px; }
+.pf-step-dot { display: grid; place-items: center; flex: none; width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--border); }
+.pf-welcome li.done .pf-step-dot { border-color: #16a34a; background: #16a34a; color: #fff; }
+.pf-step-dot .i { width: 13px; height: 13px; }
+.pf-step-label { flex: 1; font-size: 0.92rem; }
+.pf-welcome li.done .pf-step-label { color: var(--text-muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--text-muted) 60%, transparent); }
+.pf-welcome .link-btn { font-weight: 800; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

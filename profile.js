@@ -95,7 +95,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${P.error ? '<button class="primary-btn" style="margin-top:14px" data-pf="retry">Try again</button>' : ''}</div>`;
         }
         const p = P.data;
-        app.setTitle(p.display_name);
+        app.setTitle('Profile'); // the page is named for what it is; the person's name is right below
         return `
             <div class="pf">
                 ${headerHTML(p)}
@@ -124,9 +124,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const since = p.created_at ? new Date(p.created_at).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) : '';
         const following = s.following && s.following.has(p.id);
         const stats = p.stats;
-        const stat = (key, label, n) => {
-            const inner = `<b>${fmt(n)}</b><span>${label}</span>`;
-            return key ? `<button type="button" class="pf-stat" data-pf="list" data-which="${key}" aria-label="${n} ${label} — see who">${inner}</button>` : `<div class="pf-stat">${inner}</div>`;
+        const stat = (key, one, many, n) => {
+            const inner = `<b>${fmt(n)}</b> ${n === 1 ? one : many}`;
+            return key ? `<button type="button" class="pf-stat" data-pf="list" data-which="${key}" aria-label="${n} ${n === 1 ? one : many} — see who">${inner}</button>` : `<span class="pf-stat">${inner}</span>`;
         };
         const btn = (act, icon, label, cls = '') => `<button type="button" class="pf-btn ${cls}" data-pf="${act}"><svg class="i"><use href="#${icon}"/></svg><span>${label}</span></button>`;
         let actions;
@@ -174,15 +174,54 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${p.blocked ? '<p class="ps-note">You blocked this person. They can’t message, call or see your posts. Unblock to see their profile.</p>'
                     : p.limited ? '<p class="ps-note">Some of this profile is only visible to their friends.</p>' : ''}
                 ${stats ? `<div class="pf-stats">
-                    ${stat('', 'Posts', stats.posts)}
-                    ${stat('friends', 'Friends', stats.friends || 0)}
-                    ${stat('followers', 'Followers', stats.followers)}
-                    ${stat('following', 'Following', stats.following)}
-                    ${stat('', 'Reactions', stats.reactions)}
-                    ${stat('', 'Reposts', stats.reposts)}
+                    ${stat('', 'post', 'posts', stats.posts)}
+                    ${stat('friends', 'friend', 'friends', stats.friends || 0)}
+                    ${stat('followers', 'follower', 'followers', stats.followers)}
+                    ${stat('following', 'following', 'following', stats.following)}
                 </div>
+                ${stats.reactions || stats.reposts ? `<p class="pf-substats">${[stats.reactions ? `${fmt(stats.reactions)} ${stats.reactions === 1 ? 'reaction' : 'reactions'} on their posts` : '', stats.reposts ? `${fmt(stats.reposts)} ${stats.reposts === 1 ? 'repost' : 'reposts'}` : ''].filter(Boolean).join(' · ')}</p>` : ''}
+                ${newcomerHTML(p)}
                 ${friendsStrip(p)}` : p.blocked ? '' : '<p class="pf-private muted small"><svg class="i"><use href="#i-lock"/></svg>Their numbers and follower lists are private.</p>'}
             </header>`;
+    }
+
+    function newcomerHTML(p) {
+        if (!p.created_at || p.blocked) return '';
+        const days = Math.floor((Date.now() - Date.parse(p.created_at)) / 86400000);
+        if (days > 14) return '';
+        const when = days <= 0 ? 'today' : days === 1 ? 'yesterday' : `${days} days ago`;
+        const first = esc((p.display_name || '').split(' ')[0] || 'them');
+        if (p.id !== me()) {
+            const rel = relationOf(p.id);
+            const action = rel === 'friend' ? '<button type="button" class="pf-btn primary" data-pf="message"><svg class="i"><use href="#i-chat"/></svg><span>Say hello</span></button>'
+                : rel === 'none' ? '<button type="button" class="pf-btn primary" data-pf="add"><svg class="i"><use href="#i-user-plus"/></svg><span>Add friend</span></button>' : '';
+            return `
+                <section class="pf-new">
+                    <span class="pf-new-ic" aria-hidden="true"><svg class="i"><use href="#i-sparkle"/></svg></span>
+                    <div class="pf-new-text"><strong>New to Cordial</strong><span>${first} joined ${when}. Say hello and help them feel at home.</span></div>
+                    ${action}
+                </section>`;
+        }
+        const st = p.stats || {};
+        const steps = [
+            { done: !!p.avatar_path, label: 'Add a profile photo', act: 'photo' },
+            { done: !!(p.bio || '').trim(), label: 'Write a short bio', act: 'edit' },
+            { done: (st.posts || 0) > 0, label: 'Share your first post', act: 'go-feed' },
+            { done: (st.friends || 0) > 0, label: 'Make your first friend', act: 'invite' }
+        ];
+        const doneCount = steps.filter(x => x.done).length;
+        if (doneCount === steps.length) return '';
+        return `
+            <section class="pf-welcome" aria-label="Getting started">
+                <header><strong>Welcome to Cordial, ${first}!</strong><span>${doneCount} of ${steps.length} done</span></header>
+                <div class="pf-welcome-bar" aria-hidden="true"><i style="width:${Math.round(doneCount / steps.length * 100)}%"></i></div>
+                <ul>${steps.map(x => `
+                    <li class="${x.done ? 'done' : ''}">
+                        <span class="pf-step-dot" aria-hidden="true">${x.done ? '<svg class="i"><use href="#i-check"/></svg>' : ''}</span>
+                        <span class="pf-step-label">${x.label}</span>
+                        ${x.done ? '<span class="sr-only">Done</span>' : `<button type="button" class="link-btn accent" data-pf="${x.act}">${x.act === 'invite' ? 'Invite' : x.act === 'go-feed' ? 'Post' : x.act === 'photo' ? 'Add' : 'Write'}</button>`}
+                    </li>`).join('')}</ul>
+            </section>`;
     }
 
     function friendsStrip(p) {
@@ -469,6 +508,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 try { await navigator.share({ title: `${p.display_name} on Cordial`, url }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
             }
             I.copyText(url, 'Profile link copied');
+        } else if (what === 'go-feed') {
+            app.setView('feed');
+            setTimeout(() => document.getElementById('feed-text')?.focus(), 400);
         } else if (what === 'invite') {
             app.setView('invite');
         } else if (what === 'privacy') {
