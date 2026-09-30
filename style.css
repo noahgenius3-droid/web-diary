@@ -13615,3 +13615,6 @@ body[data-view="feed"] .post.ig .post-text { font-size: 1.02rem; line-height: 1.
 @media (hover: hover) and (pointer: fine) { .mention-opt:hover { background: var(--input); } }
 .inv { grid-template-columns: minmax(0, 1fr); }
 .inv > *, .inv-hero > *, .inv-sec > * { min-width: 0; }
+.pop-item.pop-invite { color: var(--accent); font-weight: 700; }
+.pop-item.pop-invite span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pop-item.pop-invite .i { color: var(--accent); }

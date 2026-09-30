@@ -137,9 +137,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // A way in from the menu
     const previousMenu = app.hooks.menuItems;
-    app.hooks.menuItems = () => [
-        ...(previousMenu ? previousMenu() : []),
-        { label: 'Invite friends', icon: 'i-user-plus', onClick: () => app.setView('invite') }
-    ];
+    // In the More menu on every device (Android, iPhone, desktop): your actual link, one tap to copy or share
+    app.hooks.menuItems = () => {
+        const before = previousMenu ? previousMenu() : [];
+        if (!(social.isSignedIn && social.isSignedIn()) || !s.profile || (social.isGuest && social.isGuest())) return before;
+        const link = linkFor(s.profile.username);
+        return [
+            { heading: 'Your invite link' },
+            { label: link.replace(/^https?:\/\//, ''), icon: 'i-link', cls: 'pop-invite', onClick: () => copy(link, 'Invite link copied — paste it anywhere') },
+            { label: 'Share invite', icon: 'i-share', onClick: async () => {
+                if (navigator.share) {
+                    try { await navigator.share({ title: 'Join me on Cordial', text: message(link).replace(`: ${link}`, ''), url: link }); return; }
+                    catch (err) { if (err && err.name === 'AbortError') return; }
+                }
+                app.setView('invite');
+            } },
+            { label: 'Invite friends', icon: 'i-user-plus', onClick: () => app.setView('invite') },
+            { sep: true },
+            ...before
+        ];
+    };
     window.diaryInvite = { open: () => app.setView('invite'), link: () => s.profile && linkFor(s.profile.username) };
 });
