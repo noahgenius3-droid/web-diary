@@ -328,6 +328,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     : list.length ? `<div class="ex-grid">${list.map((p, i) => postTile(p, i)).join('')}</div>`
                     : '<div class="ex-empty small"><strong>No posts yet</strong><span>When friends share entries, the most loved ones show up here.</span></div>'}</section>`);
         }
+        if (tab === 'all' && window.diaryPlay) sections.unshift(window.diaryPlay.exploreSection());
         if (tab === 'all') {
             sections.push(newsSection('world', true));
             sections.push(newsSection('local', true));

@@ -2495,7 +2495,7 @@ document.addEventListener('DOMContentLoaded', () => {
             { label: 'Voice note', icon: 'i-wave', tile: true, cls: 'mobile-only', onClick: () => window.diaryTranscribe && window.diaryTranscribe.open() },
             ...[['archive', 'Archive', 'i-archive'], ['trash', 'Trash', 'i-trash']].map(tile),
             { heading: 'Discover', cls: 'mobile-only' },
-            ...[['reels', 'Reels', 'i-reel'], ['library', 'Library', 'i-book'], ['market', 'Market', 'i-store']].map(tile),
+            ...[['play', 'Play & learn', 'i-trophy'], ['reels', 'Reels', 'i-reel'], ['library', 'Library', 'i-book'], ['market', 'Market', 'i-store']].map(tile),
             { sep: true, cls: 'mobile-only' },
             ...(hooks.menuItems ? hooks.menuItems() : []),
             { label: 'Refresh', icon: 'i-refresh', onClick: () => refreshView() },

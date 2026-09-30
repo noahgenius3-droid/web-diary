@@ -17,12 +17,12 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=47">
-    <link rel="stylesheet" href="photoedit.css?v=47">
-    <link rel="stylesheet" href="speak.css?v=47">
-    <link rel="stylesheet" href="zoom.css?v=47">
-    <link rel="stylesheet" href="location.css?v=47">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,400..600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css?v=48">
+    <link rel="stylesheet" href="photoedit.css?v=48">
+    <link rel="stylesheet" href="speak.css?v=48">
+    <link rel="stylesheet" href="zoom.css?v=48">
+    <link rel="stylesheet" href="location.css?v=48">
     <script>
         // Apply saved theme before paint to avoid a flash
         try {
@@ -113,6 +113,15 @@
         <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.9A8 8 0 1 1 21 12z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
         <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9zM19 15l.9 2.1 2.1.9-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z" fill="currentColor"/></symbol>
         <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-2.5-6.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+        <symbol id="i-g-question" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9.3 9.4a2.8 2.8 0 1 1 3.9 2.6c-.8.3-1.2 1-1.2 1.8v.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="17.2" r="1.2" fill="currentColor"/></symbol>
+        <symbol id="i-g-puzzle" viewBox="0 0 24 24"><path d="M5 7h3.2a2.3 2.3 0 1 1 4.6 0H16a1 1 0 0 1 1 1v3.2a2.3 2.3 0 1 1 0 4.6V19a1 1 0 0 1-1 1h-3.2a2.3 2.3 0 1 0-4.6 0H5a1 1 0 0 1-1-1v-3.2a2.3 2.3 0 1 0 0-4.6V8a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+        <symbol id="i-g-columns" viewBox="0 0 24 24"><path d="M3 20h18M4 9h16M12 3.5 4 7.5V9h16V7.5z M6.5 9v8.5M10 9v8.5M14 9v8.5M17.5 9v8.5M4 17.5h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+        <symbol id="i-g-flask" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6.2L5 18a2 2 0 0 0 1.8 3h10.4A2 2 0 0 0 19 18l-5-8.8V3M7.3 14.5h9.4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+        <symbol id="i-g-news" viewBox="0 0 24 24"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h10A1.5 1.5 0 0 1 17 5.5V19a1 1 0 0 0 2 0V9h1a1 1 0 0 1 1 1v8.5a2.5 2.5 0 0 1-2.5 2.5h-13A1.5 1.5 0 0 1 4 19.5zM7.5 8h6M7.5 12h6M7.5 16h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+        <symbol id="i-g-ball" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="m12 7.5 3.6 2.6-1.4 4.2H9.8l-1.4-4.2zM12 3v4.5M20.6 9.4l-5 .7M17.3 19.4l-3.1-5.1M6.7 19.4l3.1-5.1M3.4 9.4l5 .7" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+        <symbol id="i-g-cap" viewBox="0 0 24 24"><path d="M2.5 9 12 4.5 21.5 9 12 13.5zM6.5 11v4.8c0 1.3 2.5 3.2 5.5 3.2s5.5-1.9 5.5-3.2V11M21.5 9v5.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+        <symbol id="i-g-dice" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="8.8" cy="8.8" r="1.4" fill="currentColor"/><circle cx="15.2" cy="8.8" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="8.8" cy="15.2" r="1.4" fill="currentColor"/><circle cx="15.2" cy="15.2" r="1.4" fill="currentColor"/></symbol>
+        <symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 21a6 6 0 0 0 6-6c0-3.6-2.4-5.8-3.6-8.4-.3 1.9-1.2 3-2.4 3.6.2-2.7-1-5.2-3-7.2.2 3-1.6 4.8-2.8 6.6A7.7 7.7 0 0 0 6 15a6 6 0 0 0 6 6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
         <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M8 4h8v5a4 4 0 0 1-8 0V4zM8 6H5a2 2 0 0 0 2 4h1M16 6h3a2 2 0 0 1-2 4h-1M12 13v4M8 21h8M9 17h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
         <symbol id="i-thumb" viewBox="0 0 24 24"><path d="M7 10v11H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h3zm0 0 4-7a2.2 2.2 0 0 1 2.9 2.6L13 9h5.7a2 2 0 0 1 2 2.4l-1.5 7.6a2.5 2.5 0 0 1-2.5 2H7" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
         <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
@@ -744,35 +753,35 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
-    <script src="config.js?v=47"></script>
-    <script src="rich.js?v=47"></script>
-    <script src="media.js?v=47"></script>
-    <script src="wallpaper.js?v=47"></script>
-    <script src="dilute.js?v=47"></script>
-    <script src="script.js?v=47"></script>
-    <script src="social.js?v=47"></script>
-    <script src="sync.js?v=47"></script>
-    <script src="stories.js?v=47"></script>
-    <script src="library.js?v=47"></script>
-    <script src="market.js?v=47"></script>
-    <script src="community.js?v=47"></script>
-    <script src="groupchat.js?v=47"></script>
-    <script src="live.js?v=47"></script>
-    <script src="explore.js?v=47"></script>
-    <script src="call.js?v=47"></script>
-    <script src="profile.js?v=47"></script>
-    <script src="schedule.js?v=47"></script>
-    <script src="play.js?v=47"></script>
-    <script src="chattools.js?v=47"></script>
-    <script src="safety.js?v=47"></script>
-    <script src="notify.js?v=47"></script>
-    <script src="settings.js?v=47"></script>
-    <script src="transcribe.js?v=47"></script>
-    <script src="ai.js?v=47"></script>
-    <script src="photoedit.js?v=47"></script>
-    <script src="speak.js?v=47"></script>
-    <script src="zoom.js?v=47"></script>
-    <script src="location.js?v=47"></script>
+    <script src="config.js?v=48"></script>
+    <script src="rich.js?v=48"></script>
+    <script src="media.js?v=48"></script>
+    <script src="wallpaper.js?v=48"></script>
+    <script src="dilute.js?v=48"></script>
+    <script src="script.js?v=48"></script>
+    <script src="social.js?v=48"></script>
+    <script src="sync.js?v=48"></script>
+    <script src="stories.js?v=48"></script>
+    <script src="library.js?v=48"></script>
+    <script src="market.js?v=48"></script>
+    <script src="community.js?v=48"></script>
+    <script src="groupchat.js?v=48"></script>
+    <script src="live.js?v=48"></script>
+    <script src="explore.js?v=48"></script>
+    <script src="call.js?v=48"></script>
+    <script src="profile.js?v=48"></script>
+    <script src="schedule.js?v=48"></script>
+    <script src="play.js?v=48"></script>
+    <script src="chattools.js?v=48"></script>
+    <script src="safety.js?v=48"></script>
+    <script src="notify.js?v=48"></script>
+    <script src="settings.js?v=48"></script>
+    <script src="transcribe.js?v=48"></script>
+    <script src="ai.js?v=48"></script>
+    <script src="photoedit.js?v=48"></script>
+    <script src="speak.js?v=48"></script>
+    <script src="zoom.js?v=48"></script>
+    <script src="location.js?v=48"></script>
     <script>
         // Lift the splash once the first screen is drawn — after its intro has had time to play, never longer than 4s
         (function () {

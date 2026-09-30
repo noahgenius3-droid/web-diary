@@ -11,18 +11,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const content = document.getElementById('content');
     const SECONDS = 30;
 
+    // Topics and games each have a drawn icon; games also have a colour of their own (see .g-* in style.css)
     const CATS = {
-        bible: ['📖', 'Bible'], general: ['🌍', 'General knowledge'], history: ['🏛️', 'History'], science: ['🔬', 'Science & tech'],
-        current: ['📰', 'Current affairs'], sports: ['⚽', 'Sports'], education: ['🎓', 'Education'], brain: ['🧩', 'Brain teasers'], random: ['🎲', 'Random mix']
+        bible: ['i-book', 'Bible'], general: ['i-globe', 'General knowledge'], history: ['i-g-columns', 'History'], science: ['i-g-flask', 'Science & tech'],
+        current: ['i-g-news', 'Current affairs'], sports: ['i-g-ball', 'Sports'], education: ['i-g-cap', 'Education'], brain: ['i-g-puzzle', 'Brain teasers'], random: ['i-g-dice', 'Random mix']
     };
     const KINDS = {
-        daily: { title: 'Daily trivia', sub: '10 questions · new every day', emoji: '🧠' },
-        weekly: { title: 'Weekly challenge', sub: '20 questions · new every Monday', emoji: '🏆' },
-        bible: { title: 'Bible challenge', sub: '5 questions · daily', emoji: '📖' },
-        brain: { title: 'Brain challenge', sub: '1 puzzle · daily', emoji: '🧩' },
-        qotd: { title: 'Question of the day', sub: 'See how everyone answered', emoji: '❓' },
-        practice: { title: 'Practice', sub: '10 questions', emoji: '🎯' }
+        daily: { title: 'Daily trivia', sub: 'Ten questions, the same for everyone. New every day.', icon: 'i-g-question', emoji: '🧠' },
+        weekly: { title: 'Weekly challenge', sub: 'Twenty questions. New every Monday.', icon: 'i-trophy', emoji: '🏆' },
+        bible: { title: 'Bible challenge', sub: 'Five questions from Scripture.', icon: 'i-book', emoji: '📖' },
+        brain: { title: 'Brain challenge', sub: 'One puzzle. Think before you tap.', icon: 'i-g-puzzle', emoji: '🧩' },
+        qotd: { title: 'Question of the day', sub: 'Then see how everyone answered.', icon: 'i-sparkle', emoji: '❓' },
+        practice: { title: 'Practice', sub: '10 questions', icon: 'i-g-dice', emoji: '🎯' }
     };
+    const ic = (id, cls = '') => `<svg class="i${cls ? ` ${cls}` : ''}" aria-hidden="true"><use href="#${id}"/></svg>`;
 
     const P = { today: null, stats: null, loading: false, board: { period: 'week', scope: 'everyone', rows: null, loading: false }, qotd: null };
     const me = () => s.profile && s.profile.id;
@@ -57,149 +59,204 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------- The page ----------
     function statusOf(kind) {
         const t = P.stats && P.stats.today && P.stats.today[kind];
-        if (!t) return { label: 'Play', done: false };
-        if (t.done) return { label: `${t.correct}/${t.total} · ${fmt(t.score)} pts`, done: true };
-        return { label: 'Continue', done: false };
+        if (!t) return { label: 'Play', done: false, started: false };
+        if (t.done) return { label: `${t.correct}/${t.total} · ${fmt(t.score)} pts`, done: true, correct: t.correct, total: t.total };
+        return { label: 'Continue', done: false, started: true };
     }
-    function challengeCard(kind) {
+
+    // The lead tile: a small stack of question cards, drawn — no picture needed
+    const LEAD_ART = `
+        <svg class="g-art" viewBox="0 0 160 120" aria-hidden="true">
+            <rect x="46" y="22" width="76" height="92" rx="12" transform="rotate(-10 84 68)" class="g-art-back"/>
+            <rect x="40" y="16" width="76" height="92" rx="12" transform="rotate(6 78 62)" class="g-art-mid"/>
+            <rect x="42" y="12" width="76" height="92" rx="12" class="g-art-front"/>
+            <path d="M68 48a12 12 0 1 1 17 10.9c-3 1.4-5 3.9-5 7.1v3" class="g-art-mark"/>
+            <circle cx="80" cy="80" r="3.4" class="g-art-dot"/>
+        </svg>`;
+
+    function gameTile(kind, lead = false) {
         const k = KINDS[kind];
         const st = statusOf(kind);
+        const action = st.done ? (kind === 'qotd' ? 'See answers' : 'See result') : st.started ? 'Continue' : 'Play';
         return `
-            <button type="button" class="pl-card pl-${kind}${st.done ? ' done' : ''}" data-pl="start" data-kind="${kind}">
-                <span class="pl-emoji" aria-hidden="true">${k.emoji}</span>
-                <span class="pl-card-text"><strong>${k.title}</strong><small>${k.sub}</small></span>
-                <span class="pl-status${st.done ? ' ok' : ''}">${st.done ? `<svg class="i"><use href="#i-check"/></svg>${esc(st.label)}` : esc(st.label)}</span>
+            <button type="button" class="g-tile g-${kind}${lead ? ' lead' : ''}${st.done ? ' done' : ''}" data-pl="start" data-kind="${kind}"
+                aria-label="${esc(k.title)} — ${st.done ? `done, ${esc(st.label)}` : action}">
+                <span class="g-field">${lead ? LEAD_ART : ic(k.icon, 'g-glyph')}</span>
+                <span class="g-text">
+                    <strong>${k.title}</strong>
+                    <small>${k.sub}</small>
+                    <span class="g-go${st.done ? ' ok' : ''}">${st.done ? `${ic('i-check')}${esc(st.label)}` : `${action}${ic('i-forward')}`}</span>
+                </span>
             </button>`;
     }
-    function wordCard(w) {
+
+    function wordPanel(w) {
         if (!w) return '';
         return `
-            <section class="pl-daily pl-word">
-                <p class="pl-kicker">Word of the day</p>
-                <h3>${esc(w.word)} <small>${esc(w.part || '')}</small></h3>
-                <p>${esc(w.meaning)}</p>
-                <p class="pl-example">“${esc(w.example)}”</p>
-                <div class="pl-daily-foot">
-                    ${'speechSynthesis' in window ? `<button type="button" class="chip" data-pl="say" data-word="${esc(w.word)}"><svg class="i"><use href="#i-volume"/></svg>Hear it</button>` : ''}
-                    <button type="button" class="chip" data-pl="share-word"><svg class="i"><use href="#i-share"/></svg>Share</button>
+            <section class="pl-panel pl-word" aria-labelledby="pl-word-h">
+                <h3 id="pl-word-h" class="pl-panel-h">${ic('i-book')}Word of the day</h3>
+                <p class="pl-word-main"><dfn>${esc(w.word)}</dfn><span class="pl-pos">${esc(w.part || '')}</span></p>
+                <p class="pl-def">${esc(w.meaning)}</p>
+                <p class="pl-example">${esc(w.example)}</p>
+                <div class="pl-panel-foot">
+                    ${'speechSynthesis' in window ? `<button type="button" class="chip" data-pl="say" data-word="${esc(w.word)}">${ic('i-volume')}Hear it</button>` : ''}
+                    <button type="button" class="chip" data-pl="share-word">${ic('i-share')}Share</button>
                 </div>
             </section>`;
     }
-    function thoughtCard(t) {
+    function thoughtPanel(t) {
         if (!t) return '';
         return `
-            <section class="pl-daily pl-thought">
-                <p class="pl-kicker">Daily thought</p>
-                <blockquote>${esc(t.text)}</blockquote>
-                <p class="pl-source">— ${esc(t.source)}</p>
-                <div class="pl-daily-foot"><button type="button" class="chip" data-pl="share-thought"><svg class="i"><use href="#i-share"/></svg>Share</button></div>
+            <section class="pl-panel pl-thought" aria-labelledby="pl-thought-h">
+                <h3 id="pl-thought-h" class="pl-panel-h">${ic('i-sparkle')}Thought for today</h3>
+                <blockquote><p>${esc(t.text)}</p><footer>${esc(t.source)}</footer></blockquote>
+                <div class="pl-panel-foot"><button type="button" class="chip" data-pl="share-thought">${ic('i-share')}Share</button></div>
             </section>`;
     }
-    function pollCard(p) {
+    function pollPanel(p) {
         if (!p || !p.options) return '';
         const voted = p.mine !== null && p.mine !== undefined;
         const total = voted ? Object.values(p.counts || {}).reduce((a, b) => a + b, 0) : 0;
+        const lead = voted ? Math.max(...p.options.map((_, i) => (p.counts || {})[String(i)] || 0)) : -1;
         return `
-            <section class="pl-daily pl-poll">
-                <p class="pl-kicker">Daily poll</p>
-                <h3>${esc(p.question)}</h3>
+            <section class="pl-panel pl-poll" aria-labelledby="pl-poll-h">
+                <h3 id="pl-poll-h" class="pl-panel-h">${ic('i-chart')}Today’s poll</h3>
+                <p class="pl-poll-q">${esc(p.question)}</p>
                 <div class="pl-poll-opts" role="group" aria-label="${esc(p.question)}">${p.options.map((o, i) => {
                     const n = voted ? (p.counts || {})[String(i)] || 0 : 0;
                     const pct = total ? Math.round(100 * n / total) : 0;
-                    return `<button type="button" class="pl-opt${voted ? ' voted' : ''}${p.mine === i ? ' mine' : ''}" data-pl="vote" data-i="${i}" style="--pct:${pct}%" aria-pressed="${p.mine === i}">
-                        <span>${esc(o)}</span>${voted ? `<b>${pct}%</b>` : ''}</button>`;
+                    return `<button type="button" class="pl-opt${voted ? ' voted' : ''}${p.mine === i ? ' mine' : ''}${voted && n === lead && n > 0 ? ' top' : ''}" data-pl="vote" data-i="${i}" style="--pct:${pct}%" aria-pressed="${p.mine === i}">
+                        <span>${esc(o)}${p.mine === i ? ` ${ic('i-check')}` : ''}</span>${voted ? `<b>${pct}%</b>` : ''}</button>`;
                 }).join('')}</div>
-                <p class="muted small">${voted ? `${total} ${total === 1 ? 'vote' : 'votes'} today · tap another option to change yours` : 'Vote to see what everyone thinks'}</p>
+                <p class="pl-note">${voted ? `${total} ${total === 1 ? 'vote' : 'votes'} so far · tap another answer to change yours` : 'Vote to see how everyone answered.'}</p>
             </section>`;
     }
-    function qotdCard() {
-        const st = statusOf('qotd');
-        const r = P.qotdResults;
-        return `
-            <section class="pl-daily pl-qotd">
-                <p class="pl-kicker">Question of the day</p>
-                ${st.done ? `<h3>${st.label.startsWith('1/') ? 'You got it right ✅' : 'Not this time ❌'}</h3>
-                    <p class="muted small">${r ? `${r.total} ${r.total === 1 ? 'person has' : 'people have'} answered today.` : ''}</p>
-                    <button type="button" class="chip" data-pl="start" data-kind="qotd">See the question</button>`
-                : `<h3>One question. How will you do?</h3><p class="muted small">30 seconds. Then see how everyone else answered.</p>
-                    <button type="button" class="primary-btn" data-pl="start" data-kind="qotd">Answer now</button>`}
-            </section>`;
-    }
+
     function boardHTML() {
         const b = P.board;
-        const seg = (name, opts, cur) => `<div class="pl-seg" role="radiogroup" aria-label="${name}">${opts.map(([v, l]) =>
+        const seg = (name, opts, cur) => `<div class="pl-seg" role="radiogroup" aria-label="${name === 'scope' ? 'Who' : 'When'}">${opts.map(([v, l]) =>
             `<button type="button" role="radio" aria-checked="${cur === v}" data-pl="${name}" data-v="${v}">${l}</button>`).join('')}</div>`;
-        const rows = b.rows === null || b.loading ? '<div class="post-skel"><i class="sk-line"></i><i class="sk-line w70"></i></div>'
-            : b.rows.length ? `<ol class="pl-board">${b.rows.map(r => `
-                <li class="pl-row${r.is_me ? ' me' : ''}">
-                    <span class="pl-rank${r.rank <= 3 ? ` top r${r.rank}` : ''}">${r.rank <= 3 ? ['🥇', '🥈', '🥉'][r.rank - 1] : r.rank}</span>
-                    <button type="button" class="row-av" data-profile="${esc(r.user_id)}" aria-label="${esc(r.display_name)}’s profile">${avatar({ id: r.user_id, display_name: r.display_name, avatar_path: r.avatar_path }, 'sm')}</button>
-                    <button type="button" class="pl-who" data-profile="${esc(r.user_id)}"><strong>${esc(r.is_me ? 'You' : r.display_name)}</strong><small>${r.rounds} ${r.rounds === 1 ? 'round' : 'rounds'} · ${r.accuracy || 0}% right</small></button>
-                    <span class="pl-score">${fmt(r.score)}</span>
-                </li>`).join('')}</ol>`
-            : `<p class="muted small pl-empty">No scores ${b.period === 'today' ? 'today' : b.period === 'all' ? 'yet' : `this ${b.period}`}${b.scope === 'friends' ? ' among your friends' : ''} — play to take first place.</p>`;
+        const person = r => ({ id: r.user_id, display_name: r.display_name, avatar_path: r.avatar_path });
+        let body;
+        if (b.rows === null || b.loading) body = '<div class="pl-board-skel" aria-busy="true"><i></i><i></i><i></i></div>';
+        else if (!b.rows.length) body = `<p class="pl-empty">No scores ${b.period === 'today' ? 'today' : b.period === 'all' ? 'yet' : `this ${b.period}`}${b.scope === 'friends' ? ' among your friends' : ''}. Play today’s trivia to take first place.</p>`;
+        else {
+            const podium = b.rows.filter(r => r.rank <= 3).slice(0, 3);
+            const rest = b.rows.filter(r => !podium.includes(r));
+            const order = [podium[1], podium[0], podium[2]].filter(Boolean); // 2 · 1 · 3
+            body = `
+                ${podium.length ? `<ol class="pl-podium" aria-label="Top three">${order.map(r => `
+                    <li class="pl-step p${r.rank}${r.is_me ? ' me' : ''}">
+                        <button type="button" class="pl-step-who" data-profile="${esc(r.user_id)}" aria-label="${esc(r.display_name)}, place ${r.rank}, ${fmt(r.score)} points">
+                            ${avatar(person(r), r.rank === 1 ? 'lg' : 'md')}
+                            <strong>${esc(r.is_me ? 'You' : r.display_name.split(' ')[0])}</strong>
+                            <span class="pl-step-score">${fmt(r.score)}</span>
+                        </button>
+                        <span class="pl-step-block"><b>${r.rank}</b></span>
+                    </li>`).join('')}</ol>` : ''}
+                ${rest.length ? `<ol class="pl-board" start="4">${rest.map(r => `
+                    <li class="pl-row${r.is_me ? ' me' : ''}">
+                        <span class="pl-rank">${r.rank}</span>
+                        <button type="button" class="row-av" data-profile="${esc(r.user_id)}" aria-label="${esc(r.display_name)}’s profile">${avatar(person(r), 'sm')}</button>
+                        <button type="button" class="pl-who" data-profile="${esc(r.user_id)}"><strong>${esc(r.is_me ? 'You' : r.display_name)}</strong><small>${r.rounds} ${r.rounds === 1 ? 'round' : 'rounds'} · ${r.accuracy || 0}% right</small></button>
+                        <span class="pl-score">${fmt(r.score)}</span>
+                    </li>`).join('')}</ol>` : ''}`;
+        }
         return `
-            <section class="pl-section">
-                <header class="pl-sec-head"><h3>Leaderboard</h3>${seg('scope', [['everyone', 'Everyone'], ['friends', 'Friends']], b.scope)}</header>
+            <section class="pl-section pl-leader" aria-labelledby="pl-board-h">
+                <header class="pl-sec-head">
+                    <h3 id="pl-board-h">Leaderboard</h3>
+                    ${seg('scope', [['everyone', 'Everyone'], ['friends', 'Friends']], b.scope)}
+                </header>
                 ${seg('period', [['today', 'Today'], ['week', 'This week'], ['month', 'This month'], ['all', 'All time']], b.period)}
-                ${rows}
-                <p class="muted small">Daily, weekly, Bible, brain and question-of-the-day scores count. Practice doesn’t.</p>
+                ${body}
+                <p class="pl-note">Daily, weekly, Bible, brain and question-of-the-day scores count. Practice rounds don’t.</p>
             </section>`;
     }
-    function statsHTML() {
+
+    function topicsHTML() {
         const st = P.stats || {};
-        if (!st.answered) return '';
+        const byCat = new Map((st.categories || []).map(c => [c.category, c]));
         return `
-            <section class="pl-section">
-                <header class="pl-sec-head"><h3>Your trivia</h3></header>
-                <div class="pl-cats">${(st.categories || []).map(c => {
-                    const pct = c.answered ? Math.round(100 * c.correct / c.answered) : 0;
-                    const [e, l] = CATS[c.category] || ['❓', c.category];
-                    return `<div class="pl-cat-stat"><span>${e} ${esc(l)}</span><span class="pl-bar" style="--pct:${pct}%"><i></i></span><b>${pct}%</b></div>`;
+            <section class="pl-section" aria-labelledby="pl-practice-h">
+                <header class="pl-sec-head"><h3 id="pl-practice-h">Practice any topic</h3><p class="pl-note">As many rounds as you like</p></header>
+                <div class="pl-topics">${Object.entries(CATS).map(([k, [icon, l]]) => {
+                    const c = byCat.get(k);
+                    const pct = c && c.answered ? Math.round(100 * c.correct / c.answered) : null;
+                    return `<button type="button" class="pl-topic" data-pl="practice" data-cat="${k}">
+                        <span class="pl-topic-ic">${ic(icon)}</span>
+                        <span class="pl-topic-text"><strong>${esc(l)}</strong><small>${pct === null ? (k === 'random' ? 'A bit of everything' : 'Not played yet') : `${pct}% right · ${c.answered} answered`}</small></span>
+                        ${pct === null ? '' : `<span class="pl-meter" style="--pct:${pct}%" aria-hidden="true"></span>`}
+                    </button>`;
                 }).join('')}</div>
             </section>`;
     }
 
+    function mastheadHTML() {
+        const st = P.stats || {};
+        const d = new Date();
+        const date = d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+        const first = esc((s.profile.display_name || '').split(' ')[0]);
+        const facts = [];
+        if (st.streak) facts.push(`<span class="pl-streak">${ic('i-flame')}${st.streak}-day streak</span>`);
+        if (st.score) facts.push(`${fmt(st.score)} points`);
+        if (st.accuracy !== null && st.accuracy !== undefined && st.answered) facts.push(`${st.accuracy}% of answers right`);
+        const done = ['daily', 'bible', 'brain', 'qotd'].filter(k => statusOf(k).done).length;
+        return `
+            <header class="pl-mast">
+                <h2 class="pl-date">${esc(date)}</h2>
+                <p class="pl-lede">Good ${greeting()}, ${first}. ${done === 4 ? 'You’ve done all of today’s challenges — see you tomorrow.' : done ? `${done} of today’s 4 challenges done.` : 'Four short challenges are waiting for you.'}</p>
+                ${facts.length ? `<p class="pl-facts">${facts.join('<span aria-hidden="true">·</span>')}</p>` : ''}
+            </header>`;
+    }
+
     app.views.play = () => {
-        app.setTitle('Play');
+        app.setTitle('Play & learn');
         const blocked = I.gate('Daily trivia, challenges and leaderboards — learn something every day.');
         if (blocked) return blocked;
-        if (!P.today) { load(); return '<div class="pl"><div class="post-skel"><i class="sk-line w40"></i><i class="sk-line"></i><i class="sk-line w70"></i></div></div>'; }
-        const st = P.stats || {};
+        if (!P.today) { load(); return '<div class="pl"><div class="pl-board-skel" aria-busy="true"><i></i><i></i><i></i></div></div>'; }
         return `
             <div class="pl">
-                <header class="pl-hero">
-                    <div>
-                        <p class="pl-kicker">Play & learn</p>
-                        <h2>Good ${greeting()}, ${esc((s.profile.display_name || '').split(' ')[0])}</h2>
-                        <p class="muted">A few minutes a day: trivia, a new word, a thought and a quick poll.</p>
-                    </div>
-                    <div class="pl-hero-stats">
-                        <div><b>🔥 ${st.streak || 0}</b><span>day streak</span></div>
-                        <div><b>${fmt(st.score)}</b><span>points</span></div>
-                        <div><b>${st.accuracy === null || st.accuracy === undefined ? '—' : `${st.accuracy}%`}</b><span>accuracy</span></div>
-                    </div>
-                </header>
-                <section class="pl-section">
-                    <header class="pl-sec-head"><h3>Today’s challenges</h3><small class="muted">New challenges at midnight UTC</small></header>
-                    <div class="pl-cards">${['daily', 'bible', 'brain', 'weekly'].map(challengeCard).join('')}</div>
+                ${mastheadHTML()}
+                <section class="g-grid" aria-label="Today’s games">
+                    ${gameTile('daily', true)}
+                    ${gameTile('qotd')}
+                    ${gameTile('bible')}
+                    ${gameTile('brain')}
+                    ${gameTile('weekly')}
                 </section>
-                <div class="pl-dailies">
-                    ${qotdCard()}
-                    ${wordCard(P.today.word)}
-                    ${pollCard(P.today.poll)}
-                    ${thoughtCard(P.today.thought)}
+                <div class="pl-reading">
+                    ${wordPanel(P.today.word)}
+                    ${thoughtPanel(P.today.thought)}
+                    ${pollPanel(P.today.poll)}
                 </div>
-                <section class="pl-section">
-                    <header class="pl-sec-head"><h3>Practice</h3><small class="muted">As many rounds as you like</small></header>
-                    <div class="pl-practice">${Object.entries(CATS).map(([k, [e, l]]) =>
-                        `<button type="button" class="pl-topic" data-pl="practice" data-cat="${k}"><span aria-hidden="true">${e}</span>${esc(l)}</button>`).join('')}</div>
-                </section>
+                ${topicsHTML()}
                 ${boardHTML()}
-                ${statsHTML()}
             </div>`;
     };
     const greeting = () => { const h = new Date().getHours(); return h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening'; };
+
+    // The Explore page's "Play & learn" band: today's games plus the word of the day
+    function exploreSection() {
+        if (!me()) return '';
+        if (!P.today) { if (!P.loading) load(); return ''; }
+        const w = P.today.word;
+        return `
+            <section class="ex-sec pl-ex" aria-labelledby="pl-ex-h">
+                <header class="ex-head"><h3 id="pl-ex-h"><span class="ex-ic">${ic('i-trophy')}</span>Play & learn</h3>
+                    <p>Trivia, a new word and a quick poll — a few minutes a day</p>
+                    <button type="button" class="link-btn accent ex-more" data-action="go-play">Open</button></header>
+                <div class="pl-ex-row">
+                    ${gameTile('daily', true)}
+                    ${gameTile('qotd')}
+                    ${gameTile('bible')}
+                    ${w ? `<button type="button" class="pl-ex-word" data-action="go-play" aria-label="Word of the day: ${esc(w.word)}">
+                        <span class="pl-panel-h">${ic('i-book')}Word of the day</span>
+                        <dfn>${esc(w.word)}</dfn>
+                        <small>${esc(w.meaning)}</small></button>` : ''}
+                </div>
+            </section>`;
+    }
 
     // ---------- The quiz ----------
     let Q = null; // { round, i, dlg, timer, startedAt, answering }
@@ -232,14 +289,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (ok) closeQuiz();
     }
     const stopTimer = () => { if (Q && Q.timer) { clearInterval(Q.timer); Q.timer = null; } };
-    const catLabel = c => { const [e, l] = CATS[c] || ['❓', c]; return `${e} ${l}`; };
+    const catHTML = c => { const [icon, l] = CATS[c] || ['i-sparkle', c]; return `${ic(icon)}${esc(l)}`; };
 
     function head(extra = '') {
         const r = Q.round;
         return `
             <header class="quiz-head">
                 <button type="button" class="icon-btn" data-q="close" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button>
-                <div class="quiz-title"><strong>${KINDS[r.kind].emoji} ${esc(r.kind === 'practice' ? `Practice · ${CATS[r.category] ? CATS[r.category][1] : 'Random'}` : KINDS[r.kind].title)}</strong>
+                <div class="quiz-title"><strong>${ic(KINDS[r.kind].icon)}${esc(r.kind === 'practice' ? `Practice · ${CATS[r.category] ? CATS[r.category][1] : 'Random'}` : KINDS[r.kind].title)}</strong>
                     ${r.total > 1 ? `<small>Question ${Math.min(Q.i + 1, r.total)} of ${r.total}</small>` : ''}</div>
                 <span class="quiz-score" aria-label="Score">${fmt(r.score)} pts</span>
             </header>
@@ -256,7 +313,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${head()}
                 <div class="quiz-body">
                     <div class="quiz-timer" role="timer" aria-live="off"><span class="quiz-ring" style="--left:1"><b id="quiz-secs">${SECONDS}</b></span></div>
-                    <p class="quiz-cat">${esc(catLabel(q.category))}</p>
+                    <p class="quiz-cat">${catHTML(q.category)}</p>
                     <h2 class="quiz-q">${esc(q.question)}</h2>
                     <div class="quiz-choices">${q.choices.map((c, i) => `<button type="button" class="quiz-choice" data-q="pick" data-i="${i}"><span class="quiz-letter">${'ABCDE'[i]}</span><span>${esc(c)}</span></button>`).join('')}</div>
                     <div class="quiz-feedback" aria-live="polite"></div>
@@ -348,7 +405,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="quiz-card">
                 ${head()}
                 <div class="quiz-body">
-                    <p class="quiz-cat">${esc(catLabel(q.category))}</p>
+                    <p class="quiz-cat">${catHTML(q.category)}</p>
                     <h2 class="quiz-q">${esc(q.question)}</h2>
                     <div class="quiz-choices">${q.choices.map((c, j) => {
                         const n = res && res.counts ? res.counts[String(j)] || 0 : 0;
@@ -489,7 +546,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const w = P.today && P.today.word;
         return `
             <section class="pl-feed-card" aria-label="Today on Cordial">
-                <span class="pl-feed-emoji" aria-hidden="true">🧠</span>
+                <span class="pl-feed-ic">${ic('i-g-question')}</span>
                 <span class="pl-feed-text"><strong>Daily trivia is ready</strong><small>10 questions${w ? ` · Word of the day: <b>${esc(w.word)}</b>` : ''}</small></span>
                 <button type="button" class="chip accent" data-action="go-play">Play</button>
                 <button type="button" class="icon-btn ghost" data-action="play-card-hide" aria-label="Hide for today"><svg class="i"><use href="#i-close"/></svg></button>
@@ -502,11 +559,6 @@ document.addEventListener('DOMContentLoaded', () => {
             el.closest('.pl-feed-card')?.remove();
         }
     });
-    const previousMenu = app.hooks.menuItems;
-    app.hooks.menuItems = () => [
-        ...(previousMenu ? previousMenu() : []),
-        ...(me() ? [{ label: 'Play & learn', icon: 'i-trophy', onClick: () => app.setView('play') }] : [])
-    ];
     app.onRefresh && app.onRefresh('play', () => { P.today = null; load(); });
 
     // Trivia numbers for a profile (null when they keep their numbers private)
@@ -515,5 +567,5 @@ document.addEventListener('DOMContentLoaded', () => {
         return data || null;
     }
 
-    window.diaryPlay = { open: () => app.setView('play'), start, feedCard, statsFor, CATS, refresh: load };
+    window.diaryPlay = { open: () => app.setView('play'), start, feedCard, exploreSection, statsFor, CATS, refresh: load };
 });
