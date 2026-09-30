@@ -344,6 +344,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const queue = job => { shareChain = shareChain.then(job).catch(() => {}); };
 
     // Post a short text straight to the feed (trivia results, a word of the day…). It's also saved to your diary.
+    // New badges after something you did; the notification also arrives, this just says it straight away
+    function checkBadges() {
+        client.rpc('diary_check_badges').then(({ data }) => {
+            if (data && data.length) setTimeout(() => app.showToast(`New badge: ${data.map(b => b.name).join(', ')} 🏅`), 1600);
+        });
+    }
+
     async function quickPost(text, audience = 'friends') {
         if (!signedIn() || !String(text || '').trim()) return false;
         const note = await app.createEntry({ text: String(text).slice(0, 5000), shared: true, audience });
@@ -352,6 +359,7 @@ document.addEventListener('DOMContentLoaded', () => {
             try { resolve(await upsertShared(note)); } catch (e) { resolve({ ok: false }); }
         }));
         s.feed = null;
+        if (result && result.ok) checkBadges();
         return !!(result && result.ok);
     }
 
@@ -3378,6 +3386,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!result.ok) return; // upsertShared already explained; the entry is still saved in the diary
             if (result.photos < photos.length) app.showToast(`Posted, but ${photos.length - result.photos} photo(s) couldn’t upload`);
             else app.showToast(`${photos.length ? 'Posted with photos 📸' : 'Posted'} — ${s.feedAudience === 'public' ? 'everyone can see it' : 'your friends can see it'}`);
+            checkBadges();
         } catch (err) {
             app.showToast('Couldn’t post that — please try again');
         } finally {
@@ -3772,6 +3781,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function addComment(key, body, extra = {}) {
+        if (!addComment.checked) { addComment.checked = true; setTimeout(checkBadges, 2500); }
         const target = commentTarget(key);
         const { data, error } = await client.from('diary_comments')
             .insert({ [target.column]: target.id, body: body.slice(0, 2000), ...extra })

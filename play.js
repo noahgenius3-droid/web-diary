@@ -26,17 +26,18 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     const ic = (id, cls = '') => `<svg class="i${cls ? ` ${cls}` : ''}" aria-hidden="true"><use href="#${id}"/></svg>`;
 
-    const P = { today: null, stats: null, loading: false, board: { period: 'week', scope: 'everyone', rows: null, loading: false }, qotd: null };
+    const P = { today: null, stats: null, loading: false, board: { kind: 'trivia', period: 'week', scope: 'everyone', rows: null, loading: false }, badges: null, qotd: null };
     const me = () => s.profile && s.profile.id;
     const fmt = n => Number(n || 0).toLocaleString();
 
     async function load() {
         if (P.loading || !me()) return;
         P.loading = true;
-        const [today, stats] = await Promise.all([client.rpc('diary_daily_today'), client.rpc('diary_trivia_stats')]);
+        const [today, stats, badges] = await Promise.all([client.rpc('diary_daily_today'), client.rpc('diary_trivia_stats'), client.rpc('diary_badges_of')]);
         P.loading = false;
         P.today = today.data || {};
         P.stats = stats.data || {};
+        P.badges = badges.data || null;
         if (P.stats.today && P.stats.today.qotd && P.stats.today.qotd.done) loadQotdResults();
         paint();
         loadBoard();
@@ -44,7 +45,11 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadBoard() {
         const b = P.board;
         b.loading = true;
-        const { data } = await client.rpc('diary_trivia_leaderboard', { p_period: b.period, p_scope: b.scope, p_limit: 50 });
+        const { data } = b.kind === 'trivia'
+            ? await client.rpc('diary_trivia_leaderboard', { p_period: b.period, p_scope: b.scope, p_limit: 50 })
+            : b.kind === 'posts'
+                ? await client.rpc('diary_top_posts', { p_period: b.period, p_limit: 20 })
+                : await client.rpc('diary_board', { p_board: b.kind, p_period: b.period, p_scope: b.scope, p_limit: 50 });
         b.loading = false;
         b.rows = data || [];
         paint();
@@ -137,11 +142,19 @@ document.addEventListener('DOMContentLoaded', () => {
         const seg = (name, opts, cur) => `<div class="pl-seg" role="radiogroup" aria-label="${name === 'scope' ? 'Who' : 'When'}">${opts.map(([v, l]) =>
             `<button type="button" role="radio" aria-checked="${cur === v}" data-pl="${name}" data-v="${v}">${l}</button>`).join('')}</div>`;
         const person = r => ({ id: r.user_id, display_name: r.display_name, avatar_path: r.avatar_path });
+        const detail = r => (r.detail !== undefined ? esc(r.detail || '') : `${r.rounds} ${r.rounds === 1 ? 'round' : 'rounds'} · ${r.accuracy || 0}% right`);
+        const BOARDS = [['trivia', 'Trivia'], ['games', 'Games'], ['contributors', 'Contributors'], ['helpful', 'Most helpful'], ['active', 'Most active'], ['xp', 'Level'], ['posts', 'Top posts']];
+        const picker = `<div class="pl-boards" role="tablist" aria-label="Leaderboard">${BOARDS.map(([k, l]) => `<button type="button" role="tab" class="pl-board-tab" aria-selected="${b.kind === k}" data-pl="board" data-v="${k}">${l}</button>`).join('')}</div>`;
         let body;
         if (b.rows === null || b.loading) body = '<div class="pl-board-skel" aria-busy="true"><i></i><i></i><i></i></div>';
+        else if (b.kind === 'posts') body = b.rows.length ? `<ol class="pl-posts">${b.rows.map((p, i) => `
+                <li><button type="button" class="pl-post" data-pl="open-post" data-id="${esc(p.id)}">
+                    <span class="pl-rank">${i + 1}</span>
+                    <span class="pl-post-text"><strong>${esc(p.title || (p.body || '').slice(0, 90) || 'Photo post')}</strong><small>${esc(p.display_name)} · ${fmt(p.reactions)} ${p.reactions === 1 ? 'reaction' : 'reactions'}</small></span>
+                    ${ic('i-thumb')}</button></li>`).join('')}</ol>` : '<p class="pl-empty">No posts in this period yet.</p>';
         else if (!b.rows.length) body = `<p class="pl-empty">No scores ${b.period === 'today' ? 'today' : b.period === 'all' ? 'yet' : `this ${b.period}`}${b.scope === 'friends' ? ' among your friends' : ''}. Play today’s trivia to take first place.</p>`;
         else {
-            const podium = b.rows.filter(r => r.rank <= 3).slice(0, 3);
+            const podium = b.rows.filter(r => Number(r.rank) <= 3).slice(0, 3);
             const rest = b.rows.filter(r => !podium.includes(r));
             const order = [podium[1], podium[0], podium[2]].filter(Boolean); // 2 · 1 · 3
             body = `
@@ -158,7 +171,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <li class="pl-row${r.is_me ? ' me' : ''}">
                         <span class="pl-rank">${r.rank}</span>
                         <button type="button" class="row-av" data-profile="${esc(r.user_id)}" aria-label="${esc(r.display_name)}’s profile">${avatar(person(r), 'sm')}</button>
-                        <button type="button" class="pl-who" data-profile="${esc(r.user_id)}"><strong>${esc(r.is_me ? 'You' : r.display_name)}</strong><small>${r.rounds} ${r.rounds === 1 ? 'round' : 'rounds'} · ${r.accuracy || 0}% right</small></button>
+                        <button type="button" class="pl-who" data-profile="${esc(r.user_id)}"><strong>${esc(r.is_me ? 'You' : r.display_name)}</strong><small>${detail(r)}</small></button>
                         <span class="pl-score">${fmt(r.score)}</span>
                     </li>`).join('')}</ol>` : ''}`;
         }
@@ -168,9 +181,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     <h3 id="pl-board-h">Leaderboard</h3>
                     ${seg('scope', [['everyone', 'Everyone'], ['friends', 'Friends']], b.scope)}
                 </header>
+                ${picker}
                 ${seg('period', [['today', 'Today'], ['week', 'This week'], ['month', 'This month'], ['all', 'All time']], b.period)}
                 ${body}
-                <p class="pl-note">Daily, weekly, Bible, brain and question-of-the-day scores count. Practice rounds don’t.</p>
+                <p class="pl-note">${{ trivia: 'Daily, weekly, Bible, brain and question-of-the-day scores count. Practice rounds don’t.', games: 'Your first go at each daily puzzle counts.', contributors: '5 points a post, 2 a comment.', helpful: 'Replies and comments on other people’s posts.', active: 'Posts, comments, reactions, trivia rounds and puzzles.', xp: 'XP from trivia, games, posts and comments.', posts: 'The posts with the most reactions that you can see.' }[b.kind]}</p>
             </section>`;
     }
 
@@ -192,6 +206,32 @@ document.addEventListener('DOMContentLoaded', () => {
             </section>`;
     }
 
+    function levelHTML() {
+        const L = P.badges;
+        if (!L) return '';
+        const span = Math.max(1, L.level_next - L.level_floor);
+        const pct = Math.min(100, Math.round(100 * (L.xp - L.level_floor) / span));
+        return `<div class="pl-level" aria-label="Level ${L.level}, ${fmt(L.xp)} XP">
+            <span class="pl-level-n">Level <b>${L.level}</b></span>
+            <span class="pl-level-bar"><i style="width:${pct}%"></i></span>
+            <span class="pl-level-xp">${fmt(L.xp)} / ${fmt(L.level_next)} XP</span></div>`;
+    }
+    function badgesHTML() {
+        const L = P.badges;
+        if (!L || !L.badges) return '';
+        const earned = L.badges.filter(b => b.earned_at).length;
+        return `
+            <section class="pl-section" aria-labelledby="pl-badges-h">
+                <header class="pl-sec-head"><h3 id="pl-badges-h">Badges</h3><p class="pl-note">${earned} of ${L.badges.length} earned</p></header>
+                <ul class="badge-grid">${L.badges.map(b => `
+                    <li class="bdg ${esc(b.tier)}${b.earned_at ? ' earned' : ''}" title="${esc(b.description)}">
+                        <span class="badge-medal">${ic(b.icon)}</span>
+                        <strong>${esc(b.name)}</strong>
+                        <small>${b.earned_at ? `Earned ${new Date(b.earned_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}` : esc(b.description)}</small>
+                    </li>`).join('')}</ul>
+            </section>`;
+    }
+
     function mastheadHTML() {
         const st = P.stats || {};
         const d = new Date();
@@ -207,6 +247,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <h2 class="pl-date">${esc(date)}</h2>
                 <p class="pl-lede">Good ${greeting()}, ${first}. ${done === 4 ? 'You’ve done all of today’s challenges — see you tomorrow.' : done ? `${done} of today’s 4 challenges done.` : 'Four short challenges are waiting for you.'}</p>
                 ${facts.length ? `<p class="pl-facts">${facts.join('<span aria-hidden="true">·</span>')}</p>` : ''}
+                ${levelHTML()}
             </header>`;
     }
 
@@ -230,8 +271,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${thoughtPanel(P.today.thought)}
                     ${pollPanel(P.today.poll)}
                 </div>
+                ${window.diaryGames ? `<section class="pl-section" aria-labelledby="pl-games-h">
+                    <header class="pl-sec-head"><h3 id="pl-games-h">Puzzles & games</h3><p class="pl-note">A new puzzle in each every day</p></header>
+                    <div class="gm-tiles">${window.diaryGames.tilesHTML()}</div>
+                </section>` : ''}
                 ${topicsHTML()}
                 ${boardHTML()}
+                ${badgesHTML()}
             </div>`;
     };
     const greeting = () => { const h = new Date().getHours(); return h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening'; };
@@ -359,6 +405,7 @@ document.addEventListener('DOMContentLoaded', () => {
         Q.round.finished = data.finished;
         const last = data.finished || Q.i >= Q.round.total;
         Q.dlg.querySelector('.quiz-score').textContent = `${fmt(data.score)} pts`;
+        if (data.finished) client.rpc('diary_check_badges').then(({ data: got }) => { if (got && got.length) app.showToast(`New badge: ${got.map(x => x.name).join(', ')} 🏅`); });
         Q.dlg.querySelector('.quiz-feedback').innerHTML = `
             <p class="quiz-verdict ${data.correct ? 'ok' : 'no'}">${data.correct ? `Correct! +${data.points}` : choice < 0 ? 'Time’s up' : 'Not quite'}</p>
             ${data.explanation ? `<p class="quiz-expl">${esc(data.explanation)}</p>` : ''}
@@ -517,7 +564,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const act = b.dataset.pl;
         if (act === 'start') start(b.dataset.kind);
         else if (act === 'practice') start('practice', b.dataset.cat);
-        else if (act === 'scope' || act === 'period') { P.board[act] = b.dataset.v; P.board.rows = null; paint(); loadBoard(); }
+        else if (act === 'scope' || act === 'period' || act === 'board') { P.board[act === 'board' ? 'kind' : act] = b.dataset.v; P.board.rows = null; paint(); loadBoard(); }
+        else if (act === 'open-post') { app.setView('feed'); I.openEntry(b.dataset.id); }
         else if (act === 'vote') {
             const { data, error } = await client.rpc('diary_daily_vote', { p_choice: Number(b.dataset.i) });
             if (error) return app.showToast(error.message || 'Couldn’t save your vote');
@@ -567,5 +615,5 @@ document.addEventListener('DOMContentLoaded', () => {
         return data || null;
     }
 
-    window.diaryPlay = { open: () => app.setView('play'), start, feedCard, exploreSection, statsFor, CATS, refresh: load };
+    window.diaryPlay = { open: () => app.setView('play'), start, feedCard, exploreSection, statsFor, CATS, refresh: load, share: text => openShare(text || ''), repaint: paint, badgesFor: async id => (await client.rpc('diary_badges_of', { p_user: id })).data || null };
 });

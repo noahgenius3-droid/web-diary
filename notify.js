@@ -108,7 +108,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const CATEGORY = {
         friend_request: ['friend', 'i-user-plus'], friend_accepted: ['friend', 'i-user'],
         entry_like: ['like', 'i-thumb'], post_like: ['like', 'i-thumb'], post_activity: ['comment', 'i-bell'],
-        scheduled_published: ['group', 'i-clock'], scheduled_failed: ['missed', 'i-alert'], trivia_rank: ['like', 'i-trophy'],
+        scheduled_published: ['group', 'i-clock'], scheduled_failed: ['missed', 'i-alert'], trivia_rank: ['like', 'i-trophy'], badge_earned: ['like', 'i-trophy'],
         entry_comment: ['comment', 'i-chat'], post_comment: ['comment', 'i-chat'],
         community_post: ['group', 'i-users'], community_join: ['group', 'i-users'],
         call_started: ['call', 'i-phone'], missed_call: ['missed', 'i-phone-off'],
@@ -134,6 +134,7 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'entry_like': return `${who} reacted ${d.emoji || '👍'} to your post${quote}`;
             case 'entry_comment': return `${who} commented:${quote}`;
             case 'post_like': return `${who} reacted ${d.emoji || '👍'} to your post in ${group}`;
+            case 'badge_earned': return `🏅 You earned the <strong>${esc(d.name || 'a new')}</strong> badge — ${esc(d.description || '')}`.replace(/<\/?strong>/g, m => (plain ? '' : m));
             case 'trivia_rank': {
                 const place = d.rank === 1 ? '🥇 You came first' : d.rank === 2 ? '🥈 You came second' : d.rank === 3 ? '🥉 You came third' : `You placed #${d.rank}`;
                 return `${place} of ${d.players} in ${d.kind === 'weekly' ? 'last week’s Weekly challenge' : 'yesterday’s Daily trivia'} — ${d.correct}/${d.total}, ${Number(d.score || 0).toLocaleString()} points`;
@@ -241,6 +242,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 app.setView('scheduled');
                 break;
             case 'trivia_rank':
+            case 'badge_earned':
                 app.setView('play');
                 break;
             case 'new_follower':

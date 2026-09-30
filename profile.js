@@ -61,9 +61,10 @@ document.addEventListener('DOMContentLoaded', () => {
             paint();
         } else if (P.tab === 'about' && P.trivia === undefined && window.diaryPlay) {
             P.trivia = null;
-            const t = await window.diaryPlay.statsFor(id);
+            const [t, b] = await Promise.all([window.diaryPlay.statsFor(id), window.diaryPlay.badgesFor ? window.diaryPlay.badgesFor(id) : null]);
             if (token !== P.token) return;
             P.trivia = t || false;
+            P.badges = b || false;
             paint();
         } else if (P.tab === 'activity' && P.activity === null && id === me()) {
             const { data } = await client.rpc('diary_my_activity', { p_limit: 40 });
@@ -217,6 +218,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${row('i-sparkle', 'Interests', p.interests && p.interests.length ? esc(p.interests.join(', ')) : '')}
                     ${row('i-calendar', 'Joined Cordial', since ? esc(since) : '')}
                     ${p.limited ? '<p class="muted small">More details are only visible to their friends.</p>' : ''}
+                    ${P.badges && P.badges.badges ? `<h4 class="pf-sub">Level ${P.badges.level} · ${Number(P.badges.xp).toLocaleString()} XP</h4>
+                        <ul class="badge-grid compact">${P.badges.badges.filter(b => b.earned_at).map(b => `<li class="bdg ${esc(b.tier)} earned" title="${esc(b.description)}"><span class="badge-medal"><svg class="i"><use href="#${esc(b.icon)}"/></svg></span><strong>${esc(b.name)}</strong></li>`).join('') || '<li class="muted small">No badges yet.</li>'}</ul>` : ''}
                     ${P.trivia && P.trivia.answered ? `<h4 class="pf-sub">Trivia</h4>
                         <div class="pf-totals">
                             <div><b>${Number(P.trivia.score || 0).toLocaleString()}</b><span>Trivia points</span></div>

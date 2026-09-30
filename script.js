@@ -642,7 +642,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 root.style.setProperty('--kb', `${kb}px`);
             }
             tallest = Math.max(tallest, layout, h);
-            const open = layout - h > 120 || tallest - h > 150;
+            // Only while you're typing: Safari's own bars also shrink the visible area, and that must never count
+            const typing = !!(document.activeElement && document.activeElement.matches && document.activeElement.matches('input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="button"]):not([type="submit"]), textarea, select, [contenteditable="true"]'));
+            const open = typing && (layout - h > 150 || tallest - h > 150);
             root.classList.toggle('kb-open', open);
             // Conversations stay on the newest message while the keyboard slides in
             if (open && stick.length) requestAnimationFrame(() => stick.forEach(el => { el.scrollTop = el.scrollHeight; }));
@@ -655,6 +657,9 @@ document.addEventListener('DOMContentLoaded', () => {
             stick = [...document.querySelectorAll(threads)].filter(el => el.scrollHeight - el.scrollTop - el.clientHeight < 90);
         });
         vv.addEventListener('resize', setVisible);
+        // Leaving a text box ends 'keyboard open' right away (the resize can arrive late, or not at all)
+        document.addEventListener('focusout', () => setTimeout(setVisible, 60));
+        document.addEventListener('focusin', () => setTimeout(setVisible, 350));
         vv.addEventListener('scroll', setVisible);
         window.addEventListener('orientationchange', () => { tallest = 0; setTimeout(setVisible, 300); });
         setVisible();
