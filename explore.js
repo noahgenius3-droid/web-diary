@@ -193,7 +193,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 style="--t1:${tint[0]};--t2:${tint[1]}" aria-label="${esc(`${name}: ${text.slice(0, 80)}`)}">
                 ${photo ? `<img data-path="${esc(photo.path)}" data-bucket="${FEED_BUCKET}" alt="" loading="lazy">`
                     : `<span class="ex-tile-text">${p.title ? `<strong>${esc(p.title)}</strong>` : ''}${esc((p.body || '').slice(0, 160))}</span>`}
-                ${rank < 3 ? `<span class="ex-rank">🔥 #${rank + 1}</span>` : ''}
+                ${rank < 3 ? `<span class="ex-rank" aria-label="Trending number ${rank + 1}"><svg class="i"><use href="#i-flame"/></svg>${rank + 1}</span>` : ''}
                 <span class="ex-tile-foot">
                     <span class="ex-who">${avatar({ id: p.author, ...(p.author_profile || {}) }, 'xs')}${esc(name)}</span>
                     <span class="ex-stats"><svg class="i"><use href="#i-heart-fill"/></svg>${(p.likes || []).length}<svg class="i"><use href="#i-chat"/></svg>${I.commentCount(p)}</span>
@@ -360,13 +360,14 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="explore">
                 <section class="ex-hero">
                     <div class="ex-hero-text">
-                        <p class="ex-kicker"><svg class="i"><use href="#i-trend"/></svg>Trending in your circle</p>
-                        <h2>Discover what your friends love</h2>
+                        <h2>What’s happening in your circle</h2>
+                        <p class="ex-hero-sub">Posts, reels, news, games and people, all in one place.</p>
                     </div>
                     <label class="search ex-search">
                         <svg class="i"><use href="#i-search"/></svg>
-                        <input type="search" id="ex-search" placeholder="Search people, interests, posts, #tags, books and groups" aria-label="Search Explore" value="${esc(E.raw ?? q)}" enterkeyhint="search" autocomplete="off">
+                        <input type="search" id="ex-search" placeholder="Search people, posts, #tags, books and groups" aria-label="Search Explore" value="${esc(E.raw ?? q)}" enterkeyhint="search" autocomplete="off">
                     </label>
+                    ${tags.length ? `<div class="ex-hero-tags" aria-label="Hot right now">${tags.slice(0, 6).map(([t]) => `<button type="button" class="ex-hero-tag" data-action="ex-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('')}</div>` : ''}
                 </section>
                 <nav class="ex-tabs" role="tablist" aria-label="Show">
                     ${TABS.map(([k, l]) => `<button type="button" class="cm-filter" role="tab" aria-selected="${tab === k}" data-action="ex-tab" data-tab="${k}">${l}</button>`).join('')}

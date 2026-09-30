@@ -399,14 +399,27 @@ document.addEventListener('DOMContentLoaded', () => {
         if (first) first.focus();
     }
 
-    const TITLES = { signin: 'Welcome back', signup: 'Create your account', guest: 'Try Cordial as a guest', verify: 'Confirm your email', upgrade: 'Create your free account' };
-    const SUBMITS = { signin: 'Sign in', signup: 'Create account', guest: 'Continue as a guest', verify: 'Confirm', upgrade: 'Send confirmation email' };
+    const TITLES = { signin: 'Welcome back.', signup: 'Join Cordial.', verify: 'Check your email.', upgrade: 'Make it yours.' };
+    const SUBS = {
+        signin: 'Your friends, notes and games are right where you left them.',
+        signup: 'Keep a diary, chat with friends and play together — free.',
+        verify: '',
+        upgrade: ''
+    };
+    authDialog.addEventListener('click', e => {
+        const to = e.target.closest('[data-to]');
+        if (to) setAuthMode(to.dataset.to);
+    });
+    const SUBMITS = { signin: 'Sign in', signup: 'Create account', verify: 'Confirm', upgrade: 'Send confirmation email' };
     function setAuthMode(mode) {
         authMode = mode;
         authDialog.querySelectorAll('[data-show]').forEach(el => { el.hidden = !el.dataset.show.split(' ').includes(mode); });
         authDialog.querySelector('.auth-tabs').hidden = mode === 'verify' || mode === 'upgrade';
         authDialog.querySelectorAll('.auth-tabs .tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.mode === mode)));
         $('auth-title').textContent = TITLES[mode];
+        $('auth-sub').textContent = SUBS[mode] || '';
+        $('auth-sub').hidden = !SUBS[mode];
+        authDialog.dataset.mode = mode;
         $('auth-submit').textContent = SUBMITS[mode];
         $('auth-password').autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
         $('auth-resend').hidden = mode !== 'verify';
@@ -516,7 +529,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const username = $('auth-username').value.trim();
 
         if ((authMode === 'signin' || authMode === 'signup') && (!email || !password)) return showAuthMessage('Enter your email and password.', true);
-        if (authMode === 'signup' || authMode === 'guest') {
+        if (authMode === 'signup') {
             if (!name) return showAuthMessage('Tell us your name.', true);
         }
         if (authMode === 'signup' || authMode === 'upgrade') {
@@ -559,10 +572,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 if (data.session) authDialog.close();
                 else awaitEmail(email, 'signup');
-            } else if (authMode === 'guest') {
-                const { error } = await client.auth.signInAnonymously({ options: { data: { display_name: name.slice(0, 40) } } });
-                if (error) throw error;
-                authDialog.close();
             } else if (authMode === 'verify') {
                 const { error } = await client.auth.verifyOtp({ email: pending.email, token: $('auth-code').value, type: pending.type });
                 if (error) throw error;
@@ -633,7 +642,6 @@ document.addEventListener('DOMContentLoaded', () => {
         'mk-deal', 'lib-new', 'feed-add-photos', 'feed-camera', 'feed-audio', 'feed-video', 'quick-reply', 'share-own', 'st-verify', 'find-friends']);
     const MEMBER_FORMS = new Set(['add-friend', 'cm-post', 'comment', 'feed-post', 'gc-send', 'mk-request', 'mk-save', 'mk-send', 'send-message']);
     document.addEventListener('click', e => {
-        if (e.target.closest('[data-action="try-guest"]')) { e.preventDefault(); return openAuth('', 'guest'); }
         if (!isGuest()) return;
         const el = e.target.closest('[data-action], [data-wpm="new"]');
         if (!el) return;
@@ -3316,7 +3324,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 <p class="empty-title">Sign in to connect with friends</p>
                 <p>${pitch}</p>
                 <button class="primary-btn" style="margin-top:18px" data-action="sign-in">Sign in or create an account</button>
-                <button class="link-btn gate-guest" data-action="try-guest">Or just have a look as a guest</button>
             </div>`;
         }
         return null;

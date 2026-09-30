@@ -18,11 +18,11 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,400..600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=60">
-    <link rel="stylesheet" href="photoedit.css?v=60">
-    <link rel="stylesheet" href="speak.css?v=60">
-    <link rel="stylesheet" href="zoom.css?v=60">
-    <link rel="stylesheet" href="location.css?v=60">
+    <link rel="stylesheet" href="style.css?v=63">
+    <link rel="stylesheet" href="photoedit.css?v=63">
+    <link rel="stylesheet" href="speak.css?v=63">
+    <link rel="stylesheet" href="zoom.css?v=63">
+    <link rel="stylesheet" href="location.css?v=63">
     <script>
         // Apply saved theme before paint to avoid a flash
         try {
@@ -395,17 +395,25 @@
     </dialog>
 
     <!-- Sign in / create account -->
-    <dialog class="ask auth" id="auth">
-        <form id="auth-form" novalidate>
-            <h3 id="auth-title">Sign in</h3>
-            <p class="ask-text" id="auth-reason" hidden></p>
+    <dialog class="auth" id="auth" aria-labelledby="auth-title">
+        <!-- The stage: a glimpse of what's inside Cordial, drifting behind the form (decoration only) -->
+        <div class="auth-stage" aria-hidden="true">
+            <div class="auth-moment m1"><span class="am-av" style="background:#be185d">AO</span><span class="am-text"><b>Ada</b> reacted to your note</span><svg class="i am-ic heart"><use href="#i-heart-fill"/></svg></div>
+            <div class="auth-moment m2"><span class="am-tile"><svg class="i"><use href="#i-g-tiles"/></svg></span><span class="am-text"><b>Wordplay</b> · your turn</span></div>
+            <div class="auth-moment m3 bubble"><span class="am-text">See you at 4! Bring the notes</span></div>
+            <div class="auth-moment m4"><span class="am-av" style="background:#0e7490">KA</span><span class="am-text"><b>Kemi</b> is live now</span><span class="am-live"></span></div>
+        </div>
+        <button type="button" class="auth-close" id="auth-cancel" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button>
+        <form id="auth-form" class="auth-card" novalidate>
+            <div class="auth-brand"><span class="auth-mark"><svg class="i"><use href="#i-book"/></svg></span><span>Cordial</span></div>
+            <h3 id="auth-title">Welcome back.</h3>
+            <p class="auth-sub" id="auth-sub"></p>
+            <p class="ask-text auth-reason" id="auth-reason" hidden></p>
             <div class="tabs auth-tabs" role="tablist">
                 <button type="button" class="tab" role="tab" data-mode="signin">Sign in</button>
                 <button type="button" class="tab" role="tab" data-mode="signup">Create account</button>
-                <button type="button" class="tab" role="tab" data-mode="guest">Guest</button>
             </div>
-            <p class="auth-note" data-show="guest">Just want a look? Pop in your name. You can read the feed, play Playnote and keep your diary. Create a free account any time to post, chat and add friends — you’ll keep everything.</p>
-            <label class="field" data-show="signup guest"><span>Your name</span><input id="auth-name" maxlength="40" autocomplete="name"></label>
+            <label class="field" data-show="signup"><span>Your name</span><input id="auth-name" maxlength="40" autocomplete="name"></label>
             <label class="field" data-show="signup upgrade"><span>Username</span><input id="auth-username" maxlength="20" autocomplete="username" placeholder="3–20 lowercase letters, numbers or _"></label>
             <label class="field" data-show="signin signup upgrade"><span>Email</span><input id="auth-email" type="email" autocomplete="email"></label>
             <label class="field" data-show="signin signup"><span>Password</span><input id="auth-password" type="password" autocomplete="current-password"></label>
@@ -414,10 +422,9 @@
             <button type="button" class="auth-forgot" id="auth-forgot" data-show="signin">Forgot password?</button>
             <p class="auth-message" id="auth-message" hidden></p>
             <button type="button" class="link-btn auth-resend" id="auth-resend" hidden>Send the email again</button>
-            <div class="ask-actions">
-                <button type="button" class="ghost-btn" id="auth-cancel">Cancel</button>
-                <button type="submit" class="primary-btn" id="auth-submit">Sign in</button>
-            </div>
+            <button type="submit" class="primary-btn auth-submit" id="auth-submit">Sign in</button>
+            <p class="auth-switch" data-show="signin">New here? <button type="button" class="link-btn" data-to="signup">Create an account</button></p>
+            <p class="auth-switch" data-show="signup">Already have an account? <button type="button" class="link-btn" data-to="signin">Sign in</button></p>
         </form>
     </dialog>
 
@@ -765,36 +772,36 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
-    <script src="config.js?v=60"></script>
-    <script src="rich.js?v=60"></script>
-    <script src="media.js?v=60"></script>
-    <script src="wallpaper.js?v=60"></script>
-    <script src="dilute.js?v=60"></script>
-    <script src="script.js?v=60"></script>
-    <script src="social.js?v=60"></script>
-    <script src="sync.js?v=60"></script>
-    <script src="stories.js?v=60"></script>
-    <script src="library.js?v=60"></script>
-    <script src="market.js?v=60"></script>
-    <script src="community.js?v=60"></script>
-    <script src="groupchat.js?v=60"></script>
-    <script src="live.js?v=60"></script>
-    <script src="explore.js?v=60"></script>
-    <script src="call.js?v=60"></script>
-    <script src="profile.js?v=60"></script>
-    <script src="schedule.js?v=60"></script>
-    <script src="play.js?v=60"></script>
-    <script src="games.js?v=60"></script>
-    <script src="chattools.js?v=60"></script>
-    <script src="safety.js?v=60"></script>
-    <script src="notify.js?v=60"></script>
-    <script src="settings.js?v=60"></script>
-    <script src="transcribe.js?v=60"></script>
-    <script src="ai.js?v=60"></script>
-    <script src="photoedit.js?v=60"></script>
-    <script src="speak.js?v=60"></script>
-    <script src="zoom.js?v=60"></script>
-    <script src="location.js?v=60"></script>
+    <script src="config.js?v=63"></script>
+    <script src="rich.js?v=63"></script>
+    <script src="media.js?v=63"></script>
+    <script src="wallpaper.js?v=63"></script>
+    <script src="dilute.js?v=63"></script>
+    <script src="script.js?v=63"></script>
+    <script src="social.js?v=63"></script>
+    <script src="sync.js?v=63"></script>
+    <script src="stories.js?v=63"></script>
+    <script src="library.js?v=63"></script>
+    <script src="market.js?v=63"></script>
+    <script src="community.js?v=63"></script>
+    <script src="groupchat.js?v=63"></script>
+    <script src="live.js?v=63"></script>
+    <script src="explore.js?v=63"></script>
+    <script src="call.js?v=63"></script>
+    <script src="profile.js?v=63"></script>
+    <script src="schedule.js?v=63"></script>
+    <script src="play.js?v=63"></script>
+    <script src="games.js?v=63"></script>
+    <script src="chattools.js?v=63"></script>
+    <script src="safety.js?v=63"></script>
+    <script src="notify.js?v=63"></script>
+    <script src="settings.js?v=63"></script>
+    <script src="transcribe.js?v=63"></script>
+    <script src="ai.js?v=63"></script>
+    <script src="photoedit.js?v=63"></script>
+    <script src="speak.js?v=63"></script>
+    <script src="zoom.js?v=63"></script>
+    <script src="location.js?v=63"></script>
     <script>
         // Lift the splash once the first screen is drawn — after its intro has had time to play, never longer than 4s
         (function () {
