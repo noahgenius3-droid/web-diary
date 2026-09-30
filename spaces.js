@@ -17,7 +17,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const first = name => esc(String(name || 'Someone').split(' ')[0]);
 
     const THEMES = [['violet', 'Violet'], ['sunset', 'Sunset'], ['ocean', 'Ocean'], ['forest', 'Forest'], ['night', 'Night']];
-    const L = { live: [], upcoming: [], mine: [], loaded: false, loading: false, tab: 'live' };
+    // Categories for rooms: the chips along the top of Spaces filter by them
+    const CATS = [['entertainment', '🎬'], ['sports', '⚽'], ['politics', '🏛️'], ['tech', '💻'], ['music', '🎵'], ['faith', '🙏'],
+        ['business', '💼'], ['lifestyle', '🌿'], ['education', '📚'], ['comedy', '😂']];
+    const L = { live: [], upcoming: [], mine: [], loaded: false, loading: false, tab: 'foryou' };
 
     // ---------- Lists ----------
     async function load() {
@@ -39,64 +42,78 @@ document.addEventListener('DOMContentLoaded', () => {
         const today = new Date();
         const tomorrow = new Date(Date.now() + 86400000);
         const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-        if (d.toDateString() === today.toDateString()) return `Today, ${time}`;
-        if (d.toDateString() === tomorrow.toDateString()) return `Tomorrow, ${time}`;
-        return `${d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })}, ${time}`;
+        if (d.toDateString() === today.toDateString()) return `today, ${time}`;
+        if (d.toDateString() === tomorrow.toDateString()) return `tomorrow, ${time}`;
+        return `${d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }).toLowerCase()}, ${time}`;
     }
 
-    function faces(x) {
-        const hostP = { id: x.host, ...(x.host_profile || {}) };
-        const people = [hostP, ...(x.stage || []).filter(p => p.id !== x.host)].slice(0, 4);
-        return `<span class="sp-faces">${people.map(p => avatar(p, 'sm')).join('')}</span>`;
-    }
+    const catOf = x => {
+        const t = String(x.topic || '').toLowerCase().trim();
+        return t ? CATS.find(([k]) => t === k || t.includes(k)) || null : null;
+    };
 
-    function status(x) {
-        if (x.live) return '<span class="sp-live"><i aria-hidden="true"></i>LIVE</span>';
-        if (x.scheduled_for) return `<span class="sp-when">${ic('i-calendar')}${esc(whenText(x.scheduled_for))}</span>`;
-        return '<span class="sp-when">Not live</span>';
+    // The cluster of faces on a card: the host big in the middle, the stage around it, "+N" for everyone else
+    function cluster(x) {
+        const people = [{ id: x.host, ...(x.host_profile || {}) }, ...(x.stage || []).filter(p => p.id !== x.host)];
+        const shown = people.slice(0, 5);
+        const extra = Math.max(Number(x.listening || 0), people.length) - shown.length;
+        return `<span class="cl-faces n${shown.length}" aria-hidden="true">${shown.map((p, i) => `<span class="cl-face f${i}">${avatar(p, 'lg')}</span>`).join('')}${extra > 0 ? `<span class="cl-more">+${extra}</span>` : ''}</span>`;
     }
 
     function card(x, opts = {}) {
         const p = x.host_profile || {};
-        const listening = Number(x.listening || 0);
+        const cat = catOf(x);
+        const here = R && R.id === x.id;
+        const id = esc(x.id);
+        const who = x.mine ? 'You' : esc(p.display_name || 'Someone');
+        const club = `${who}${cat ? ` · ${cat[0]}` : x.topic ? ` · ${esc(String(x.topic).toLowerCase())}` : ''}`;
+        const inRoom = here ? R.people.size : 0;
         return `
-            <article class="sp-card theme-${esc(x.theme || 'violet')}">
-                <button type="button" class="sp-card-hit" data-action="space-open" data-id="${esc(x.id)}" aria-label="${esc(x.title)} — ${x.live ? 'join' : 'details'}"></button>
-                <div class="sp-card-top">${status(x)}${x.topic ? `<span class="sp-topic">${esc(x.topic)}</span>` : ''}${x.visibility === 'circle' ? `<span class="sp-topic">${ic('i-lock')}Circle</span>` : ''}</div>
-                <strong class="sp-title">${esc(x.title)}</strong>
-                ${x.about && opts.full ? `<p class="sp-about">${esc(x.about)}</p>` : ''}
-                <div class="sp-card-foot">
-                    ${faces(x)}
-                    <span class="sp-meta">${x.mine ? 'Your room' : `with ${first(p.display_name)}`}${x.live ? ` · ${listening} ${listening === 1 ? 'listening' : 'listening'}` : ''}</span>
+            <article class="cl-card${here ? ' here' : ''}${x.live ? '' : ' off'}">
+                <button type="button" class="cl-hit" data-action="space-open" data-id="${id}" aria-label="${esc(x.title)}${x.live ? ' — join' : ''}"></button>
+                <div class="cl-main">
+                    <div class="cl-club">
+                        <span class="cl-club-ic" aria-hidden="true">${cat ? cat[1] : avatar({ id: x.host, ...p }, 'sm')}</span>
+                        <span class="cl-club-name">${club}</span>
+                        ${x.visibility === 'circle' ? `<span class="cl-lock" title="Friends and followers only">${ic('i-lock')}</span>` : ''}
+                    </div>
+                    <strong class="cl-title">${esc(x.title)}</strong>
+                    ${!x.live ? `<span class="cl-when">${ic('i-calendar')}${x.scheduled_for ? esc(whenText(x.scheduled_for)) : 'not live right now'}</span>` : ''}
+                    ${here ? `<div class="cl-speaking">${avatar({ id: me(), ...s.profile }, 'sm')}<span>You’re in this room · ${inRoom} ${inRoom === 1 ? 'person' : 'people'} here</span></div>` : ''}
                 </div>
+                ${here ? `
+                    <div class="cl-now">
+                        <button type="button" class="cl-pill" data-action="space-mute" aria-pressed="${!!R.deaf}">${R.deaf ? 'unmute' : 'mute'}${ic(R.deaf ? 'i-volume-off' : 'i-volume')}</button>
+                        <button type="button" class="cl-pill join" data-action="space-open" data-id="${id}">open${ic('i-arrow-right')}</button>
+                    </div>` : cluster(x)}
                 ${opts.manage ? `
-                    <div class="sp-card-actions">
-                        <button type="button" class="sp-go" data-action="space-open" data-id="${esc(x.id)}">${ic('i-mic')}${x.live ? 'Rejoin' : 'Go live'}</button>
-                        <button type="button" class="sp-mini-btn" data-action="space-edit" data-id="${esc(x.id)}" aria-label="Edit room">${ic('i-pencil')}</button>
-                        <button type="button" class="sp-mini-btn" data-action="space-share" data-id="${esc(x.id)}" aria-label="Share link">${ic('i-share')}</button>
-                        <button type="button" class="sp-mini-btn danger" data-action="space-delete" data-id="${esc(x.id)}" aria-label="Delete room">${ic('i-trash')}</button>
+                    <div class="cl-manage">
+                        <button type="button" class="cl-pill join" data-action="space-open" data-id="${id}">${ic('i-mic')}${x.live ? 'rejoin' : 'go live'}</button>
+                        <button type="button" class="cl-pill" data-action="space-edit" data-id="${id}">${ic('i-pencil')}edit</button>
+                        <button type="button" class="cl-pill" data-action="space-share" data-id="${id}">${ic('i-share')}share</button>
+                        <button type="button" class="cl-pill danger" data-action="space-delete" data-id="${id}" aria-label="Delete room">${ic('i-trash')}</button>
                     </div>` : ''}
             </article>`;
     }
 
-    const startTile = () => `
-        <button type="button" class="sp-card sp-new" data-action="space-new">
-            <span class="sp-new-ic">${ic('i-plus')}</span>
-            <strong>Start a space</strong>
-            <small>Host a live audio room — talk, invite people up to speak</small>
-        </button>`;
+    // The room you're in always comes first
+    const hereFirst = list => (R ? [...list].sort((a, b) => (b.id === R.id) - (a.id === R.id)) : list);
 
     // ---------- Explore ----------
     function exploreSection() {
         if (!me()) return '';
         if (!L.loaded) load();
-        const list = [...L.live, ...L.upcoming.slice(0, 4)].slice(0, 10);
+        const list = hereFirst(L.live).slice(0, 3);
+        const soon = list.length ? [] : L.upcoming.slice(0, 2);
         return `
             <section class="ex-sec" aria-labelledby="sp-ex-h">
                 <header class="ex-head"><h3 id="sp-ex-h"><span class="ex-ic">${ic('i-headphones')}</span>Spaces</h3>
                     <p>${L.live.length ? `${L.live.length} live audio ${L.live.length === 1 ? 'room' : 'rooms'} right now` : 'Live audio rooms — drop in and listen, or host your own'}</p>
                     <button type="button" class="link-btn accent ex-more" data-action="go-spaces">See all</button></header>
-                <div class="ex-row sp-row">${list.map(x => card(x)).join('')}${startTile()}</div>
+                <div class="cl-list">
+                    ${[...list, ...soon].map(x => card(x)).join('')}
+                    <button type="button" class="cl-host inline" data-action="space-new">${ic('i-plus')}host a room</button>
+                </div>
             </section>`;
     }
 
@@ -106,29 +123,27 @@ document.addEventListener('DOMContentLoaded', () => {
         const blocked = I.gate('Host live audio rooms and listen in on conversations from your circle.');
         if (blocked) return blocked;
         if (!L.loaded) load();
-        const tabs = [['live', `Live now${L.live.length ? ` · ${L.live.length}` : ''}`], ['upcoming', 'Coming up'], ['mine', `Your rooms${L.mine.length ? ` · ${L.mine.length}` : ''}`]];
-        const list = L[L.tab] || [];
-        const empty = {
-            live: ['Nobody’s live right now', 'Start a space and your friends and followers get a heads-up.'],
-            upcoming: ['Nothing scheduled', 'Hosts can schedule a room so people know when to tune in.'],
-            mine: ['You haven’t made a room yet', 'Make as many as you like — a weekly show, a study room, a late-night chat.']
-        }[L.tab];
+        const chips = [['foryou', `${ic('i-sparkle')}for you`], ...CATS.map(([k]) => [k, k]), ['upcoming', `${ic('i-calendar')}upcoming`], ['mine', 'my rooms']];
+        const tab = L.tab;
+        const inCat = x => { const c = catOf(x); return !!c && c[0] === tab; };
+        const list = tab === 'foryou' ? hereFirst(L.live)
+            : tab === 'upcoming' ? L.upcoming
+            : tab === 'mine' ? L.mine
+            : [...hereFirst(L.live.filter(inCat)), ...L.upcoming.filter(inCat)];
+        const empty = tab === 'foryou' ? ['Nobody’s live right now', 'Host a room and your friends and followers get a heads-up.']
+            : tab === 'upcoming' ? ['Nothing scheduled', 'Hosts can schedule a room so people know when to tune in.']
+            : tab === 'mine' ? ['You haven’t made a room yet', 'Make as many as you like — a weekly show, a study room, a late-night chat.']
+            : [`No ${tab} rooms right now`, `Start one and pick “${tab}” as its topic.`];
         return `
-            <div class="spaces">
-                <section class="sp-hero">
-                    <div>
-                        <h2>Spaces</h2>
-                        <p>Live audio rooms. Listen in, raise your hand to speak, or host your own.</p>
-                    </div>
-                    <button type="button" class="primary-btn sp-hero-btn" data-action="space-new">${ic('i-plus')}Start a space</button>
-                </section>
-                <nav class="ex-tabs" role="tablist" aria-label="Show">
-                    ${tabs.map(([k, l]) => `<button type="button" class="cm-filter" role="tab" aria-selected="${L.tab === k}" data-action="space-tab" data-tab="${k}">${l}</button>`).join('')}
+            <div class="spaces cl">
+                <nav class="cl-chips" aria-label="Topics">
+                    ${chips.map(([k, l]) => `<button type="button" class="cl-chip" aria-pressed="${tab === k}" data-action="space-tab" data-tab="${k}">${l}</button>`).join('')}
                 </nav>
                 ${!L.loaded ? '<p class="muted sp-loading">Loading rooms…</p>'
-                    : list.length ? `<div class="sp-grid-cards">${list.map(x => card(x, { full: true, manage: L.tab === 'mine' })).join('')}${L.tab === 'mine' ? startTile() : ''}</div>`
-                    : `<div class="ex-empty"><strong>${empty[0]}</strong><span>${empty[1]}</span>
-                        <button type="button" class="primary-btn" data-action="space-new" style="margin-top:14px">${ic('i-plus')}Start a space</button></div>`}
+                    : list.length ? `<div class="cl-list">${list.map(x => card(x, { manage: tab === 'mine' })).join('')}</div>`
+                    : `<div class="cl-empty"><span class="cl-empty-ic">${ic('i-headphones')}</span><strong>${empty[0]}</strong><span>${empty[1]}</span></div>`}
+                ${tab === 'foryou' && L.loaded && L.upcoming.length ? `<h3 class="cl-sub">coming up</h3><div class="cl-list">${L.upcoming.slice(0, 4).map(x => card(x)).join('')}</div>` : ''}
+                <button type="button" class="cl-host" data-action="space-new">${ic('i-plus')}host a room</button>
             </div>`;
     };
 
@@ -149,7 +164,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="sp-edit-preview theme-${esc(v.theme)}" aria-hidden="true">${ic('i-headphones')}</div>
                 <label class="field"><span>Room name</span><input name="title" maxlength="80" required autocomplete="off" placeholder="e.g. Sunday night vibes" value="${esc(v.title || '')}"></label>
                 <label class="field"><span>What’s it about? <small>(optional)</small></span><textarea name="about" maxlength="300" rows="2" placeholder="Tell people what you’ll talk about">${esc(v.about || '')}</textarea></label>
-                <label class="field"><span>Topic <small>(optional)</small></span><input name="topic" maxlength="30" autocomplete="off" placeholder="e.g. Music, Faith, Tech, Football" value="${esc(v.topic || '')}"></label>
+                <label class="field"><span>Topic <small>(helps people find it)</small></span><input name="topic" maxlength="30" autocomplete="off" list="sp-cats" placeholder="e.g. music, sports, tech" value="${esc(v.topic || '')}"></label>
+                <datalist id="sp-cats">${CATS.map(([k]) => `<option value="${k}">`).join('')}</datalist>
                 <div class="field"><span>Look</span>
                     <div class="sp-themes" role="radiogroup" aria-label="Colour">${THEMES.map(([k, l]) => `
                         <label class="sp-theme theme-${k}"><input type="radio" name="theme" value="${k}"${v.theme === k ? ' checked' : ''}><span class="sr-only">${l}</span></label>`).join('')}
@@ -227,7 +243,14 @@ document.addEventListener('DOMContentLoaded', () => {
             app.showToast('Room deleted');
         },
         'space-share': el => share(el.dataset.id),
-        'space-open': el => enter(el.dataset.id)
+        'space-open': el => enter(el.dataset.id),
+        'space-mute': () => {
+            if (!R) return;
+            R.deaf = !R.deaf;
+            for (const [, p] of R.peers) if (p.audio) p.audio.muted = R.deaf;
+            app.showToast(R.deaf ? 'Room sound off' : 'Room sound on');
+            app.render();
+        }
     });
 
     async function share(id) {
@@ -288,6 +311,7 @@ document.addEventListener('DOMContentLoaded', () => {
         heartbeat();
         R.meterTimer = setInterval(measure, 250);
         expand();
+        if (['spaces', 'explore'].includes(app.state.view)) app.render();
         if (roleOf(me()) === 'host') app.showToast('You’re live — tap the mic to talk');
         load();
     }
@@ -407,6 +431,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const stream = e.streams[0] || new MediaStream([e.track]);
             peer.audio.srcObject = stream;
+            peer.audio.muted = !!R.deaf;
             peer.audio.play().catch(() => paint('Tap anywhere to hear the room'));
             meter(id, stream);
         };
@@ -666,7 +691,7 @@ document.addEventListener('DOMContentLoaded', () => {
         client.rpc('diary_space_leave', { p_id: c.id }).then(() => load());
         room.hidden = true;
         mini.hidden = true;
-        document.body.classList.remove('sp-open');
+        document.body.classList.remove('sp-open', 'sp-mini-on');
         if (!quiet) app.render();
     }
 
@@ -691,6 +716,7 @@ document.addEventListener('DOMContentLoaded', () => {
         room.hidden = false;
         mini.hidden = true;
         document.body.classList.add('sp-open');
+        document.body.classList.remove('sp-mini-on');
         paint();
         room.querySelector('.sp-room-close')?.focus({ preventScroll: true });
     }
@@ -700,6 +726,7 @@ document.addEventListener('DOMContentLoaded', () => {
         room.hidden = true;
         mini.hidden = false;
         document.body.classList.remove('sp-open');
+        document.body.classList.add('sp-mini-on');
         paint();
     }
 
