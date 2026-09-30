@@ -38,6 +38,17 @@ function message(type: string, name: string, d: any = {}) {
       return { title: `🔴 ${name} is live`, body: "Tap to watch now", url: "/#/explore", tag: "live" };
     case "call_started":
       return { title: `📞 ${name} started a ${d.video ? "video" : "voice"} call`, body: `In ${d.emoji ? d.emoji + " " : ""}${d.community_name || "your group"} · tap to join`, url: `/#/community/${d.community_id}`, tag: `call-${d.community_id}` };
+    case "post_activity":
+      return { title: `${name} commented on a post you follow`, body: `${d.community_name ? `In ${d.community_name}: ` : ""}${d.snippet || ""}`.slice(0, 180), url: d.kind === "entry" ? `/#/post/${d.entry_id}` : `/#/post/g-${d.post_id}`, tag: `watch-${d.entry_id || d.post_id}` };
+    case "scheduled_published":
+      return {
+        title: d.target === "message" ? "Your scheduled message was sent" : d.target === "group" ? `Your scheduled post is live in ${d.community_name || "your group"}` : "Your scheduled post is live",
+        body: d.snippet || "",
+        url: d.target === "feed" ? `/#/post/${d.ref}` : d.target === "group" ? `/#/post/g-${d.ref}` : "/#/messages",
+        tag: `sched-${d.ref}`,
+      };
+    case "scheduled_failed":
+      return { title: "A scheduled post couldn't go out", body: `${d.reason || "Something went wrong"} — ${d.snippet || ""}`.slice(0, 180), url: "/#/scheduled", tag: `sched-${d.scheduled_id}` };
     default:
       return null;
   }

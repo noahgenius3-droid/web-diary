@@ -10,7 +10,42 @@ document.addEventListener('DOMContentLoaded', () => {
     const panel = $('notif-panel');
     const canAlert = 'Notification' in window;
 
-    const n = { userId: null, items: [], loaded: false, open: false, fresh: new Set(), channel: null };
+    const n = { userId: null, items: [], loaded: false, open: false, fresh: new Set(), channel: null, filter: 'all' };
+
+    // Same grouping as the server's notification categories (Settings → Notifications)
+    function categoryOf(t) {
+        if (['entry_like', 'post_like', 'reel_like', 'library_like', 'entry_reaction', 'story_reaction', 'entry_repost'].includes(t)) return 'reactions';
+        if (['entry_comment', 'post_comment', 'reel_comment', 'post_activity'].includes(t)) return 'comments';
+        if (['mention', 'reply'].includes(t)) return 'mentions';
+        if (['new_follower', 'friend_request', 'friend_accepted'].includes(t)) return 'people';
+        if (['community_post', 'community_join', 'call_started'].includes(t)) return 'groups';
+        return 'other';
+    }
+    const FILTERS = [['all', 'All'], ['mentions', 'Mentions'], ['comments', 'Comments'], ['reactions', 'Reactions'], ['people', 'People'], ['groups', 'Groups'], ['other', 'More']];
+
+    // Several people doing the same thing to the same post become one line: "Ada and 3 others reacted…"
+    const GROUPABLE = new Set(['entry_like', 'post_like', 'reel_like', 'library_like', 'entry_reaction', 'story_reaction', 'entry_repost', 'entry_comment', 'post_comment', 'reel_comment', 'post_activity', 'community_join']);
+    function targetOf(x) {
+        const d = x.data || {};
+        return d.entry_id || d.entry || d.post_id || d.reel_id || d.story || d.item_id || (x.type === 'community_join' ? d.community_id : '') || '';
+    }
+    function grouped(list) {
+        const out = [];
+        const byKey = new Map();
+        list.forEach(x => {
+            const key = GROUPABLE.has(x.type) && targetOf(x) ? `${x.type === 'entry_reaction' ? 'entry_like' : x.type}:${targetOf(x)}` : null;
+            const head = key && byKey.get(key);
+            if (head) {
+                if (x.actor && x.actor !== head.actor && !head._others.some(o => o.actor === x.actor)) head._others.push(x);
+                head._ids.push(x.id);
+                return;
+            }
+            const item = { ...x, _others: [], _ids: [x.id] };
+            if (key) byKey.set(key, item);
+            out.push(item);
+        });
+        return out;
+    }
 
     // ---------- Lifecycle ----------
     setInterval(() => {
@@ -61,6 +96,7 @@ document.addEventListener('DOMContentLoaded', () => {
         paintBadge();
         if (n.open) paintPanel();
 
+        if (item.type.startsWith('scheduled_') && window.diarySchedule) window.diarySchedule.refresh();
         const plain = describe(item, true);
         if (item.type === 'call_started') { if (!(window.diaryCalls && window.diaryCalls.ringGroup && window.diaryCalls.ringGroup(item))) showCallBanner(item); }
         else if (item.type === 'live_started') showLivePopup(item);
@@ -72,6 +108,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const CATEGORY = {
         friend_request: ['friend', 'i-user-plus'], friend_accepted: ['friend', 'i-user'],
         entry_like: ['like', 'i-thumb'], post_like: ['like', 'i-thumb'], post_activity: ['comment', 'i-bell'],
+        scheduled_published: ['group', 'i-clock'], scheduled_failed: ['missed', 'i-alert'],
         entry_comment: ['comment', 'i-chat'], post_comment: ['comment', 'i-chat'],
         community_post: ['group', 'i-users'], community_join: ['group', 'i-users'],
         call_started: ['call', 'i-phone'], missed_call: ['missed', 'i-phone-off'],
@@ -86,7 +123,9 @@ document.addEventListener('DOMContentLoaded', () => {
     function describe(x, plain = false) {
         const d = x.data || {};
         const actorName = (x.actor_profile && x.actor_profile.display_name) || 'Someone';
-        const who = plain ? actorName : x.actor ? `<button type="button" class="name-link" data-profile="${esc(x.actor)}">${esc(actorName)}</button>` : `<strong>${esc(actorName)}</strong>`;
+        const others = (x._others || []).length;
+        const more = others ? ` and ${others} ${others === 1 ? 'other' : 'others'}` : '';
+        const who = more ? (plain ? `${actorName}${more}` : `<button type="button" class="name-link" data-profile="${esc(x.actor)}">${esc(actorName)}</button>${more}`) : plain ? actorName : x.actor ? `<button type="button" class="name-link" data-profile="${esc(x.actor)}">${esc(actorName)}</button>` : `<strong>${esc(actorName)}</strong>`;
         const group = d.community_name ? (plain ? `${d.emoji || ''} ${d.community_name}`.trim() : `<strong>${esc(d.emoji || '')} ${esc(d.community_name)}</strong>`) : '';
         const quote = d.snippet ? (plain ? ` “${d.snippet}”` : ` <span class="notif-quote">“${esc(d.snippet)}”</span>`) : '';
         switch (x.type) {
@@ -95,6 +134,8 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'entry_like': return `${who} reacted ${d.emoji || '👍'} to your post${quote}`;
             case 'entry_comment': return `${who} commented:${quote}`;
             case 'post_like': return `${who} reacted ${d.emoji || '👍'} to your post in ${group}`;
+            case 'scheduled_published': return d.target === 'message' ? `Your scheduled message was sent:${quote}` : d.target === 'group' ? `Your scheduled post is live in ${group || 'your group'}:${quote}` : `Your scheduled post is live:${quote}`;
+            case 'scheduled_failed': return `A scheduled ${d.target === 'message' ? 'message' : 'post'} couldn’t go out — ${plain ? (d.reason || 'something went wrong') : esc(d.reason || 'something went wrong')}:${quote}`;
             case 'post_activity': return `${who} commented on a post you follow${group ? ` in ${group}` : ''}:${quote}`;
             case 'post_comment': return `${who} commented on your post in ${group}:${quote}`;
             case 'community_post': return `${who} posted in ${group}:${quote}`;
@@ -186,6 +227,14 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'post_activity':
                 if (d.kind === 'entry' && d.entry_id) { app.setView('feed'); I.openEntry(d.entry_id); }
                 else if (d.post_id) { app.setView('community', { communityId: d.community_id }); I.focusPost(`post:${d.post_id}`, { open: true }); }
+                break;
+            case 'scheduled_published':
+                if (d.target === 'feed') { app.setView('feed'); I.openEntry(d.ref); }
+                else if (d.target === 'group') app.setView('post', { postId: `g-${d.ref}` });
+                else { app.setView('messages'); if (I.openChat && d.recipient) I.openChat(d.recipient); }
+                break;
+            case 'scheduled_failed':
+                app.setView('scheduled');
                 break;
             case 'new_follower':
             case 'friend_accepted':
@@ -283,8 +332,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>`;
             return;
         }
-        const fresh = n.items.filter(x => n.fresh.has(x.id));
-        const earlier = n.items.filter(x => !n.fresh.has(x.id));
+        const counts = {};
+        n.items.forEach(x => { const c = categoryOf(x.type); counts[c] = (counts[c] || 0) + (x.read_at ? 0 : 1); });
+        $('notif-filters').innerHTML = FILTERS.filter(([k]) => k === 'all' || n.items.some(x => categoryOf(x.type) === k)).map(([k, l]) =>
+            `<button type="button" role="tab" class="notif-filter" data-n-filter="${k}" aria-selected="${n.filter === k}">${l}${k !== 'all' && counts[k] ? ` <span class="nf-dot">${counts[k]}</span>` : ''}</button>`).join('');
+        const shown = n.filter === 'all' ? n.items : n.items.filter(x => categoryOf(x.type) === n.filter);
+        if (!shown.length) {
+            $('notif-list').innerHTML = '<div class="notif-empty"><p class="muted small">Nothing here right now.</p></div>';
+            return;
+        }
+        const fresh = grouped(shown.filter(x => n.fresh.has(x.id)));
+        const earlier = grouped(shown.filter(x => !n.fresh.has(x.id)));
         $('notif-list').innerHTML = [
             fresh.length ? `<p class="notif-group">New</p>${fresh.map(itemHTML).join('')}` : '',
             earlier.length ? `<p class="notif-group">Earlier</p>${earlier.map(itemHTML).join('')}` : ''
@@ -306,8 +364,8 @@ document.addEventListener('DOMContentLoaded', () => {
             actions = `<span class="notif-actions"><button class="chip call-chip" data-n-act="callback"><svg class="i"><use href="#i-phone"/></svg>Call back</button></span>`;
         }
         return `
-            <div class="notif${n.fresh.has(x.id) ? ' unread' : ''}" data-n="${esc(x.id)}" role="button" tabindex="0">
-                <span class="notif-avatar"${x.actor ? ` data-profile="${esc(x.actor)}"` : ''}>${avatar(actor, 'md')}<span class="notif-type t-${cat}"><svg class="i"><use href="#${icon}"/></svg></span></span>
+            <div class="notif${n.fresh.has(x.id) ? ' unread' : ''}" data-n="${esc(x.id)}" data-n-ids="${esc((x._ids || [x.id]).join(','))}" role="button" tabindex="0">
+                <span class="notif-avatar${(x._others || []).length ? ' stacked' : ''}"${x.actor ? ` data-profile="${esc(x.actor)}"` : ''}>${avatar(actor, 'md')}${(x._others || []).length ? avatar(x._others[0].actor_profile || { id: x._others[0].actor, display_name: 'Someone' }, 'sm') : ''}<span class="notif-type t-${cat}"><svg class="i"><use href="#${icon}"/></svg></span></span>
                 <span class="notif-main">
                     <span class="notif-text">${describe(x)}</span>
                     <time>${timeAgo(x.created_at)}</time>
@@ -319,6 +377,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     panel.addEventListener('click', async e => {
         e.stopPropagation();
+        const filter = e.target.closest('[data-n-filter]');
+        if (filter) { n.filter = filter.dataset.nFilter; return paintPanel(); }
         const act = e.target.closest('[data-n-act]');
         const row = e.target.closest('[data-n]');
         const item = row && n.items.find(x => x.id === row.dataset.n);
@@ -332,10 +392,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             if (!item) return;
             if (what === 'dismiss') {
-                n.items = n.items.filter(x => x.id !== item.id);
+                const ids = (row.dataset.nIds || item.id).split(',');
+                n.items = n.items.filter(x => !ids.includes(x.id));
                 paintPanel();
                 paintBadge();
-                client.from('diary_notifications').delete().eq('id', item.id);
+                client.from('diary_notifications').delete().in('id', ids);
             } else if (what === 'accept' || what === 'decline') {
                 act.disabled = true;
                 await I.respond(act.dataset.fid, what === 'accept');

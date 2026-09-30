@@ -426,6 +426,52 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>`;
     }
 
+    function pollBuilder() {
+        const poll = c.draft.poll;
+        if (!poll) return '';
+        return `
+            <div class="cm-poll-build">
+                <input class="cm-poll-in" data-poll="q" maxlength="200" placeholder="Ask a question…" value="${esc(poll.question)}" aria-label="Poll question">
+                ${poll.options.map((o, i) => `<input class="cm-poll-in opt" data-poll="${i}" maxlength="80" placeholder="Option ${i + 1}" value="${esc(o)}" aria-label="Option ${i + 1}">`).join('')}
+                <div class="cm-poll-build-foot">
+                    ${poll.options.length < 4 ? '<button type="button" class="chip" data-action="cm-poll-add">+ Add option</button>' : ''}
+                    <button type="button" class="chip" data-action="cm-poll-remove">Remove poll</button>
+                </div>
+            </div>`;
+    }
+
+    function postsTab(cm) {
+        const member = !!roleOf(cm.id);
+        const first = s.profile.display_name.split(' ')[0];
+        const composer = member ? `
+            <form class="post-composer" data-form="cm-post">
+                <div class="pc-row">
+                    ${avatar(s.profile, 'md')}
+                    <textarea id="cm-text" rows="2" maxlength="5000" placeholder="Share an update with ${esc(cm.name)}, ${esc(first)}…" aria-label="Write a post"></textarea>
+                </div>
+                <div class="pc-photos" id="cm-photos" hidden></div>
+                ${pollBuilder()}
+                <div class="pc-foot">
+                    <button type="button" class="pc-tool" data-action="cm-add-photos"><svg class="i"><use href="#i-image"/></svg>Photo</button>
+                    <button type="button" class="pc-tool poll" data-action="cm-poll" aria-pressed="${!!c.draft.poll}"><svg class="i"><use href="#i-chart"/></svg>Poll</button>
+                    <button type="button" class="pc-tool camera" data-action="cm-camera"><svg class="i"><use href="#i-camera"/></svg>Camera</button>
+                    <button type="button" class="pc-tool note" data-action="cm-share-note"><svg class="i"><use href="#i-notes"/></svg>Share a note</button>
+                    ${window.diarySchedule ? '<button type="button" class="pc-tool schedule" data-action="cm-schedule"><svg class="i"><use href="#i-clock"/></svg>Schedule</button>' : ''}
+                    <button type="submit" class="pc-post" id="cm-post-btn"${c.posting ? ' disabled' : ''}>${c.posting ? 'Posting…' : 'Post'}</button>
+                </div>
+            </form>` : `
+            <div class="cm-join-banner">
+                <p><strong>Join ${esc(cm.name)}</strong> to post, like and comment.</p>
+                <button class="primary-btn" data-action="cm-join" data-id="${esc(cm.id)}">Join</button>
+            </div>`;
+
+        const posts = c.loadingPosts && !c.posts.length
+            ? '<p class="muted">Loading posts…</p>'
+            : [...c.posts].sort((a, b) => (b.pinned_at ? 1 : 0) - (a.pinned_at ? 1 : 0)).map(p => postHTML(p, member)).join('') || `<div class="empty"><p class="empty-title">No posts yet</p><p>${member ? 'Be the first to share something.' : 'Nothing has been shared here yet.'}</p></div>`;
+
+        return `<div class="cm-posts">${composer}<div class="feed-list">${posts}</div></div>`;
+    }
+
     function postHTML(p, member) {
         if (I.isHidden && I.isHidden('post', p.id)) return '';
         return renderPost({

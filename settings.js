@@ -88,6 +88,37 @@ document.addEventListener('DOMContentLoaded', () => {
         app.render();
     }
 
+    // Notification categories you've turned off (the server drops those notifications — and their push alerts)
+    const NOTIF_CATS = [
+        ['reactions', 'i-thumb', 'Reactions', 'When people react to or repost your posts'],
+        ['comments', 'i-chat', 'Comments', 'On your posts, and on posts you follow'],
+        ['mentions', 'i-reply', 'Mentions & replies', 'When someone @mentions or replies to you'],
+        ['people', 'i-user-plus', 'Friends & followers', 'Friend requests, accepted requests, new followers'],
+        ['groups', 'i-users', 'Group activity', 'New posts, people joining, group calls'],
+        ['live', 'i-live', 'Live videos', 'When someone you follow goes live'],
+        ['scheduled', 'i-clock', 'Scheduled posts', 'When your scheduled posts go out, or can’t'],
+        ['market', 'i-store', 'Marketplace', 'Requests and messages about books'],
+        ['calls', 'i-phone', 'Missed calls', 'Calls you didn’t answer']
+    ];
+    const NP = { muted: null, loading: false };
+    async function loadNotifPrefs() {
+        if (NP.loading) return;
+        NP.loading = true;
+        const { data } = await I.client.from('diary_notification_prefs').select('muted').maybeSingle();
+        NP.muted = new Set((data && data.muted) || []);
+        NP.loading = false;
+        if (app.state.view === 'settings') app.render();
+    }
+    async function setNotifCat(cat, on) {
+        if (!NP.muted) return;
+        const before = new Set(NP.muted);
+        if (on) NP.muted.delete(cat); else NP.muted.add(cat);
+        const { error } = await I.client.from('diary_notification_prefs').upsert({ muted: [...NP.muted], updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+        if (error) { NP.muted = before; app.showToast('Couldn’t save that'); }
+        else app.showToast(on ? 'Turned on' : 'Turned off — you won’t get these');
+        app.render();
+    }
+
     async function setPrivacyKey(key, value) {
         const before = P.settings[key];
         P.settings = { ...P.settings, [key]: value };
@@ -386,6 +417,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     <h3>Notifications</h3>
                     ${row('i-bell', 'Alerts on this device', alerts === 'unavailable' ? 'Not available in this browser — on iPhone, add Cordial to your Home Screen first' : (window.diaryNotify && window.diaryNotify.pushSupported && window.diaryNotify.pushSupported() ? 'Friend requests, new followers and people going live — even when Cordial is closed; messages, likes and calls while it’s open' : 'Messages, likes, comments and calls while Cordial is open'),
                         alerts === 'unavailable' ? '<span class="muted small">Off</span>' : toggle('st-alerts', alerts === 'on', 'Device alerts'))}
+                    ${signedIn() ? (() => {
+                        if (!NP.muted) { loadNotifPrefs(); return '<p class="muted small st-pad">Loading your notification choices…</p>'; }
+                        return `<h4 class="st-sub">What to notify you about</h4>${NOTIF_CATS.map(([cat, icon, title, sub]) => row(icon, title, sub, `
+                            <label class="st-switch share-toggle" aria-label="${title}">
+                                <input type="checkbox" data-action="st-notif" data-cat="${cat}"${NP.muted.has(cat) ? '' : ' checked'}>
+                                <span class="switch" aria-hidden="true"></span>
+                            </label>`)).join('')}<p class="muted small st-pad">New sign-ins to your account are always shown.</p>`;
+                    })() : ''}
                 </section>
 
                 <section class="st-card">
@@ -620,6 +659,8 @@ document.addEventListener('DOMContentLoaded', () => {
             else app.showToast(on ? 'Read receipts on' : 'Read receipts off');
             if (I.refreshPresence) I.refreshPresence();
             app.render();
+        } else if (a === 'st-notif') {
+            setNotifCat(e.target.dataset.cat, e.target.checked);
         } else if (a === 'st-alerts') {
             if (e.target.checked && window.diaryNotify && window.diaryNotify.enableAlerts) await window.diaryNotify.enableAlerts();
             else if (!e.target.checked) {

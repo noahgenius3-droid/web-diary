@@ -12026,3 +12026,97 @@ video.rec-player { max-height: 240px; background: #000; }
 .pf-edit-form textarea { resize: vertical; min-height: 84px; line-height: 1.5; }
 .pf-edit-form input:focus, .pf-edit-form textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .pf-edit-foot { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
+
+/* ==========================================================================
+   Phase B: scheduled posts, drafts, notification centre
+   ========================================================================== */
+
+/* Schedule button in the feed composer */
+.pc-schedule {
+    display: grid; place-items: center; flex: none; width: 40px; height: 40px; margin-left: auto;
+    border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text-muted); cursor: pointer;
+}
+.pc-schedule .i { width: 18px; height: 18px; }
+.pc-schedule + .pc-post { margin-left: 6px; }
+@media (hover: hover) and (pointer: fine) { .pc-schedule:hover { color: var(--accent); border-color: var(--accent); } }
+.social-nav-item .count-dot[hidden] { display: none; }
+
+/* The scheduler */
+.sched-dialog { width: min(540px, 100%); }
+.sched-form { gap: 0; }
+.sched-scroll { display: grid; gap: 14px; padding: 4px 20px 16px; overflow-y: auto; overscroll-behavior: contain; }
+.sched-form .field { display: grid; gap: 6px; }
+.sched-form .field > span { display: flex; justify-content: space-between; align-items: baseline; font-weight: 700; font-size: 0.88rem; }
+.sched-form input:not([type="checkbox"]), .sched-form textarea, .sched-form select {
+    width: 100%; padding: 11px 14px; border: 1px solid var(--border); border-radius: 12px;
+    background: var(--input); color: var(--text); font: inherit; font-size: 16px;
+}
+.sched-form textarea { resize: vertical; min-height: 110px; line-height: 1.5; }
+.sched-form input:focus, .sched-form textarea:focus, .sched-form select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sched-seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 4px; border-radius: 14px; background: var(--input); }
+.sched-seg.small { grid-template-columns: repeat(2, 1fr); }
+.sched-seg button {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 42px; border: 0; border-radius: 10px;
+    background: none; color: var(--text-muted); font: inherit; font-weight: 700; font-size: 0.88rem; cursor: pointer;
+}
+.sched-seg button .i { width: 16px; height: 16px; }
+.sched-seg button[aria-checked="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+.sched-seg button:disabled { opacity: 0.45; cursor: not-allowed; }
+.sched-photos { display: grid; gap: 8px; justify-items: start; }
+.sched-photos .pc-photos:empty { display: none; }
+.sched-check { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; cursor: pointer; }
+.sched-check input { width: 20px; height: 20px; margin-top: 2px; accent-color: var(--accent); flex: none; }
+.sched-check span { display: grid; gap: 2px; }
+.sched-check small { color: var(--text-muted); font-size: 0.8rem; }
+.sched-quick { display: flex; flex-wrap: wrap; gap: 6px; }
+.sched-quick .chip { min-height: 34px; }
+.sched-when-text { font-size: 0.8rem; }
+.sched-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px calc(14px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--border); }
+
+/* The Scheduled page */
+.sched-page { max-width: 720px; margin: 0 auto; padding-bottom: 32px; display: grid; gap: 12px; }
+.sched-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.sched-head h2 { margin: 0; font-size: 1.4rem; letter-spacing: -0.01em; }
+.sched-head p { margin: 2px 0 0; }
+.sched-head .primary-btn { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.sched-head .primary-btn .i { width: 16px; height: 16px; }
+.sched-tabs { margin: 0; }
+.sched-n { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 0.72rem; }
+.sched-list { display: grid; gap: 10px; }
+.sched-row { display: flex; gap: 14px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); }
+.sched-row.s-failed { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+.sched-row.s-cancelled { opacity: 0.75; }
+.sched-main { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.sched-where { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--text-muted); font-size: 0.8rem; font-weight: 700; }
+.sched-where .i { width: 14px; height: 14px; flex: none; }
+.sched-main h3 { margin: 2px 0 0; font-size: 1rem; }
+.sched-body { margin: 0; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.sched-when { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; font-size: 0.84rem; font-weight: 700; color: var(--accent); }
+.s-published .sched-when { color: #16a34a; }
+.s-failed .sched-when { color: var(--danger); }
+.s-draft .sched-when, .s-cancelled .sched-when { color: var(--text-muted); }
+.sched-when .i { width: 15px; height: 15px; }
+.sched-error { margin: 0; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); font-size: 0.84rem; }
+.sched-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.sched-actions .chip { min-height: 34px; }
+.chip.danger { color: var(--danger); }
+.chip.accent { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.sched-thumb { flex: none; width: 72px; height: 72px; border-radius: 12px; object-fit: cover; background: var(--input); }
+@media (max-width: 480px) { .sched-thumb { width: 56px; height: 56px; } .sched-row { padding: 12px; } }
+
+/* Notification centre */
+.notif-filters { display: flex; gap: 6px; padding: 4px 14px 8px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+.notif-filters::-webkit-scrollbar { display: none; }
+.notif-filters:empty { display: none; }
+.notif-filter {
+    flex: none; display: inline-flex; align-items: center; gap: 5px; min-height: 34px; padding: 0 12px;
+    border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text-muted);
+    font: inherit; font-size: 0.82rem; font-weight: 700; cursor: pointer;
+}
+.notif-filter[aria-selected="true"] { background: var(--text); color: var(--bg); border-color: var(--text); }
+.nf-dot { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #e11d48; color: #fff; font-size: 0.68rem; }
+.notif-avatar.stacked { position: relative; }
+.notif-avatar.stacked > .avatar.sm { position: absolute; left: -6px; top: -6px; width: 24px; height: 24px; font-size: 0.55rem; box-shadow: 0 0 0 2px var(--surface); }
+.st-sub { margin: 14px 0 2px; padding: 0 4px; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+.sched-tabs { overflow-x: auto; scrollbar-width: none; }
+.sched-tabs .pf-tab { flex: 1 0 auto; padding: 0 10px; white-space: nowrap; }

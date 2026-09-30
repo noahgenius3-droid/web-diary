@@ -3145,6 +3145,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         ${navItem('all', 'i-home', 'Feed')}
                         ${navItem('mine', 'i-user', 'My posts')}
                         ${navItem('saved', 'i-bookmark', 'Saved')}
+                        ${window.diarySchedule ? `<button class="social-nav-item" data-action="go-scheduled"><svg class="i"><use href="#i-clock"/></svg>Scheduled<span class="count-dot" data-sched-count${window.diarySchedule.count() ? '' : ' hidden'}>${window.diarySchedule.count() || ''}</span></button>` : ''}
                         <button class="social-nav-item" data-action="go-reels"><svg class="i"><use href="#i-reel"/></svg>Reels</button>
                         <button class="social-nav-item" data-action="go-library"><svg class="i"><use href="#i-book"/></svg>Library</button>
                         <button class="social-nav-item" data-action="find-friends"><svg class="i"><use href="#i-send"/></svg>Direct</button>
@@ -3200,6 +3201,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <button type="button" class="pc-audience" data-action="feed-audience" aria-haspopup="menu" title="Who can see this post — it’s also saved to your diary">${s.feedAudience === 'public'
                                 ? '<svg class="i"><use href="#i-globe"/></svg>Everyone'
                                 : '<svg class="i"><use href="#i-lock"/></svg>Friends'}<svg class="i caret"><use href="#i-down"/></svg></button>
+                            ${window.diarySchedule ? '<button type="button" class="pc-schedule" data-action="feed-schedule" aria-label="Schedule for later" title="Schedule for later"><svg class="i"><use href="#i-clock"/></svg></button>' : ''}
                             <button type="submit" class="pc-post" id="feed-post-btn">${s.posting ? 'Posting…' : 'Post'}</button>
                         </div>
                     </form>
@@ -5103,6 +5105,7 @@ document.addEventListener('DOMContentLoaded', () => {
             { label: 'Drawing', icon: 'i-draw', onClick: drawForChat },
             ...(window.LiveLocation && window.LiveLocation.supported ? [{ label: 'Live location', icon: 'i-pin', onClick: shareLocationInChat }] : []),
             { label: 'Contact card', icon: 'i-contact', onClick: () => pickContact(el, card => sendAttachmentOnly(s.activeFriend, [card])) },
+            ...(window.diarySchedule ? [{ label: 'Schedule a message', icon: 'i-clock', onClick: () => window.diarySchedule.chatSchedule(s.activeFriend) }] : []),
             { label: 'Improve my wording ✨', icon: 'i-sparkle', onClick: () => {
                 const input = $('chat-input');
                 if (window.diaryChatTools && input) window.diaryChatTools.aiGrammar(Rich.toText(input.innerHTML), text => { input.innerHTML = Rich.textToHTML(text); saveDraft(); Rich.placeCaretAtEnd(input); });
