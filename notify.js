@@ -108,7 +108,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const CATEGORY = {
         friend_request: ['friend', 'i-user-plus'], friend_accepted: ['friend', 'i-user'],
         entry_like: ['like', 'i-thumb'], post_like: ['like', 'i-thumb'], post_activity: ['comment', 'i-bell'],
-        scheduled_published: ['group', 'i-clock'], scheduled_failed: ['missed', 'i-alert'],
+        scheduled_published: ['group', 'i-clock'], scheduled_failed: ['missed', 'i-alert'], trivia_rank: ['like', 'i-trophy'],
         entry_comment: ['comment', 'i-chat'], post_comment: ['comment', 'i-chat'],
         community_post: ['group', 'i-users'], community_join: ['group', 'i-users'],
         call_started: ['call', 'i-phone'], missed_call: ['missed', 'i-phone-off'],
@@ -134,6 +134,10 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'entry_like': return `${who} reacted ${d.emoji || '👍'} to your post${quote}`;
             case 'entry_comment': return `${who} commented:${quote}`;
             case 'post_like': return `${who} reacted ${d.emoji || '👍'} to your post in ${group}`;
+            case 'trivia_rank': {
+                const place = d.rank === 1 ? '🥇 You came first' : d.rank === 2 ? '🥈 You came second' : d.rank === 3 ? '🥉 You came third' : `You placed #${d.rank}`;
+                return `${place} of ${d.players} in ${d.kind === 'weekly' ? 'last week’s Weekly challenge' : 'yesterday’s Daily trivia'} — ${d.correct}/${d.total}, ${Number(d.score || 0).toLocaleString()} points`;
+            }
             case 'scheduled_published': return d.target === 'message' ? `Your scheduled message was sent:${quote}` : d.target === 'group' ? `Your scheduled post is live in ${group || 'your group'}:${quote}` : `Your scheduled post is live:${quote}`;
             case 'scheduled_failed': return `A scheduled ${d.target === 'message' ? 'message' : 'post'} couldn’t go out — ${plain ? (d.reason || 'something went wrong') : esc(d.reason || 'something went wrong')}:${quote}`;
             case 'post_activity': return `${who} commented on a post you follow${group ? ` in ${group}` : ''}:${quote}`;
@@ -235,6 +239,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 break;
             case 'scheduled_failed':
                 app.setView('scheduled');
+                break;
+            case 'trivia_rank':
+                app.setView('play');
                 break;
             case 'new_follower':
             case 'friend_accepted':

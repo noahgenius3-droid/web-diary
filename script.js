@@ -598,12 +598,42 @@ document.addEventListener('DOMContentLoaded', () => {
         $('search-toggle').setAttribute('aria-expanded', 'false');
     });
 
-    // The height you can actually see (shrinks when the phone keyboard opens), for full-screen chats
+    // The part of the screen you can actually see, for anything with a text box. When the phone keyboard opens,
+    // iPhones shrink the visible area *and* scroll the page under it, so a chat pinned to the top of the page
+    // jumps up and leaves a gap above the keyboard. Full-screen chats and sheets follow these instead:
+    //   --vvh  visible height      --vvtop  how far the page scrolled under it      --kb  keyboard height
     if (window.visualViewport) {
-        const setVisibleHeight = () =>
-            document.documentElement.style.setProperty('--vvh', `${Math.round(window.visualViewport.height)}px`);
-        window.visualViewport.addEventListener('resize', setVisibleHeight);
-        setVisibleHeight();
+        const vv = window.visualViewport;
+        const root = document.documentElement;
+        const threads = '#chat-thread, #gc-thread, .pv-scroll, .ct-list, .mk-thread, .live-chat-list';
+        let stick = [];
+        let wasOpen = false;
+        let tallest = 0; // Android shrinks the whole page with the keyboard, so compare with the tallest we've seen
+        const setVisible = () => {
+            const layout = root.clientHeight || window.innerHeight;
+            const h = vv.height;
+            const top = Math.max(0, vv.offsetTop);
+            const kb = Math.max(0, Math.round(layout - h - top));
+            root.style.setProperty('--vvh', `${Math.round(h)}px`);
+            root.style.setProperty('--vvtop', `${Math.round(top)}px`);
+            root.style.setProperty('--kb', `${kb}px`);
+            tallest = Math.max(tallest, layout, h);
+            const open = layout - h > 120 || tallest - h > 150;
+            root.classList.toggle('kb-open', open);
+            // Conversations stay on the newest message while the keyboard slides in
+            if (open && stick.length) requestAnimationFrame(() => stick.forEach(el => { el.scrollTop = el.scrollHeight; }));
+            // Keyboard gone: undo the scroll iOS added, so nothing is left shifted up
+            if (wasOpen && !open && (window.scrollY || top)) window.scrollTo(0, 0);
+            wasOpen = open;
+        };
+        document.addEventListener('focusin', e => {
+            if (!e.target.matches || !e.target.matches('input, textarea, [contenteditable="true"]')) return;
+            stick = [...document.querySelectorAll(threads)].filter(el => el.scrollHeight - el.scrollTop - el.clientHeight < 90);
+        });
+        vv.addEventListener('resize', setVisible);
+        vv.addEventListener('scroll', setVisible);
+        window.addEventListener('orientationchange', () => { tallest = 0; setTimeout(setVisible, 300); });
+        setVisible();
     }
 
     searchInput.addEventListener('input', () => {
@@ -2272,13 +2302,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // On phones, size the editor to the visible area so the toolbar rides above the keyboard
     if (window.visualViewport) {
-        const fit = () => {
-            if (!editor.open) return;
-            editor.style.setProperty('--vvh', `${window.visualViewport.height}px`);
-            editor.style.setProperty('--vvtop', `${window.visualViewport.offsetTop}px`);
-        };
-        window.visualViewport.addEventListener('resize', fit);
-        window.visualViewport.addEventListener('scroll', fit);
+        // (the page-wide --vvh / --vvtop are kept up to date above; this just re-checks when the editor opens)
+        const fit = () => { if (editor.open) window.visualViewport.dispatchEvent(new Event('resize')); };
         new MutationObserver(fit).observe(editor, { attributes: true, attributeFilter: ['open'] });
     }
     $('editor-form').addEventListener('submit', e => {

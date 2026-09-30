@@ -343,6 +343,18 @@ document.addEventListener('DOMContentLoaded', () => {
     let shareChain = Promise.resolve();
     const queue = job => { shareChain = shareChain.then(job).catch(() => {}); };
 
+    // Post a short text straight to the feed (trivia results, a word of the day…). It's also saved to your diary.
+    async function quickPost(text, audience = 'friends') {
+        if (!signedIn() || !String(text || '').trim()) return false;
+        const note = await app.createEntry({ text: String(text).slice(0, 5000), shared: true, audience });
+        clearTimeout(shareTimers.get(note.id));
+        const result = await new Promise(resolve => queue(async () => {
+            try { resolve(await upsertShared(note)); } catch (e) { resolve({ ok: false }); }
+        }));
+        s.feed = null;
+        return !!(result && result.ok);
+    }
+
     app.on('note', note => {
         if (!signedIn()) return;
         clearTimeout(shareTimers.get(note.id));
@@ -3206,6 +3218,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
                     </form>
 
+                    ${window.diaryPlay && s.feedFilter === 'all' && !s.feedAuthor && s.feedSort === 'foryou' ? window.diaryPlay.feedCard() : ''}
                     ${filterLabel && s.feedFilter !== 'saved' ? `<button class="chip filter-chip" data-action="feed-all"><svg class="i"><use href="#i-close"/></svg>${esc(filterLabel)} · show everything</button>` : ''}
                     <div class="feed-list">
                         ${feedItems(list).join('') || `<div class="empty">
@@ -4313,7 +4326,7 @@ document.addEventListener('DOMContentLoaded', () => {
         chooseDelete, openRecentlyDeleted, editedTag, showHistory, prefOf, setPref, isMuted, muteMenu, soundMenu, FOREVER,
         statusOf, contactCardHTML, pickContact, deviceId, deviceLabel, STATUS,
         loadFeed: () => { if (s.feed === null) loadFeed(); },
-        FEED_SELECT, decorateRepost, loadPreviews, postCard, findPost, postExtras, hidePost, setReaction, openReactors,
+        FEED_SELECT, decorateRepost, loadPreviews, quickPost, postCard, findPost, postExtras, hidePost, setReaction, openReactors,
         likeButtonHTML, reactSummaryHTML, openPost, closePost, copyText, postLink, save, load,
         isHidden: (kind, id) => s.hidden.has(`${kind}:${id}`),
         // Open a feed post in the post view from anywhere (Explore, notifications, links), even if its card isn't on screen

@@ -27,7 +27,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function load(id) {
         const token = ++P.token;
-        Object.assign(P, { id, data: null, loading: true, error: false, posts: null, reposts: null, activity: null, tab: 'posts' });
+        Object.assign(P, { id, data: null, loading: true, error: false, posts: null, reposts: null, activity: null, trivia: undefined, tab: 'posts' });
         const [{ data, error }] = await Promise.all([
             client.rpc('diary_profile_full', { p_id: id }),
             I.refreshPresence ? I.refreshPresence([id]) : null
@@ -58,6 +58,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (token !== P.token) return;
             P.reposts = (data || []).map(r => r.entry).filter(e => e && e.author !== id).map(p => (I.decorateRepost(p), p));
             s.profilePosts = [...(P.posts || []), ...P.reposts];
+            paint();
+        } else if (P.tab === 'about' && P.trivia === undefined && window.diaryPlay) {
+            P.trivia = null;
+            const t = await window.diaryPlay.statsFor(id);
+            if (token !== P.token) return;
+            P.trivia = t || false;
             paint();
         } else if (P.tab === 'activity' && P.activity === null && id === me()) {
             const { data } = await client.rpc('diary_my_activity', { p_limit: 40 });
@@ -211,6 +217,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${row('i-sparkle', 'Interests', p.interests && p.interests.length ? esc(p.interests.join(', ')) : '')}
                     ${row('i-calendar', 'Joined Cordial', since ? esc(since) : '')}
                     ${p.limited ? '<p class="muted small">More details are only visible to their friends.</p>' : ''}
+                    ${P.trivia && P.trivia.answered ? `<h4 class="pf-sub">Trivia</h4>
+                        <div class="pf-totals">
+                            <div><b>${Number(P.trivia.score || 0).toLocaleString()}</b><span>Trivia points</span></div>
+                            <div><b>${P.trivia.accuracy ?? 0}%</b><span>Answers right</span></div>
+                            <div><b>🔥 ${P.trivia.streak || 0}</b><span>Day streak</span></div>
+                            <div><b>${esc(P.trivia.best_category && window.diaryPlay.CATS[P.trivia.best_category] ? window.diaryPlay.CATS[P.trivia.best_category][1] : '—')}</b><span>Best topic</span></div>
+                        </div>` : ''}
                     ${mine ? '<p class="muted small">Choose who sees your details and numbers in <button type="button" class="link-btn accent" data-pf="privacy">Settings → Privacy</button>.</p>' : ''}
                 </div>`;
         }

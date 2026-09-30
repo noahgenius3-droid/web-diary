@@ -98,7 +98,8 @@ document.addEventListener('DOMContentLoaded', () => {
         ['live', 'i-live', 'Live videos', 'When someone you follow goes live'],
         ['scheduled', 'i-clock', 'Scheduled posts', 'When your scheduled posts go out, or can’t'],
         ['market', 'i-store', 'Marketplace', 'Requests and messages about books'],
-        ['calls', 'i-phone', 'Missed calls', 'Calls you didn’t answer']
+        ['calls', 'i-phone', 'Missed calls', 'Calls you didn’t answer'],
+        ['games', 'i-trophy', 'Trivia & games', 'Where you placed in the daily and weekly challenges']
     ];
     const NP = { muted: null, loading: false };
     async function loadNotifPrefs() {
