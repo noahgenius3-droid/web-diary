@@ -634,9 +634,13 @@ document.addEventListener('DOMContentLoaded', () => {
             const h = vv.height;
             const top = Math.max(0, vv.offsetTop);
             const kb = Math.max(0, Math.round(layout - h - top));
-            root.style.setProperty('--vvh', `${Math.round(h)}px`);
-            root.style.setProperty('--vvtop', `${Math.round(top)}px`);
-            root.style.setProperty('--kb', `${kb}px`);
+            const next = `${Math.round(h)}|${Math.round(top)}|${kb}`;
+            if (next !== setVisible.last) {
+                setVisible.last = next;
+                root.style.setProperty('--vvh', `${Math.round(h)}px`);
+                root.style.setProperty('--vvtop', `${Math.round(top)}px`);
+                root.style.setProperty('--kb', `${kb}px`);
+            }
             tallest = Math.max(tallest, layout, h);
             const open = layout - h > 120 || tallest - h > 150;
             root.classList.toggle('kb-open', open);
@@ -772,6 +776,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // until your finger is off the screen so scrolling is never interrupted
     let renderTimer = null;
     let touching = false;
+    let lastScroll = 0;
+    document.addEventListener('scroll', () => { lastScroll = Date.now(); }, { passive: true, capture: true });
     document.addEventListener('touchstart', () => { touching = true; }, { passive: true, capture: true });
     const touchEnd = () => { touching = false; };
     document.addEventListener('touchend', touchEnd, { passive: true, capture: true });
@@ -779,7 +785,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function requestRender(forView) {
         clearTimeout(renderTimer);
         renderTimer = setTimeout(function go() {
-            if (touching) { renderTimer = setTimeout(go, 250); return; }
+            if (touching || Date.now() - lastScroll < 400) { renderTimer = setTimeout(go, 250); return; }
             if (forView && ![].concat(forView).includes(state.view)) return;
             render();
         }, 80);

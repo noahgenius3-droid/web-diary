@@ -12127,9 +12127,13 @@ video.rec-player { max-height: 240px; background: #000; }
    up to date and sets html.kb-open while the keyboard is up.
    ========================================================================== */
 @media (max-width: 760px) {
-    .app { position: fixed; left: 0; right: 0; top: var(--vvtop, 0px); height: var(--vvh, 100dvh); }
+    /* Normally the app simply fills the screen; only while the keyboard is up does it follow the visible area
+       (following it all the time made the page nudge as Safari's bars moved during scrolling) */
+    .app { position: fixed; left: 0; right: 0; top: 0; height: 100dvh; }
+    html.kb-open .app { top: var(--vvtop, 0px); height: var(--vvh, 100dvh); }
     .main-col { height: 100%; }
-    body.chat-open .inbox .chat-pane { top: var(--vvtop, 0px); height: var(--vvh, 100dvh); }
+    body.chat-open .inbox .chat-pane { top: 0; height: 100dvh; }
+    html.kb-open body.chat-open .inbox .chat-pane { top: var(--vvtop, 0px); height: var(--vvh, 100dvh); }
     .companion { top: var(--vvtop, 0px); }
     html.kb-open .tabbar, html.kb-open .fab { display: none !important; }
     html.kb-open .main-col { padding-bottom: 0; }
@@ -12471,3 +12475,6 @@ body[data-view="play"] .fab { display: none !important; }
         font-size: max(16px, 1em) !important;
     }
 }
+
+/* iPhone: sticky bars with a blur inside a scrolling column jitter unless they get their own layer */
+.feed-bar, .pf-tabs { -webkit-transform: translateZ(0); transform: translateZ(0); will-change: transform; }
