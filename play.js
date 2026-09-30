@@ -238,7 +238,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <span class="lb-rank">${r.rank}</span>
                         <button type="button" class="row-av" data-profile="${esc(r.user_id)}" aria-label="${esc(r.display_name)}’s profile">${avatar(person(r), 'sm')}</button>
                         <button type="button" class="lb-who" data-profile="${esc(r.user_id)}">
-                            <strong>${esc(r.is_me ? 'You' : r.display_name)}</strong>
+                            <strong>${esc(r.is_me ? 'You' : r.display_name)}${I.tick ? I.tick(r.user_id) : ''}</strong>
                             <small>${detail(r)}</small>
                             <span class="lb-bar" style="--w:${Math.round(100 * Number(r.score) / max)}%" aria-hidden="true"></span>
                         </button>

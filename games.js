@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
         maths: { title: 'Maths sprint', sub: 'As many as you can in 60 seconds', icon: 'i-g-plus' },
         slide: { title: 'Sliding puzzle', sub: 'Put the tiles back in order', icon: 'i-g-slide' }
     };
-    const G = { today: null };
+    const G = { today: null, off: new Set() };
 
     // ---------- A seeded random number generator: the same day gives everyone the same puzzle ----------
     function seeded(str) {
@@ -72,6 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let W = null; // { game, dlg, daily, seed, started, timer, done }
     function open(game, practice = false) {
         if (!GAMES[game]) return;
+        if (G.off.has(game)) return app.showToast(`${GAMES[game].title} is paused for now — try another game`);
         const daily = !practice;
         const seed = daily ? `${game}:${utcDay()}` : `${game}:practice:${Date.now()}:${Math.random()}`;
         closeWin();
@@ -590,13 +591,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------- For the Playnote page ----------
     async function loadToday() {
         if (!s.profile) return;
-        const { data } = await client.rpc('diary_games_today');
+        const [{ data }, flags] = await Promise.all([client.rpc('diary_games_today'), client.from('diary_game_settings').select('game, enabled')]);
         G.today = data || {};
+        G.off = new Set((flags.data || []).filter(r => !r.enabled).map(r => r.game));
         if (window.diaryPlay && window.diaryPlay.repaint) window.diaryPlay.repaint();
     }
     function tilesHTML() {
         if (G.today === null) loadToday();
-        return Object.entries(GAMES).map(([k, g]) => {
+        return Object.entries(GAMES).filter(([k]) => !G.off.has(k)).map(([k, g]) => {
             const t = G.today && G.today[k];
             return `
                 <button type="button" class="gm-tile gm-t-${k}${t ? ' done' : ''}" data-game="${k}" aria-label="${esc(g.title)} — ${t ? `played, ${t.score} points` : 'play today’s puzzle'}">

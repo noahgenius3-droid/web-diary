@@ -12725,3 +12725,86 @@ body[data-view="play"] .fab { display: none !important; }
 .lb-friends { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text-muted); font: inherit; font-weight: 700; font-size: 0.84rem; cursor: pointer; touch-action: manipulation; }
 .lb-friends .i { width: 16px; height: 16px; }
 .lb-friends[aria-pressed="true"] { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+
+/* ==========================================================================
+   Phase E: verified tick, announcements, admin console
+   ========================================================================== */
+.vtick { display: inline-block; width: 1em; height: 1em; margin-left: 4px; vertical-align: -0.14em; color: #1d9bf0; flex: none; }
+:root[data-theme="dark"] .vtick { color: #4cb4f5; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .vtick { color: #4cb4f5; } }
+.pf-names h1 .vtick { width: 0.8em; height: 0.8em; margin-left: 6px; vertical-align: -0.08em; }
+
+.announce { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; padding: 12px 12px 12px 14px; border-radius: 16px;
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); background: color-mix(in srgb, var(--accent) 9%, var(--surface)); }
+.announce-ic { display: grid; place-items: center; flex: none; width: 38px; height: 38px; border-radius: 12px; background: var(--accent); color: var(--on-accent); }
+.announce-ic .i { width: 20px; height: 20px; }
+.announce-text { flex: 1; min-width: 0; display: grid; gap: 2px; line-height: 1.4; }
+.announce-text small { color: var(--text-muted); font-size: 0.84rem; }
+.announce .chip { flex: none; text-decoration: none; }
+
+/* Admin console */
+.adm-tabs { overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap; }
+.adm-tabs::-webkit-scrollbar { display: none; }
+.adm-tabs .tab { flex: none; white-space: nowrap; }
+.adm-search { flex: 1; min-width: 200px; margin: 0; background: var(--surface); border: 1px solid var(--border); }
+.adm-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.adm-toolbar select { min-height: 42px; padding: 0 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); font: inherit; }
+.adm-toolbar .primary-btn { display: inline-flex; align-items: center; gap: 6px; }
+.adm-toolbar .primary-btn .i { width: 16px; height: 16px; }
+.adm-user > span { gap: 2px; }
+.adm-flags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.adm-flags:empty { display: none; }
+.adm-flag { display: inline-flex; padding: 2px 8px; border-radius: 999px; background: var(--input); color: var(--text-muted); font-size: 0.72rem; font-weight: 700; }
+.adm-flag.danger { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.adm-flag.ok { background: color-mix(in srgb, #1d9bf0 14%, transparent); color: #1d9bf0; }
+.adm-warn { color: var(--danger); }
+.adm-sub { margin: 14px 0 4px; font-size: 0.9rem; color: var(--text-muted); }
+.adm-q { display: grid; gap: 6px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
+.adm-q.off { opacity: 0.6; }
+.adm-q header { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.adm-q-text { margin: 0; font-weight: 700; line-height: 1.4; }
+.adm-q-choices { margin: 0; padding-left: 20px; display: grid; gap: 2px; font-size: 0.9rem; }
+.adm-q-choices li.right { color: #15803d; font-weight: 700; }
+:root[data-theme="dark"] .adm-q-choices li.right { color: #4ade80; }
+.adm-choices { display: grid; gap: 6px; margin: 0; padding: 0; border: 0; }
+.adm-choices legend { margin-bottom: 6px; font-weight: 700; font-size: 0.88rem; }
+.adm-choice { display: flex; align-items: center; gap: 8px; }
+.adm-choice input[type="radio"] { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
+.adm-announce { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }
+.adm-announce .field { display: grid; gap: 6px; }
+.adm-announce .field > span { font-weight: 700; font-size: 0.88rem; }
+.adm-announce input:not([type="checkbox"]), .adm-announce textarea, .adm-announce select {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--input); color: var(--text); font: inherit;
+}
+.adm-announce-row { display: grid; grid-template-columns: 180px 1fr; gap: 10px; align-items: end; }
+.adm-announce .primary-btn { justify-self: start; }
+@media (max-width: 560px) { .adm-announce-row { grid-template-columns: 1fr; } }
+
+/* ==========================================================================
+   Final polish (audit round): overflow, tap targets, dark-mode cover, compact admin numbers
+   ========================================================================== */
+@media (max-width: 760px) {
+    /* The feed bar's glass still reaches both edges, without making the page wider than the screen */
+    .feed-bar { margin: 0 0 12px; padding: 8px 0; box-shadow: 0 0 0 100vmax color-mix(in srgb, var(--bg) 88%, transparent); clip-path: inset(0 -100vmax); }
+    /* Settings: colour swatches wrap under their label instead of running off the edge */
+    .st-row { flex-wrap: wrap; }
+    .st-row > .st-swatches { flex: 1 1 100%; max-width: none; justify-content: flex-start; margin-left: 48px; }
+    /* Moderation numbers: three to a row, smaller */
+    .adm-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+    .adm-stat { padding: 10px; border-radius: 12px; }
+    .adm-stat strong { font-size: 1.1rem; }
+    .adm-stat span { font-size: 0.7rem; }
+}
+/* Fingers need room: small text links get a bigger hit area without changing how they look */
+@media (pointer: coarse) {
+    .post-time, .ex-more, .link-btn, .name-link { position: relative; }
+    .post-time::after, .ex-more::after, .link-btn::after { content: ''; position: absolute; inset: -12px -6px; }
+}
+/* Pages where "new note" makes no sense */
+body:is([data-view="admin"], [data-view="settings"], [data-view="profile"], [data-view="scheduled"]) .fab { display: none !important; }
+/* Profile cover: softer in dark mode */
+:root[data-theme="dark"] .pf-cover { background: linear-gradient(135deg, color-mix(in srgb, var(--card, var(--accent)) 38%, var(--surface)), color-mix(in srgb, var(--deep, var(--accent)) 45%, var(--surface))); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .pf-cover { background: linear-gradient(135deg, color-mix(in srgb, var(--card, var(--accent)) 38%, var(--surface)), color-mix(in srgb, var(--deep, var(--accent)) 45%, var(--surface))); } }
+/* Browser surfaces: themed text selection and caret everywhere */
+::selection { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+input, textarea, [contenteditable="true"] { caret-color: var(--accent); }

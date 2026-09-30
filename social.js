@@ -268,7 +268,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return `
             <div class="person-row" data-person-row="${esc(p.id)}">
                 <button type="button" class="person-open" data-profile="${esc(p.id)}" aria-label="View ${esc(p.display_name)}’s profile">${avatar(p, 'md')}</button>
-                <span class="person-text" data-profile="${esc(p.id)}" role="button" tabindex="0"><strong>${esc(p.display_name)}</strong><small>@${esc(p.username)}${label ? ` · ${label}` : ''}</small>${p.matched ? `<small class="person-why">${esc(p.matched)}</small>` : ''}</span>
+                <span class="person-text" data-profile="${esc(p.id)}" role="button" tabindex="0"><strong>${esc(p.display_name)}${tick(p.id)}</strong><small>@${esc(p.username)}${label ? ` · ${label}` : ''}</small>${p.matched ? `<small class="person-why">${esc(p.matched)}</small>` : ''}</span>
                 <span class="person-actions">${actions}${follow}</span>
             </div>`;
     }
@@ -2392,10 +2392,52 @@ document.addEventListener('DOMContentLoaded', () => {
         return '<div class="social"><section class="social-main"><div class="post-skel"><span class="sk-row"><i class="sk-av"></i><i class="sk-line w40"></i></span><i class="sk-line"></i><i class="sk-line w70"></i><i class="sk-media"></i></div></section></div>';
     };
 
+    // ---------- Verified accounts ----------
+    // A short list, fetched once per sign-in; the tick is drawn next to names everywhere
+    const VERIFIED_LABEL = { person: 'Verified public figure', organisation: 'Verified organisation', minister: 'Verified minister', educator: 'Verified educator', administrator: 'Verified administrator' };
+    s.verified = new Map();
+    async function loadVerified() {
+        const { data } = await client.rpc('diary_verified_list');
+        s.verified = new Map((data || []).map(r => [r.id, r.verified]));
+        if (s.verified.size) app.requestRender && app.requestRender();
+    }
+    function tick(id, kind) {
+        const k = kind || (s.verified && s.verified.get(id));
+        return k ? `<svg class="i vtick" role="img" aria-label="${VERIFIED_LABEL[k] || 'Verified'}"><title>${VERIFIED_LABEL[k] || 'Verified'}</title><use href="#i-verified"/></svg>` : '';
+    }
+
+    // ---------- Announcements from the Cordial team ----------
+    const ann = { list: null, loading: false };
+    async function loadAnnouncements() {
+        if (ann.loading || !signedIn()) return;
+        ann.loading = true;
+        const { data } = await client.from('diary_announcements').select('id, title, body, link, created_at, expires_at, active').order('created_at', { ascending: false }).limit(5);
+        ann.loading = false;
+        ann.list = (data || []).filter(a => a.active && (!a.expires_at || Date.parse(a.expires_at) > Date.now()));
+        if (ann.list.length) app.requestRender(['feed', 'home']);
+    }
+    function announcementHTML() {
+        if (!signedIn()) return '';
+        if (ann.list === null) { loadAnnouncements(); return ''; }
+        const hidden = load('diaryHiddenAnnouncements', []);
+        const a = ann.list.find(x => !hidden.includes(x.id));
+        if (!a) return '';
+        const href = a.link && (/^#\//.test(a.link) || /^https?:\/\//i.test(a.link)) ? a.link : '';
+        return `
+            <aside class="announce" role="status" aria-label="Announcement">
+                <span class="announce-ic"><svg class="i"><use href="#i-sparkle"/></svg></span>
+                <span class="announce-text"><strong>${esc(a.title)}</strong>${a.body ? `<small>${esc(a.body)}</small>` : ''}</span>
+                ${href ? `<a class="chip accent" href="${esc(href)}"${href.startsWith('#') ? '' : ' target="_blank" rel="noopener noreferrer"'}>Open</a>` : ''}
+                <button type="button" class="icon-btn ghost" data-action="announce-hide" data-id="${esc(a.id)}" aria-label="Dismiss announcement"><svg class="i"><use href="#i-close"/></svg></button>
+            </aside>`;
+    }
+    window.diaryAnnounce = { html: announcementHTML, refresh: () => { ann.list = null; app.render(); } };
+
     // ---------- Following ----------
     // A one-way follow (no approval needed): followers get told when you go live and can watch, like friends.
     async function loadFollows() {
         const me = s.profile.id;
+        loadVerified();
         const [mine, fans, hidden, watching] = await Promise.all([
             client.from('diary_follows').select('followee').eq('follower', me),
             client.from('diary_follows').select('follower', { count: 'exact', head: true }).eq('followee', me),
@@ -2558,6 +2600,18 @@ document.addEventListener('DOMContentLoaded', () => {
             items.push({ label: 'Hide post', icon: 'i-eye-off', onClick: () => hidePost(kind, post.id) });
         }
         items.push({ label: `View ${mine ? 'your' : `${first}’s`} profile`, icon: 'i-user', onClick: () => { closePost(); window.diaryProfile && window.diaryProfile.open(post.author); } });
+        if (!mine && window.diarySafety && window.diarySafety.isAdmin()) {
+            items.push({ label: 'Remove (admin)', icon: 'i-trash', danger: true, onClick: async () => {
+                const r = await app.ask({ title: 'Remove this post for everyone?', text: 'It’s deleted and logged in the audit log. Add a reason (optional).', value: '', allowEmpty: true, ok: 'Remove', danger: true });
+                if (!r) return;
+                const { error } = await client.rpc('diary_admin_remove', { p_kind: kind, p_id: post.id, p_reason: (r.value || '').trim() });
+                if (error) return app.showToast(error.message || 'Couldn’t remove it');
+                closePost();
+                if (kind === 'entry') s.feed = (s.feed || []).filter(p => p.id !== post.id);
+                app.showToast('Removed');
+                app.render();
+            } });
+        }
         return items;
     }
 
@@ -3184,6 +3238,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </aside>
 
                 <section class="social-main">
+                    ${announcementHTML()}
                     ${window.diaryStories ? window.diaryStories.strip() : ''}
                     ${window.diaryLive ? window.diaryLive.strip() : ''}
                     <button class="new-posts" data-action="feed-refresh"${s.feedStale ? '' : ' hidden'}><svg class="i"><use href="#i-refresh"/></svg>New posts</button>
@@ -3636,7 +3691,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="post-text rich-content${long ? ' clamped toggleable' : ''}"${long ? ' data-action="toggle-text" title="Tap to expand or collapse"' : ''}>${body}</div>
                 ${long ? '<button class="read-more" data-action="expand-post">more</button>' : ''}
             </div>
-            ${o.tags && o.tags.length ? `<div class="post-tags">${o.tags.map(t => `<button class="tag-link" data-action="feed-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('')}</div>` : ''}`;
+`; // #tags are already links inside the text, so no second row of them
     }
 
     function postActionsHTML(o) {
@@ -3672,7 +3727,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <header class="post-head">
                     <button type="button" class="post-av" data-profile="${esc(o.author)}" aria-label="${esc(profile.display_name)}’s profile">${avatar(person, 'md')}</button>
                     <div class="post-who">
-                        <strong><button type="button" class="name-link" data-profile="${esc(o.author)}">${name}</button>${o.badge ? ` <span class="post-badge">${o.badge}</span>` : ''}</strong>
+                        <strong><button type="button" class="name-link" data-profile="${esc(o.author)}">${name}</button>${tick(o.author)}${o.badge ? ` <span class="post-badge">${o.badge}</span>` : ''}</strong>
                         <span class="muted">@${esc(profile.username)} · ${o.audience === 'public' ? '<svg class="i aud" aria-label="Everyone can see this"><use href="#i-globe"/></svg> · ' : ''}<button type="button" class="post-time" data-action="post-open" data-key="${esc(key)}" title="${esc(fullDate(o.createdAt))} — open post">${timeAgo(o.createdAt)}</button>${o.mood ? ` · ${MOOD_EMOJI[o.mood] || ''}` : ''}</span>
                     </div>
                     <button class="more-btn" data-action="post-menu" data-kind="${o.kind}" data-id="${esc(o.id)}" aria-label="Post options"><svg class="i"><use href="#i-more"/></svg></button>
@@ -3697,7 +3752,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const me = s.profile.id;
         const loaded = thread && thread.open && !thread.loading;
         const total = loaded ? thread.items.length : count;
-        const who = c => `<button type="button" class="name-link" data-profile="${esc(c.author)}">${c.author === me ? 'You' : esc((c.author_profile && c.author_profile.display_name) || 'Someone')}</button>`;
+        const who = c => `<button type="button" class="name-link" data-profile="${esc(c.author)}">${c.author === me ? 'You' : esc((c.author_profile && c.author_profile.display_name) || 'Someone')}</button>${tick(c.author)}`;
 
         if (mode === 'full' || mode === 'sheet') {
             const list = !loaded
@@ -4040,7 +4095,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 </button>
                 <div class="pv-top-who" data-profile="${esc(o.author)}" role="button" tabindex="0" aria-label="${esc(profile.display_name)}’s profile">
                     ${avatar(person, 'sm')}
-                    <span><strong>${name}${o.badge ? ` <span class="post-badge">${o.badge}</span>` : ''}</strong><small>@${esc(profile.username)} · ${timeAgo(o.createdAt)}${o.mood ? ` · ${MOOD_EMOJI[o.mood] || ''}` : ''}</small></span>
+                    <span><strong>${name}${tick(o.author)}${o.badge ? ` <span class="post-badge">${o.badge}</span>` : ''}</strong><small>@${esc(profile.username)} · ${timeAgo(o.createdAt)}${o.mood ? ` · ${MOOD_EMOJI[o.mood] || ''}` : ''}</small></span>
                 </div>
                 <button class="more-btn" data-action="post-menu" data-kind="${o.kind}" data-id="${esc(o.id)}" aria-label="Post options"><svg class="i"><use href="#i-more"/></svg></button>
             </header>
@@ -4336,7 +4391,7 @@ document.addEventListener('DOMContentLoaded', () => {
         chooseDelete, openRecentlyDeleted, editedTag, showHistory, prefOf, setPref, isMuted, muteMenu, soundMenu, FOREVER,
         statusOf, contactCardHTML, pickContact, deviceId, deviceLabel, STATUS,
         loadFeed: () => { if (s.feed === null) loadFeed(); },
-        FEED_SELECT, decorateRepost, loadPreviews, quickPost, postCard, findPost, postExtras, hidePost, setReaction, openReactors,
+        FEED_SELECT, decorateRepost, loadPreviews, quickPost, tick, loadVerified, postCard, findPost, postExtras, hidePost, setReaction, openReactors,
         likeButtonHTML, reactSummaryHTML, openPost, closePost, copyText, postLink, save, load,
         isHidden: (kind, id) => s.hidden.has(`${kind}:${id}`),
         // Open a feed post in the post view from anywhere (Explore, notifications, links), even if its card isn't on screen
@@ -4883,6 +4938,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     { label: `More from ${post.author_profile ? post.author_profile.display_name : 'them'}`, icon: 'i-user', onClick: () => { closePost(); s.feedAuthor = post.author; app.render(); } }
                 ];
             app.openPopover(el, [...common, ...postExtras('entry', post), ...items, ...report]);
+        },
+        'announce-hide': el => {
+            const hidden = load('diaryHiddenAnnouncements', []);
+            save('diaryHiddenAnnouncements', [...hidden, el.dataset.id].slice(-30));
+            el.closest('.announce')?.remove();
         },
         'feed-audience': el => app.openPopover(el, [
             { label: 'Friends — only your friends', icon: 'i-lock', onClick: () => { s.feedAudience = 'friends'; save('diaryFeedAudience', 'friends'); app.render(); } },

@@ -120,6 +120,55 @@ document.addEventListener('DOMContentLoaded', () => {
         app.render();
     }
 
+    // Verification: a request goes to the Cordial team; the tick appears once approved
+    const VER = { loaded: false, request: null };
+    const VKIND = { person: 'Public figure', organisation: 'Organisation', minister: 'Minister', educator: 'Educator', administrator: 'Administrator' };
+    async function loadVerification() {
+        VER.loaded = true;
+        const { data } = await I.client.from('diary_verification_requests').select('*').order('created_at', { ascending: false }).limit(1);
+        VER.request = (data && data[0]) || null;
+        if (app.state.view === 'settings') app.render();
+    }
+    function verificationRow() {
+        if (!VER.loaded) { loadVerification(); return ''; }
+        const mine = I.state.verified && I.state.verified.get(I.state.profile.id);
+        const r = VER.request;
+        const sub = mine ? `Verified as ${VKIND[mine].toLowerCase()} — the tick shows next to your name`
+            : r && r.status === 'pending' ? `Request sent ${I.timeAgo(r.created_at)} — we’ll let you know`
+            : r && r.status === 'declined' ? `Not approved${r.response ? `: ${r.response}` : ''} — you can ask again`
+            : 'For recognised people, organisations, ministers and educators';
+        return `<div class="st-row"><span class="st-ic"><svg class="i"><use href="#i-verified"/></svg></span><span class="st-text"><strong>Verification</strong><small>${esc(sub)}</small></span>${mine || (r && r.status === 'pending') ? '' : '<button class="st-btn" data-action="st-verify">Ask to be verified</button>'}</div>`;
+    }
+    function verifyDialog() {
+        const dlg = document.createElement('dialog');
+        dlg.className = 'sheet-dialog';
+        dlg.innerHTML = `
+            <form class="rx-card sched-form" novalidate>
+                <header class="rx-head"><h2>Ask to be verified</h2><button type="button" class="icon-btn" data-x="close" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button></header>
+                <div class="sched-scroll">
+                    <p class="muted small">Verification shows people that an account really belongs to who it says. The Cordial team checks each request.</p>
+                    <label class="field"><span>I am a…</span><select name="kind">${Object.entries(VKIND).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></label>
+                    <label class="field"><span>Tell us who you are</span><textarea name="note" rows="3" maxlength="600" placeholder="e.g. Senior pastor at …, or head teacher at …"></textarea></label>
+                    <label class="field"><span>A link that shows it <small class="muted">optional</small></span><input name="link" maxlength="300" placeholder="Website, official page or article"></label>
+                </div>
+                <footer class="sched-foot"><button type="button" class="ghost-btn" data-x="close">Cancel</button><button type="submit" class="primary-btn">Send request</button></footer>
+            </form>`;
+        document.body.append(dlg);
+        dlg.showModal();
+        dlg.addEventListener('close', () => dlg.remove());
+        dlg.addEventListener('click', e => { if (e.target === dlg || e.target.closest('[data-x="close"]')) dlg.close(); });
+        dlg.addEventListener('submit', async e => {
+            e.preventDefault();
+            const f = dlg.querySelector('form');
+            if (f.note.value.trim().length < 10) return app.showToast('Tell us a little about who you are');
+            const { error } = await I.client.from('diary_verification_requests').insert({ kind: f.kind.value, note: f.note.value.trim(), link: f.link.value.trim() });
+            if (error) return app.showToast(/duplicate|unique/i.test(error.message) ? 'You already have a request waiting' : 'Couldn’t send your request');
+            dlg.close();
+            app.showToast('Request sent — we’ll let you know');
+            loadVerification();
+        });
+    }
+
     async function setPrivacyKey(key, value) {
         const before = P.settings[key];
         P.settings = { ...P.settings, [key]: value };
@@ -436,6 +485,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${signedIn() ? row('i-checks', 'Read receipts', presence.read_receipts === false ? 'Off — people won’t see when you’ve read their messages, and you won’t see theirs' : 'On — blue ticks when a message has been read', toggle('st-receipts', presence.read_receipts !== false, 'Read receipts')) : ''}
                     ${signedIn() ? row('i-phone', 'Who can call you', presence.allow_calls === 'nobody' ? 'No one — calls are blocked' : 'Your friends', seg('privacy-calls', [['friends', 'Friends'], ['nobody', 'No one']], presence.allow_calls || 'friends')) : ''}
                     ${signedIn() ? row('i-image', 'Who sees your profile photo', 'Everyone else sees your initials', seg('privacy-photo', WHO2, presence.photo_visibility || 'everyone')) : ''}
+                    ${signedIn() ? verificationRow() : ''}
                     ${signedIn() ? row('i-user', 'Who sees your profile details', 'Your bio, location, interests and when you joined', seg('privacy-profile', WHO2, presence.profile_visibility || 'everyone')) : ''}
                     ${signedIn() ? row('i-chart', 'Who sees your numbers', 'Posts, followers, following and reactions — and your follower lists', seg('privacy-stats', [['everyone', 'Everyone'], ['friends', 'Friends'], ['nobody', 'Only me']], presence.stats_visibility || 'everyone')) : ''}
                     ${signedIn() ? row('i-search', 'Let people find me by email', 'Only someone who types your exact email address', seg('privacy-email', [['off', 'Off'], ['on', 'On']], presence.email_search === true || presence.email_search === 'on' ? 'on' : 'off')) : ''}
@@ -531,6 +581,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Actions ----------
     Object.assign(app.actions, {
+        'st-verify': () => verifyDialog(),
         'st-set': el => {
             const { setting, value } = el.dataset;
             if (setting === 'presence-online' || setting === 'presence-last') return setPresencePrivacy(setting === 'presence-online' ? 'show_online' : 'show_last_seen', value);

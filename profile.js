@@ -153,7 +153,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="pf-id">
                     <div class="pf-photo${online ? ' online' : ''}">${avatar(p, 'xl')}${mine ? '<button type="button" class="pf-photo-edit" data-pf="photo" aria-label="Change profile photo"><svg class="i"><use href="#i-camera"/></svg></button>' : ''}</div>
                     <div class="pf-names">
-                        <h1>${esc(p.display_name)}</h1>
+                        <h1>${esc(p.display_name)}${I.tick ? I.tick(p.id) : ''}</h1>
                         <p class="pf-handle">@${esc(p.username)}${status ? ` · <span class="pf-status${online ? ' on' : ''}" data-status="${esc(p.id)}">${esc(status)}</span>` : ''}</p>
                     </div>
                     <div class="pf-actions">${actions}</div>

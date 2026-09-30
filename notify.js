@@ -108,7 +108,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const CATEGORY = {
         friend_request: ['friend', 'i-user-plus'], friend_accepted: ['friend', 'i-user'],
         entry_like: ['like', 'i-thumb'], post_like: ['like', 'i-thumb'], post_activity: ['comment', 'i-bell'],
-        scheduled_published: ['group', 'i-clock'], scheduled_failed: ['missed', 'i-alert'], trivia_rank: ['like', 'i-trophy'], badge_earned: ['like', 'i-trophy'],
+        scheduled_published: ['group', 'i-clock'], scheduled_failed: ['missed', 'i-alert'], trivia_rank: ['like', 'i-trophy'], badge_earned: ['like', 'i-trophy'], announcement: ['group', 'i-sparkle'], verification_update: ['friend', 'i-verified'],
         entry_comment: ['comment', 'i-chat'], post_comment: ['comment', 'i-chat'],
         community_post: ['group', 'i-users'], community_join: ['group', 'i-users'],
         call_started: ['call', 'i-phone'], missed_call: ['missed', 'i-phone-off'],
@@ -134,6 +134,8 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'entry_like': return `${who} reacted ${d.emoji || '👍'} to your post${quote}`;
             case 'entry_comment': return `${who} commented:${quote}`;
             case 'post_like': return `${who} reacted ${d.emoji || '👍'} to your post in ${group}`;
+            case 'announcement': return `${plain ? '📣 ' : ''}${plain ? (d.title || 'News from Cordial') : `<strong>${esc(d.title || 'News from Cordial')}</strong>`}${d.snippet ? ` — ${plain ? d.snippet : esc(d.snippet)}` : ''}`;
+            case 'verification_update': return d.approved ? `Your account is now verified ✓${d.note ? ` — ${plain ? d.note : esc(d.note)}` : ''}` : `Your verification request wasn’t approved${d.note ? `: ${plain ? d.note : esc(d.note)}` : ''}`;
             case 'badge_earned': return `🏅 You earned the <strong>${esc(d.name || 'a new')}</strong> badge — ${esc(d.description || '')}`.replace(/<\/?strong>/g, m => (plain ? '' : m));
             case 'trivia_rank': {
                 const place = d.rank === 1 ? '🥇 You came first' : d.rank === 2 ? '🥈 You came second' : d.rank === 3 ? '🥉 You came third' : `You placed #${d.rank}`;
@@ -244,6 +246,12 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'trivia_rank':
             case 'badge_earned':
                 app.setView('play');
+                break;
+            case 'announcement':
+                app.setView('feed');
+                break;
+            case 'verification_update':
+                app.setView('settings');
                 break;
             case 'new_follower':
             case 'friend_accepted':
