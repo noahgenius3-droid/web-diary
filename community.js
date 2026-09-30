@@ -736,7 +736,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function pickNoteToShare(anchor) {
-        const notes = app.getNotes().filter(n => !n.trashedAt && !n.private).slice(0, 8);
+        const notes = app.getNotes().filter(n => !n.trashedAt && !n.private && n.origin !== 'post').slice(0, 8);
         if (!notes.length) return app.showToast('Write a note first — private notes can’t be shared');
         app.openPopover(anchor, notes.map(n => ({
             label: (n.title || n.text.split('\n')[0] || 'Untitled').slice(0, 48),

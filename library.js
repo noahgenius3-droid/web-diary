@@ -393,7 +393,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function pickNote(anchor) {
-        const notes = app.getNotes().filter(n => !n.private && !n.trashedAt && (n.text || '').trim()).slice(0, 30);
+        const notes = app.getNotes().filter(n => !n.private && !n.trashedAt && n.origin !== 'post' && (n.text || '').trim()).slice(0, 30);
         if (!notes.length) return app.showToast('No notes to use yet — private notes stay private');
         app.openPopover(anchor, notes.map(n => ({
             label: (n.title || n.text.split('\n')[0] || 'Untitled').slice(0, 48),

@@ -684,12 +684,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (b.classList.contains('tab-item')) b.setAttribute('aria-current', b.dataset.view === navView ? 'page' : 'false');
         });
 
-        const archived = notes.filter(n => n.archived && !n.trashedAt).length;
-        const trashed = notes.filter(n => n.trashedAt).length;
+        const archived = diaryNotes().filter(n => n.archived && !n.trashedAt).length;
+        const trashed = diaryNotes().filter(n => n.trashedAt).length;
         $('archive-count').textContent = archived || '';
         $('trash-count').textContent = trashed || '';
 
-        const live = notes.filter(n => !n.trashedAt);
+        const live = diaryNotes().filter(n => !n.trashedAt);
         $('stat-entries').textContent = live.length.toLocaleString();
         $('stat-words').textContent = live.reduce((s, n) => s + countWords(fullText(n)), 0).toLocaleString();
         $('stat-streak').textContent = calcStreak();
@@ -1010,7 +1010,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function allPhotos() {
-        return notes
+        return diaryNotes()
             .filter(n => !n.trashedAt && !n.private)
             .flatMap(n => n.attachments.filter(a => a.kind === 'image' || a.kind === 'drawing').map(att => ({ att, note: n })));
     }
@@ -1093,7 +1093,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderInsights() {
         setTitle('Insights');
         const since = Date.now() - 30 * DAY_MS;
-        const recent = notes.filter(n => !n.trashedAt && n.createdAt >= since);
+        const recent = diaryNotes().filter(n => !n.trashedAt && n.createdAt >= since);
         const goals = recent.flatMap(n => n.goals.filter(g => g.text.trim()));
         const goalsDone = goals.filter(g => g.done).length;
 
@@ -1286,7 +1286,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderArchive() {
         setTitle('Archive');
-        const list = notes.filter(n => n.archived && !n.trashedAt && matches(n));
+        const list = diaryNotes().filter(n => n.archived && !n.trashedAt && matches(n));
         return `
             <section class="section">
                 <div class="section-head"><h2>Archived entries</h2></div>
@@ -1297,7 +1297,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderTrash() {
         setTitle('Trash');
-        const list = notes.filter(n => n.trashedAt && matches(n));
+        const list = diaryNotes().filter(n => n.trashedAt && matches(n));
         return `
             <section class="section">
                 <div class="section-head">
@@ -1703,7 +1703,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!editing) return;
         const box = $('editor-pair');
         const draft = draftNote();
-        const pool = notes.filter(n => !n.trashedAt && (!n.private || privateUnlocked));
+        const pool = diaryNotes().filter(n => !n.trashedAt && (!n.private || privateUnlocked));
         const best = Dilute.pair(draft, pool, pairSkips()[editing.id] || []);
         if (!best) {
             box.hidden = true;
@@ -2216,6 +2216,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 <span class="share-text"><strong>Friends feed</strong><small>${n.shared ? 'Shared — your friends can see it' : 'Post it for your friends to see'}</small></span>
                 <span class="share-switch${n.shared ? ' on' : ''}" aria-hidden="true"></span>
             </button>
+            <button class="share-row" data-share="friend"${blocked ? ' disabled' : ''}>
+                <span class="share-ic inbox"><svg class="i"><use href="#i-chat"/></svg></span>
+                <span class="share-text"><strong>Send to a friend’s Inbox</strong><small>Just for them — send one a day to keep a 🔥 note streak going</small></span>
+            </button>
+            <button class="share-row" data-share="story"${blocked ? ' disabled' : ''}>
+                <span class="share-ic story"><svg class="i"><use href="#i-plus"/></svg></span>
+                <span class="share-text"><strong>Add to your story</strong><small>A coloured card of your note, for 24 hours</small></span>
+            </button>
             <p class="share-label">Your groups</p>`);
 
         if (!signed) {
@@ -2325,6 +2333,17 @@ document.addEventListener('DOMContentLoaded', () => {
             if (next && hooks.shareToggle && !hooks.shareToggle()) return;
             patchNote(n, { shared: next });
             showToast(next ? 'Shared with your friends 🎉' : 'Removed from the feed');
+        } else if (what === 'friend') {
+            const note = editing && editing.id === n.id ? { ...n, ...editing } : n;
+            shareSheet.close();
+            if (window.diaryNoteShare) window.diaryNoteShare.send({ title: note.title, text: bodyText(note), color: note.color });
+            return;
+        } else if (what === 'story') {
+            if (!window.diaryStories || !window.diaryStories.shareText) return;
+            const note = editing && editing.id === n.id ? { ...n, ...editing } : n;
+            el.disabled = true;
+            await window.diaryStories.shareText([note.title, bodyText(note)].filter(Boolean).join(' — '), note.color);
+            el.disabled = false;
         } else if (what === 'group') {
             const g = (shareGroups || []).find(x => x.id === el.dataset.id);
             if (!g || !window.diaryCommunities) return;
@@ -2774,7 +2793,7 @@ document.addEventListener('DOMContentLoaded', () => {
         getNotes: () => notes,
         newEntry: defaults => openEditor(null, defaults),
         // Used by the feed composer: stores the files on this device and saves the entry in one go
-        async createEntry({ title = '', text = '', html = null, shared = false, color = null, audience = 'friends' }, files = []) {
+        async createEntry({ title = '', text = '', html = null, shared = false, color = null, audience = 'friends', origin = null }, files = []) {
             const attachments = [];
             for (const file of files) {
                 const att = { id: uid(), kind: Media.kindOf(file.type || ''), name: file.name || 'photo', type: file.type, size: file.size, ...(file.duration ? { duration: file.duration } : {}) };
@@ -2784,7 +2803,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const n = migrateNote({
                 id: uid(), title,
                 text: html ? Rich.toText(Rich.sanitize(html)) : text,
-                html: html ? Rich.sanitize(html) : Rich.textToHTML(text), shared, attachments, audience,
+                html: html ? Rich.sanitize(html) : Rich.textToHTML(text), shared, attachments, audience, origin,
                 color: color || COLORS[notes.length % COLORS.length], createdAt: Date.now()
             }, notes.length);
             n.dilute = Dilute.analyse(n);
@@ -2928,6 +2947,7 @@ document.addEventListener('DOMContentLoaded', () => {
             archived: !!n.archived,
             private: !!n.private,
             shared: !!n.shared && !n.private,
+            ...(n.origin === 'post' ? { origin: 'post' } : {}), // made from the Feed or PlayNote: a post, not a note
             ...(n.audience === 'public' ? { audience: 'public' } : {}), // friends-only unless chosen (keeps old notes unchanged for sync)
             pinned: !!n.pinned,
             sharedGroups: Array.isArray(n.sharedGroups) ? n.sharedGroups.filter(x => typeof x === 'string') : [],
@@ -2941,8 +2961,19 @@ document.addEventListener('DOMContentLoaded', () => {
         notes.sort((a, b) => b.createdAt - a.createdAt);
     }
 
+    // Posts made from the Feed or PlayNote live on the Feed only; they never show up among your notes
+    // (function declarations, so they're ready before the first render)
+    function isPost(n) { return n.origin === 'post'; }
+    function diaryNotes() { return notes.filter(n => !isPost(n)); }
+
     function activeNotes() {
-        return notes.filter(n => !n.trashedAt && !n.archived);
+        return notes.filter(n => !n.trashedAt && !n.archived && !isPost(n));
+    }
+
+    // What a note says, without the title (for sharing it as a card)
+    function bodyText(n) {
+        return [n.text, ...Object.values(n.sections || {}), ...(n.goals || []).map(g => `${g.done ? '✓' : '•'} ${g.text}`)]
+            .filter(x => x && String(x).trim()).join('\n').trim();
     }
 
     function fullText(n) {
@@ -3025,7 +3056,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function calcStreak() {
-        const days = new Set(notes.filter(n => !n.trashedAt).map(n => dayKey(new Date(n.createdAt))));
+        const days = new Set(diaryNotes().filter(n => !n.trashedAt).map(n => dayKey(new Date(n.createdAt))));
         const cursor = new Date();
         // Streak still counts if you haven't written yet today
         if (!days.has(dayKey(cursor))) cursor.setDate(cursor.getDate() - 1);

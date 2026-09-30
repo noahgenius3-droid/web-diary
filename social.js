@@ -356,7 +356,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function quickPost(text, audience = 'friends') {
         if (isGuest()) { openUpgrade('Create a free account to share to the feed. You’ll keep your scores and badges.'); return false; }
         if (!signedIn() || !String(text || '').trim()) return false;
-        const note = await app.createEntry({ text: String(text).slice(0, 5000), shared: true, audience });
+        const note = await app.createEntry({ text: String(text).slice(0, 5000), shared: true, audience, origin: 'post' }); // a Feed post, not a note
         clearTimeout(shareTimers.get(note.id));
         const result = await new Promise(resolve => queue(async () => {
             try { resolve(await upsertShared(note)); } catch (e) { resolve({ ok: false }); }
@@ -2697,6 +2697,15 @@ document.addEventListener('DOMContentLoaded', () => {
             </aside>`;
     }
     window.diaryAnnounce = { html: announcementHTML, refresh: () => { ann.list = null; app.render(); } };
+    // New announcements reach people who already have Cordial open: check again on coming back, and every 15 minutes
+    const recheckAnnouncements = async () => {
+        if (!signedIn() || ann.loading) return;
+        const before = (ann.list || []).map(a => a.id).join();
+        await loadAnnouncements();
+        if ((ann.list || []).map(a => a.id).join() !== before) app.requestRender(['feed', 'home']);
+    };
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') recheckAnnouncements(); });
+    setInterval(() => { if (!document.hidden) recheckAnnouncements(); }, 15 * 60000);
 
     // ---------- Following ----------
     // A one-way follow (no approval needed): followers get told when you go live and can watch, like friends.
@@ -3689,7 +3698,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 audio.file.duration = audio.duration;
                 files.push(audio.file);
             }
-            const note = await app.createEntry({ text, shared: true, audience: s.feedAudience }, files);
+            const note = await app.createEntry({ text, shared: true, audience: s.feedAudience, origin: 'post' }, files); // lives on the Feed, not in Notes
             note.attachments.forEach((att, i) => { if (files[i]) freshFiles.set(att.id, files[i]); });
             if (audio) URL.revokeObjectURL(audio.preview);
             // Share right away instead of waiting for the autosave debounce
@@ -5002,6 +5011,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (a.kind === 'audio') return '🎤 Voice note';
         if (a.kind === 'location') return '📍 Live location';
         if (a.kind === 'contact') return `👤 ${a.name || 'Contact'}`;
+        if (a.kind === 'note') return `📝 ${a.title || 'A note'}`;
         if (a.kind === 'image' || a.kind === 'drawing') return '📷 Photo';
         return `📎 ${a.name}`;
     }
@@ -5129,6 +5139,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function attachmentHTML(a) {
         if (a && a.kind === 'contact') return contactCardHTML(a);
+        if (a && a.kind === 'note') return window.diaryNoteShare ? window.diaryNoteShare.cardHTML(a) : `<p>📝 ${esc(a.title || 'A note')}</p>`;
         if (!a || typeof a.path !== 'string') return '';
         const path = esc(a.path);
         const name = esc(a.name || 'attachment');

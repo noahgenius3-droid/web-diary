@@ -40,6 +40,22 @@ document.addEventListener('DOMContentLoaded', () => {
         addStory: fileArg => addStory(fileArg),
         addReel: (fileArg, opts) => addReel(fileArg, opts),
         shareEntry: (localId, text, post) => shareEntry(localId, text, post),
+        // A note from the Notes page → your story as a coloured text card (it doesn't need to be on the Feed)
+        shareText: async (text, color) => {
+            try {
+                const card = await textCard(text, color);
+                const path = await uploadImage(STORY_BUCKET, `${s.profile.id}/${randomId()}`, card);
+                if (!path) throw new Error('upload');
+                await shareToStory({ bucket: STORY_BUCKET, path, type: 'image' });
+                app.showToast('Added to your story ✨');
+            } catch (e) {
+                app.showToast('Couldn’t add that to your story');
+                return false;
+            }
+            await loadStories();
+            paintStrip();
+            return true;
+        },
         // From a "reacted to your story" notification: your own stories, if any are still up
         openMine: async () => {
             if (!st.stories) await loadStories();
@@ -913,6 +929,7 @@ document.addEventListener('DOMContentLoaded', () => {
             .select(`id, author, video_path, poster_path, caption, duration, created_at,
                 author_profile:diary_profiles!diary_reels_author_fkey(${PROFILE}),
                 likes:diary_reel_likes(user_id),
+                reshares:diary_reel_reshares(user_id, created_at),
                 comments:diary_comments(count)`)
             .order('created_at', { ascending: false })
             .limit(50);
@@ -1049,6 +1066,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const liked = r.likes.some(l => l.user_id === me);
         const saved = s.savedReels.has(r.id);
         const long = (r.caption || '').length > 90;
+        const reshares = r.reshares || [];
+        const reshared = reshares.some(x => x.user_id === me);
+        // Seeing it because a friend reshared it: say who
+        const via = r.author === me || (s.friends || []).some(f => f.id === r.author) ? null
+            : reshares.map(x => (s.friends || []).find(f => f.id === x.user_id)).find(Boolean);
         return `
             <article class="reel" data-reel="${esc(r.id)}">
                 ${r.poster_path ? `<img class="reel-poster" data-path="${esc(r.poster_path)}" data-bucket="${REEL_BUCKET}" alt="">` : ''}
@@ -1059,6 +1081,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <p class="reel-failed">This video can’t play in this browser — it was recorded in a format only some devices support.</p>
                 <span class="burst" aria-hidden="true"><svg class="i"><use href="#i-heart-fill"/></svg></span>
                 <div class="reel-info">
+                    ${reshared || via ? `<p class="reel-via"><svg class="i"><use href="#i-repost"/></svg>${reshared ? 'You reshared this' : `Reshared by ${esc(String(via.display_name || '').split(' ')[0])}`}</p>` : ''}
                     <div class="reel-who">${avatar(person, 'sm')}<strong>${r.author === me ? 'You' : esc(p.display_name)}</strong><span>· ${timeAgo(r.created_at)}</span></div>
                     ${r.caption ? `<p class="reel-caption${long ? ' clamped' : ''}"${long ? ' data-action="reel-caption"' : ''}>${I.linkTags(esc(r.caption))}</p>` : ''}
                 </div>
@@ -1076,7 +1099,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         <svg class="i"><use href="#${st.muted ? 'i-volume-off' : 'i-volume'}"/></svg>
                     </button>
                     ${r.author === me && /\.mov$/i.test(r.video_path) ? `<button class="reel-act" data-action="reel-convert" data-id="${esc(r.id)}" aria-label="Convert so every device can play it"><svg class="i"><use href="#i-refresh"/></svg><span>Fix</span></button>` : ''}
-                    ${r.author === me ? `<button class="reel-act" data-action="reel-story" data-id="${esc(r.id)}" aria-label="Add to your story"><svg class="i"><use href="#i-plus"/></svg><span>Story</span></button>` : ''}
+                    ${r.author === me ? '' : `<button class="reel-act" data-action="reel-reshare" data-id="${esc(r.id)}" aria-pressed="${reshared}" aria-label="${reshared ? 'Undo reshare' : 'Reshare to your friends'}"><svg class="i"><use href="#i-repost"/></svg><span>${reshares.length ? compact(reshares.length) : 'Reshare'}</span></button>`}
+                    <button class="reel-act" data-action="reel-story" data-id="${esc(r.id)}" aria-label="Add to your story"><svg class="i"><use href="#i-plus"/></svg><span>Story</span></button>
                     ${r.author === me ? `<button class="reel-act" data-action="reel-delete" data-id="${esc(r.id)}" aria-label="Delete reel"><svg class="i"><use href="#i-trash"/></svg></button>` : ''}
                 </div>
                 <div class="reel-progress"><i></i></div>
@@ -1316,12 +1340,52 @@ document.addEventListener('DOMContentLoaded', () => {
         const r = (st.reels || []).find(x => x.id === id);
         if (!r) return;
         try {
-            await shareToStory({ bucket: REEL_BUCKET, path: r.video_path, type: 'video', caption: r.caption.slice(0, 140), duration: r.duration });
+            if (r.author === s.profile.id) {
+                await shareToStory({ bucket: REEL_BUCKET, path: r.video_path, type: 'video', caption: (r.caption || '').slice(0, 140), duration: r.duration });
+            } else {
+                app.showToast('Adding it to your story…');
+                const { data } = await client.storage.from(REEL_BUCKET).createSignedUrl(r.video_path, 600);
+                if (!data || !data.signedUrl) throw new Error('url');
+                const blob = await (await fetch(data.signedUrl)).blob();
+                const ext = (r.video_path.match(/\.(mp4|mov|webm)$/i) || [])[1] || 'mp4';
+                const type = { mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm' }[ext.toLowerCase()];
+                const path = await uploadVideo(STORY_BUCKET, new File([blob], `reel.${ext}`, { type }), type);
+                if (!path) throw new Error('upload');
+                const who = r.author_profile && r.author_profile.username ? `@${r.author_profile.username}` : 'a friend';
+                await shareToStory({ bucket: STORY_BUCKET, path, type: 'video', caption: `🔁 Reel by ${who}${r.caption ? ` — ${r.caption}` : ''}`.slice(0, 140), duration: r.duration });
+            }
             app.showToast('Added to your story ✨');
             loadStories();
         } catch (e) {
             app.showToast('Couldn’t add that to your story');
         }
+    }
+
+    // Reshare: your friends see the reel too (and who reshared it). Tap again to undo.
+    async function reshareReel(id, btn) {
+        const r = (st.reels || []).find(x => x.id === id);
+        if (!r || r.author === s.profile.id) return;
+        if (I.isGuest && I.isGuest()) return I.openUpgrade && I.openUpgrade();
+        r.reshares = r.reshares || [];
+        const on = !r.reshares.some(x => x.user_id === s.profile.id);
+        r.reshares = on ? [...r.reshares, { user_id: s.profile.id, created_at: new Date().toISOString() }] : r.reshares.filter(x => x.user_id !== s.profile.id);
+        const paint = () => {
+            if (!btn) return;
+            const mine = r.reshares.some(x => x.user_id === s.profile.id);
+            btn.setAttribute('aria-pressed', String(mine));
+            btn.setAttribute('aria-label', mine ? 'Undo reshare' : 'Reshare to your friends');
+            btn.querySelector('span').textContent = r.reshares.length ? compact(r.reshares.length) : 'Reshare';
+        };
+        paint();
+        const { error } = on
+            ? await client.from('diary_reel_reshares').insert({ reel_id: id })
+            : await client.from('diary_reel_reshares').delete().eq('reel_id', id).eq('user_id', s.profile.id);
+        if (error) {
+            r.reshares = on ? r.reshares.filter(x => x.user_id !== s.profile.id) : [...r.reshares, { user_id: s.profile.id }];
+            paint();
+            return app.showToast('Couldn’t reshare that reel');
+        }
+        app.showToast(on ? 'Reshared — your friends will see it 🔁' : 'Reshare removed');
     }
 
     async function deleteReel(id) {
@@ -1381,6 +1445,7 @@ document.addEventListener('DOMContentLoaded', () => {
         'reel-add': () => addReel(),
         'reel-open': el => app.setView('reels', { reelId: el.dataset.id, reelFilter: 'all' }),
         'reel-story': el => reelToStory(el.dataset.id),
+        'reel-reshare': el => reshareReel(el.dataset.id, el),
         'reel-convert': el => convertReel(el.dataset.id, el),
         'reels-back': () => app.setView('feed'),
         'reels-filter': el => { app.state.reelFilter = el.dataset.filter; st.scrollTop = 0; app.render(); },

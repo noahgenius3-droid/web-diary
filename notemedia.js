@@ -32,7 +32,63 @@ document.addEventListener('DOMContentLoaded', () => {
         ['lofi', 'Lo-fi', '🎧'], ['afro', 'Afro groove', '🥁'], ['cinematic', 'Cinematic', '🎬'],
         ['praise', 'Gospel praise', '🙌'], ['worship', 'Worship', '🕊️']
     ];
-    const CHARACTERS = [['none', 'None', '—'], ['buddy', 'Buddy', '🟣'], ['kitty', 'Kitty', '🐱'], ['robo', 'Robo', '🤖'], ['sunny', 'Sunny', '🌞']];
+    const CHARACTERS = [['none', 'None', '—'], ['woman', 'Presenter (her)', '👩🏾'], ['man', 'Presenter (him)', '👨🏾'],
+        ['buddy', 'Buddy', '🟣'], ['kitty', 'Kitty', '🐱'], ['robo', 'Robo', '🤖'], ['sunny', 'Sunny', '🌞']];
+    const PRESENTER_VOICE = { woman: 'female', man: 'male' };
+
+    // ---------- Narrator voices (diary-tts on the server; needs a Gemini key there) ----------
+    const cfg = window.DIARY_CONFIG || {};
+    let ttsReady = null;
+    async function checkTTS() {
+        if (ttsReady !== null) return ttsReady;
+        try {
+            const r = await fetch(`${cfg.supabaseUrl}/functions/v1/diary-tts`, { headers: { apikey: cfg.supabaseKey } });
+            ttsReady = !!(await r.json()).ready;
+        } catch (e) { ttsReady = false; }
+        return ttsReady;
+    }
+    const scriptOf = slides => slides.filter(s => s.kind !== 'end').map(s => s.text).join('\n\n');
+    // The narration for this note in this voice (fetched once, then reused for previews and the video)
+    async function narration(slides) {
+        const key = `${S.narrate}|${scriptOf(slides)}`;
+        if (S.tts && S.tts.key === key) return S.tts.bytes;
+        const token = social && social.accessToken ? await social.accessToken() : null;
+        if (!token) throw new Error('Sign in to use narrator voices');
+        const res = await fetch(`${cfg.supabaseUrl}/functions/v1/diary-tts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, apikey: cfg.supabaseKey },
+            body: JSON.stringify({ text: scriptOf(slides), voice: S.narrate })
+        });
+        if (!res.ok) {
+            let msg = 'Couldn’t make the narration — try again';
+            try { msg = (await res.json()).error || msg; } catch (e) { /* not json */ }
+            throw new Error(msg);
+        }
+        S.tts = { key, bytes: await res.arrayBuffer() };
+        return S.tts.bytes;
+    }
+    // Each slide lasts about as long as it takes to read it aloud
+    function narratedTimes(slides, seconds) {
+        const words = slides.map(s => (s.kind === 'end' ? 0 : String(s.text).split(/\s+/).length + (s.kind === 'title' ? 2 : 0)));
+        const sum = words.reduce((a, b) => a + b, 0) || 1;
+        return slides.map((s, k) => (s.kind === 'end' ? 3 : Math.max(1.6, (seconds * words[k]) / sum) + (k === 0 ? 0.4 : 0)));
+    }
+    // How loud the voice is right now, 0..1, smoothed, for lip-sync
+    function levelMeter(ac, node) {
+        const an = ac.createAnalyser();
+        an.fftSize = 512;
+        node.connect(an);
+        const buf = new Float32Array(an.fftSize);
+        let smooth = 0;
+        return () => {
+            an.getFloatTimeDomainData(buf);
+            let sum = 0;
+            for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+            const v = Math.min(1, Math.sqrt(sum / buf.length) * 7);
+            smooth = v > smooth ? smooth * 0.3 + v * 0.7 : smooth * 0.75 + v * 0.25;
+            return smooth < 0.04 ? 0 : smooth;
+        };
+    }
     const MAX_MUSIC = 20 * 1048576;
 
     // Which built-in track suits the note, from its words
@@ -330,11 +386,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Characters ----------
     // Drawn around (x, y) at size s. They bob, blink, wave when idle and move their mouth while "talking".
-    function drawCharacter(ctx, kind, x, y, s, t, talking, waving) {
+    // level (0..1), when given, is the loudness of the voice right now: the mouth follows it (lip-sync)
+    function drawCharacter(ctx, kind, x, y, s, t, talking, waving, level = null) {
         if (!kind || kind === 'none') return;
-        const bob = Math.sin(t * 3) * s * 0.05;
+        const human = kind === 'woman' || kind === 'man';
+        const bob = Math.sin(t * 3) * s * (human ? 0.015 : 0.05);
         const blink = (t % 3.4) < 0.13;
-        const mouth = talking ? 0.25 + 0.75 * Math.abs(Math.sin(t * 13)) * (0.6 + 0.4 * Math.sin(t * 5.3)) : 0;
+        const mouth = level != null ? Math.min(1, level) : talking ? 0.25 + 0.75 * Math.abs(Math.sin(t * 13)) * (0.6 + 0.4 * Math.sin(t * 5.3)) : 0;
+        if (human) return drawPresenter(ctx, kind, x, y + bob, s, t, mouth, blink);
         ctx.save();
         // Soft shadow on the floor
         ctx.fillStyle = 'rgba(0,0,0,0.18)';
@@ -452,12 +511,150 @@ document.addEventListener('DOMContentLoaded', () => {
         ctx.restore();
     }
 
-    function draw(ctx, slides, t, per, pal, character) {
+    // Human presenters: head and shoulders, a gentle sway, blinking, eyebrows that lift, lips that open with the voice
+    const PRESENTERS = {
+        woman: { skin: '#8d5a3b', shade: '#74472d', lips: '#6b2f2a', hair: '#1b1210', cloth: '#be185d', cloth2: '#9d174d' },
+        man: { skin: '#6f4a32', shade: '#5a3a26', lips: '#4e2620', hair: '#141010', cloth: '#1e3a8a', cloth2: '#172554' }
+    };
+    function drawPresenter(ctx, kind, x, y, s, t, mouth, blink) {
+        const P = PRESENTERS[kind];
+        const woman = kind === 'woman';
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(Math.sin(t * 1.1) * 0.025 + (mouth > 0.2 ? Math.sin(t * 4) * 0.01 : 0));
+
+        // Long hair falls behind the shoulders
+        if (woman) {
+            ctx.fillStyle = P.hair;
+            ctx.beginPath();
+            ctx.moveTo(-s * 0.95, -s * 0.2);
+            ctx.quadraticCurveTo(-s * 1.15, s * 0.9, -s * 0.85, s * 1.35);
+            ctx.lineTo(s * 0.85, s * 1.35);
+            ctx.quadraticCurveTo(s * 1.15, s * 0.9, s * 0.95, -s * 0.2);
+            ctx.closePath();
+            ctx.fill();
+        }
+        // Shoulders and clothes
+        const body = ctx.createLinearGradient(0, s * 0.9, 0, s * 3.4);
+        body.addColorStop(0, P.cloth); body.addColorStop(1, P.cloth2);
+        ctx.fillStyle = body;
+        ctx.beginPath();
+        ctx.moveTo(-s * 1.45, s * 3.4);
+        ctx.quadraticCurveTo(-s * 1.4, s * 1.05, -s * 0.45, s * 0.95);
+        ctx.lineTo(s * 0.45, s * 0.95);
+        ctx.quadraticCurveTo(s * 1.4, s * 1.05, s * 1.45, s * 3.4);
+        ctx.closePath();
+        ctx.fill();
+        // Neck
+        ctx.fillStyle = P.shade;
+        roundRect(ctx, -s * 0.24, s * 0.55, s * 0.48, s * 0.55, s * 0.12);
+        ctx.fill();
+        if (woman) {
+            // Neckline
+            ctx.fillStyle = P.skin;
+            ctx.beginPath(); ctx.moveTo(-s * 0.35, s * 0.97); ctx.lineTo(0, s * 1.35); ctx.lineTo(s * 0.35, s * 0.97); ctx.closePath(); ctx.fill();
+        } else {
+            // Shirt collar and blazer lapels
+            ctx.fillStyle = '#f8fafc';
+            ctx.beginPath(); ctx.moveTo(-s * 0.32, s * 0.95); ctx.lineTo(0, s * 1.35); ctx.lineTo(s * 0.32, s * 0.95); ctx.lineTo(s * 0.12, s * 0.9); ctx.lineTo(0, s * 1.05); ctx.lineTo(-s * 0.12, s * 0.9); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = '#0f172a';
+            ctx.beginPath(); ctx.moveTo(-s * 0.05, s * 1.1); ctx.lineTo(s * 0.05, s * 1.1); ctx.lineTo(s * 0.08, s * 1.7); ctx.lineTo(0, s * 1.8); ctx.lineTo(-s * 0.08, s * 1.7); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = P.cloth2;
+            [-1, 1].forEach(side => { ctx.beginPath(); ctx.moveTo(side * s * 0.34, s * 0.96); ctx.lineTo(side * s * 0.06, s * 1.55); ctx.lineTo(side * s * 0.55, s * 1.2); ctx.closePath(); ctx.fill(); });
+        }
+        // Ears (and earrings)
+        [-1, 1].forEach(side => {
+            ctx.fillStyle = P.shade;
+            ctx.beginPath(); ctx.ellipse(side * s * 0.7, s * 0.02, s * 0.1, s * 0.16, 0, 0, Math.PI * 2); ctx.fill();
+            if (woman) circle(ctx, side * s * 0.71, s * 0.2 + Math.sin(t * 3 + side) * s * 0.01, s * 0.06, '#f59e0b');
+        });
+        // Face
+        const face = ctx.createRadialGradient(-s * 0.2, -s * 0.25, s * 0.1, 0, 0, s * 0.95);
+        face.addColorStop(0, P.skin); face.addColorStop(1, P.shade);
+        ctx.fillStyle = face;
+        ctx.beginPath(); ctx.ellipse(0, 0, s * 0.68, s * 0.86, 0, 0, Math.PI * 2); ctx.fill();
+        // Hair on top
+        ctx.fillStyle = P.hair;
+        if (woman) {
+            ctx.beginPath();
+            ctx.moveTo(-s * 0.74, s * 0.15);
+            ctx.quadraticCurveTo(-s * 0.85, -s * 0.95, 0, -s * 0.98);
+            ctx.quadraticCurveTo(s * 0.85, -s * 0.95, s * 0.74, s * 0.15);
+            ctx.quadraticCurveTo(s * 0.6, -s * 0.45, s * 0.05, -s * 0.52);
+            ctx.quadraticCurveTo(-s * 0.35, -s * 0.5, -s * 0.74, s * 0.15);
+            ctx.fill();
+        } else {
+            ctx.beginPath();
+            ctx.moveTo(-s * 0.68, -s * 0.15);
+            ctx.quadraticCurveTo(-s * 0.72, -s * 0.92, 0, -s * 0.94);
+            ctx.quadraticCurveTo(s * 0.72, -s * 0.92, s * 0.68, -s * 0.15);
+            ctx.quadraticCurveTo(s * 0.55, -s * 0.6, 0, -s * 0.62);
+            ctx.quadraticCurveTo(-s * 0.55, -s * 0.6, -s * 0.68, -s * 0.15);
+            ctx.fill();
+            // A trimmed beard along the jaw
+            ctx.fillStyle = 'rgba(20,16,16,0.55)';
+            ctx.beginPath();
+            ctx.moveTo(-s * 0.62, s * 0.2);
+            ctx.quadraticCurveTo(-s * 0.5, s * 0.85, 0, s * 0.88);
+            ctx.quadraticCurveTo(s * 0.5, s * 0.85, s * 0.62, s * 0.2);
+            ctx.quadraticCurveTo(s * 0.4, s * 0.62, 0, s * 0.64);
+            ctx.quadraticCurveTo(-s * 0.4, s * 0.62, -s * 0.62, s * 0.2);
+            ctx.fill();
+        }
+        // Eyebrows lift a little when speaking
+        const lift = mouth > 0.4 ? s * 0.03 : 0;
+        ctx.strokeStyle = P.hair;
+        ctx.lineWidth = s * (woman ? 0.045 : 0.06);
+        ctx.lineCap = 'round';
+        [-1, 1].forEach(side => { ctx.beginPath(); ctx.moveTo(side * s * 0.14, -s * 0.28 - lift); ctx.quadraticCurveTo(side * s * 0.28, -s * 0.36 - lift, side * s * 0.44, -s * 0.26 - lift); ctx.stroke(); });
+        // Eyes
+        [-1, 1].forEach(side => {
+            const ex = side * s * 0.28, ey = -s * 0.1;
+            if (blink) {
+                ctx.strokeStyle = '#1f130e'; ctx.lineWidth = s * 0.03;
+                ctx.beginPath(); ctx.moveTo(ex - s * 0.1, ey); ctx.quadraticCurveTo(ex, ey + s * 0.04, ex + s * 0.1, ey); ctx.stroke();
+                return;
+            }
+            ctx.fillStyle = '#fbf7f2';
+            ctx.beginPath(); ctx.ellipse(ex, ey, s * 0.12, s * 0.075, 0, 0, Math.PI * 2); ctx.fill();
+            circle(ctx, ex + s * 0.01, ey, s * 0.06, '#3b2416');
+            circle(ctx, ex + s * 0.01, ey, s * 0.03, '#0b0706');
+            circle(ctx, ex + s * 0.03, ey - s * 0.025, s * 0.013, '#fff');
+            if (woman) { ctx.strokeStyle = '#0b0706'; ctx.lineWidth = s * 0.02; ctx.beginPath(); ctx.ellipse(ex, ey, s * 0.12, s * 0.075, 0, Math.PI * 1.05, Math.PI * 1.95); ctx.stroke(); }
+        });
+        // Nose
+        ctx.strokeStyle = 'rgba(40,20,12,0.45)';
+        ctx.lineWidth = s * 0.028;
+        ctx.beginPath(); ctx.moveTo(-s * 0.07, s * 0.2); ctx.quadraticCurveTo(0, s * 0.26, s * 0.07, s * 0.2); ctx.stroke();
+        // Mouth: opens with the voice
+        const my = s * 0.43;
+        const open = Math.max(0, mouth);
+        ctx.fillStyle = P.lips;
+        ctx.beginPath(); ctx.ellipse(0, my, s * 0.18, s * (0.045 + 0.1 * open), 0, 0, Math.PI * 2); ctx.fill();
+        if (open > 0.08) {
+            ctx.fillStyle = '#2a0f0c';
+            ctx.beginPath(); ctx.ellipse(0, my + s * 0.01, s * 0.14, s * 0.085 * open, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#f5f0ea';
+            ctx.fillRect(-s * 0.1, my - s * 0.085 * open + s * 0.005, s * 0.2, s * 0.03 * Math.min(1, open * 1.5));
+        } else {
+            ctx.strokeStyle = 'rgba(30,10,8,0.6)'; ctx.lineWidth = s * 0.018;
+            ctx.beginPath(); ctx.moveTo(-s * 0.16, my); ctx.quadraticCurveTo(0, my + s * 0.035, s * 0.16, my); ctx.stroke();
+        }
+        ctx.restore();
+    }
+
+    // Slide timing: a number (seconds per slide) or a list of seconds, one per slide (narrated videos)
+    const timesOf = (slides, per) => (Array.isArray(per) ? per : slides.map(() => per));
+    const totalOf = (slides, per) => timesOf(slides, per).reduce((a, b) => a + b, 0);
+
+    function draw(ctx, slides, t, per, pal, character, level = null) {
         const [a, b, ink, isNote] = pal;
-        const total = slides.length * per;
+        const times = timesOf(slides, per);
+        const total = times.reduce((x, y) => x + y, 0);
         const time = Math.min(Math.max(0, t), total - 0.001); // the first animation frame can land a hair before zero
-        const i = Math.floor(time / per);
-        const local = (time - i * per) / per; // 0..1 within this slide
+        let i = 0, start = 0;
+        while (i < times.length - 1 && time >= start + times[i]) { start += times[i]; i++; }
+        const local = (time - start) / times[i]; // 0..1 within this slide
         const slide = slides[i];
         const hasChar = character && character !== 'none';
 
@@ -561,9 +758,11 @@ document.addEventListener('DOMContentLoaded', () => {
         ctx.restore();
 
         if (hasChar) {
-            if (slide.kind === 'title') drawCharacter(ctx, character, W - 190, H - 330, 115, t, false, true);
-            else if (slide.kind === 'body') drawCharacter(ctx, character, 200, H - 270, 115, t, revealing, false);
-            else drawCharacter(ctx, character, W / 2, H * 0.62, 140, t, false, true);
+            const human = character === 'woman' || character === 'man';
+            // Presenters stand at the bottom edge (head and shoulders); the cartoon characters float
+            if (slide.kind === 'title') drawCharacter(ctx, character, W - 190, human ? H - 360 : H - 330, human ? 120 : 115, t, false, true, level);
+            else if (slide.kind === 'body') drawCharacter(ctx, character, human ? 190 : 200, human ? H - 300 : H - 270, human ? 120 : 115, t, revealing, false, level);
+            else drawCharacter(ctx, character, W / 2, human ? H * 0.6 : H * 0.62, human ? 140 : 140, t, false, true, level);
         }
 
         // Small signature at the bottom
@@ -623,10 +822,11 @@ document.addEventListener('DOMContentLoaded', () => {
         S = {
             note: n, tab: note.tab || 'video', look: 'note', speed: 'normal', voice: false,
             bg: { video: { music: rec, volume: 1 }, audio: { music: 'none', volume: 0.5 } }, recommended: rec, musicFile: null, musicName: '', character: 'buddy',
-            denoise: true, audience: 'friends', videoBlob: null, audioBlob: null, audioDuration: 0
+            denoise: true, audience: 'friends', videoBlob: null, audioBlob: null, audioDuration: 0, narrate: 'off', tts: null
         };
         paint();
         if (!dlg.open) dlg.showModal();
+        checkTTS(); // find out early whether narrator voices are available
     }
 
     function paint() {
@@ -654,7 +854,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="nm-video">
                     <div class="nm-stage"><video class="nm-canvas" src="${URL.createObjectURL(S.videoBlob)}" controls playsinline loop></video></div>
                     <div class="nm-controls">
-                        <p class="nm-done">${ic('i-check')}Your video is ready — ${secs} seconds.</p>
+                        <p class="nm-done">${ic('i-check')}Your video is ready — ${S.videoSecs || secs} seconds.</p>
                         <button type="button" class="primary-btn nm-wide" data-nm="post-video">${ic('i-reel')}Post to the Feed as a reel</button>
                         <button type="button" class="ghost-btn nm-wide" data-nm="save-video">Save to this device</button>
                         <button type="button" class="link-btn" data-nm="redo-video">Change it and make it again</button>
@@ -674,6 +874,13 @@ document.addEventListener('DOMContentLoaded', () => {
                             <button type="button" role="radio" aria-checked="${S.character === k}" class="nm-char" data-nm="char" data-char="${k}"><span aria-hidden="true">${emoji}</span>${label}</button>`).join('')}
                         </div>
                     </div>
+                    <div class="field"><span>Narrator voice</span>
+                        <div class="nm-seg" role="radiogroup" aria-label="Narrator voice">
+                            ${[['off', '🔇 None'], ['female', '👩🏾 Female'], ['male', '👨🏾 Male']].map(([k, l]) => `<button type="button" role="radio" aria-checked="${S.narrate === k}" data-nm="narrate" data-voice="${k}">${l}</button>`).join('')}
+                        </div>
+                        ${S.narrate !== 'off' && ttsReady === false ? '<p class="nm-hint">Real narrator voices aren’t switched on for Cordial yet. The presenter still moves with the words — or switch on “Add my voice” below and read it yourself.</p>'
+                            : S.narrate !== 'off' ? '<p class="nm-hint">A natural voice reads your note, and each slide lasts as long as it’s being read. Tap “Preview with sound” to hear it.</p>' : ''}
+                    </div>
                     ${musicPicker('Music')}
                     <div class="field"><span>Look</span>
                         <div class="nm-looks" role="radiogroup" aria-label="Look">${Object.keys(LOOKS).map(k => {
@@ -684,8 +891,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="field"><span>Pace</span>
                         <div class="nm-seg" role="radiogroup" aria-label="Pace">${Object.keys(SPEEDS).map(k => `<button type="button" role="radio" aria-checked="${S.speed === k}" data-nm="speed" data-speed="${k}">${k[0].toUpperCase() + k.slice(1)}</button>`).join('')}</div>
                     </div>
-                    <label class="nm-switch"><input type="checkbox" data-nm="voice"${S.voice ? ' checked' : ''}><span><strong>Add my voice</strong><small>Read along while it records — the slides are your prompt. Background noise is filtered out${M().music !== 'none' ? ', and the music is mixed in underneath (use headphones to hear it)' : ''}.</small></span></label>
-                    <p class="nm-meta">${slidesFor(S.note).length} slides · about ${secs} seconds</p>
+                    <label class="nm-switch"><input type="checkbox" data-nm="voice"${S.voice && !narrating() ? ' checked' : ''}${narrating() ? ' disabled' : ''}><span><strong>Add my voice</strong>${narrating() ? '<small>Off while the narrator reads your note.</small>' : ''}<small>Read along while it records — the slides are your prompt. Background noise is filtered out${M().music !== 'none' ? ', and the music is mixed in underneath (use headphones to hear it)' : ''}.</small></span></label>
+                    <p class="nm-meta">${slidesFor(S.note).length} slides · ${narrating() ? 'as long as the narration' : `about ${secs} seconds`}</p>
                     <button type="button" class="primary-btn nm-wide" data-nm="make-video">${ic('i-sparkle')}Make my video</button>
                 </div>
             </div>`;
@@ -749,23 +956,51 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function startPreview(withSound) {
+    const narrating = () => S.narrate !== 'off' && ttsReady !== false;
+
+    async function startPreview(withSound) {
         const canvas = dlg.querySelector('canvas.nm-canvas');
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
         const slides = slidesFor(S.note);
-        const per = SPEEDS[S.speed];
+        let per = SPEEDS[S.speed];
         const pal = palette(S.look, S.note.color);
         const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        let level = null;
         if (withSound && AC) {
-            S.ac = new AC();
-            startMusic(S.ac, S.ac.destination);
+            const ac = S.ac = new AC(); // made on the tap, before any waiting, so phones allow sound
             S.previewing = true;
+            if (narrating()) {
+                const play = dlg.querySelector('.nm-play span');
+                if (play) play.textContent = 'Getting the voice…';
+                try {
+                    const buffer = await ac.decodeAudioData((await narration(slides)).slice(0));
+                    if (S.ac !== ac) return; // stopped while waiting
+                    per = narratedTimes(slides, buffer.duration + 0.4);
+                    const src = ac.createBufferSource();
+                    src.buffer = buffer;
+                    const g = ac.createGain();
+                    g.gain.value = 1.4;
+                    src.connect(g);
+                    g.connect(ac.destination);
+                    level = levelMeter(ac, g);
+                    src.start(ac.currentTime + 0.4);
+                } catch (e) {
+                    app.showToast(e.message || 'Couldn’t get the narrator’s voice');
+                }
+                refreshPlay();
+            }
+            if (S.ac !== ac) return;
+            startMusic(ac, ac.destination);
         }
+        cancelAnimationFrame(S.raf);
+        const total = totalOf(slides, per);
         const t0 = performance.now();
         const loop = now => {
-            const t = reduce && !withSound ? per * 0.8 : ((now - t0) / 1000) % (slides.length * per);
-            draw(ctx, slides, t, per, pal, S.character);
+            const t = reduce && !withSound ? timesOf(slides, per)[0] * 0.8 : ((now - t0) / 1000) % total;
+            const lv = level ? level() : null;
+            if (S.musicGain && level && S.ac) S.musicGain.gain.setTargetAtTime(lv > 0.05 ? M().volume * 0.35 : M().volume, S.ac.currentTime, 0.1);
+            draw(ctx, slides, t, per, pal, S.character, lv);
             if (!(reduce && !withSound)) S.raf = requestAnimationFrame(loop);
         };
         S.raf = requestAnimationFrame(loop);
@@ -778,13 +1013,47 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         stopSound();
         cancelAnimationFrame(S.raf);
-        const ac = AC && (S.voice || M().music !== 'none') ? new AC() : null; // created on the tap, so phones allow sound
+        // The audio context is made on the tap, before any waiting, so phones allow sound
+        const ac = AC && (S.voice || S.narrate !== 'off' || M().music !== 'none') ? new AC() : null;
+        await checkTTS();
+        const narrate = narrating();
+        const useVoice = S.voice && !narrate;
+        const slides = slidesFor(S.note);
+        let per = SPEEDS[S.speed];
+        const bar = dlg.querySelector('.nm-progress');
+        const controls = dlg.querySelector('.nm-controls');
+        bar.hidden = false;
+        dlg.querySelector('.nm-play').hidden = true;
+        controls.classList.add('busy');
+        const fail = msg => {
+            bar.hidden = true;
+            dlg.querySelector('.nm-play').hidden = false;
+            controls.classList.remove('busy');
+            if (ac) ac.close().catch(() => {});
+            app.showToast(msg);
+            startPreview(false);
+        };
+
+        // The narrator's voice first: its length sets how long each slide stays up
+        let voiceBuffer = null;
+        if (narrate && ac) {
+            bar.querySelector('small').textContent = 'Getting the narrator’s voice…';
+            try {
+                voiceBuffer = await ac.decodeAudioData((await narration(slides)).slice(0));
+                per = narratedTimes(slides, voiceBuffer.duration + 0.4);
+            } catch (e) {
+                return fail(e.message || 'Couldn’t get the narrator’s voice — try again');
+            }
+        }
+
         let mic = null;
-        if (S.voice) {
+        if (useVoice) {
             try { mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
-            catch (e) { if (ac) ac.close(); return app.showToast('Allow the microphone to add your voice — or switch “Add my voice” off'); }
+            catch (e) { return fail('Allow the microphone to add your voice — or switch “Add my voice” off'); }
         }
         const stream = canvas.captureStream(30);
+        let level = null;
+        let voiceSrc = null;
         if (ac) {
             S.ac = ac;
             const dest = ac.createMediaStreamDestination();
@@ -793,7 +1062,20 @@ document.addEventListener('DOMContentLoaded', () => {
             startMusic(ac, mix);
             // Hear the music while it records — unless you're reading along (it would leak into the microphone)
             if (S.musicGain && !mic) S.musicGain.connect(ac.destination);
-            if (mic) addVoice(ac, mic, mix, true);
+            if (mic) {
+                addVoice(ac, mic, mix, true, (lv, open) => { S.liveLevel = open ? lv : 0; });
+                level = () => S.liveLevel || 0;
+            }
+            if (voiceBuffer) {
+                voiceSrc = ac.createBufferSource();
+                voiceSrc.buffer = voiceBuffer;
+                const g = ac.createGain();
+                g.gain.value = 1.4;
+                voiceSrc.connect(g);
+                g.connect(mix);
+                g.connect(ac.destination); // you hear the narrator while it records
+                level = levelMeter(ac, g);
+            }
             dest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
         }
         const mime = ['video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
@@ -807,22 +1089,20 @@ document.addEventListener('DOMContentLoaded', () => {
         recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
 
         const ctx = canvas.getContext('2d');
-        const slides = slidesFor(S.note);
-        const per = SPEEDS[S.speed];
-        const total = slides.length * per;
+        const total = totalOf(slides, per);
         const pal = palette(S.look, S.note.color);
-        const bar = dlg.querySelector('.nm-progress');
-        bar.hidden = false;
-        dlg.querySelector('.nm-play').hidden = true;
-        bar.querySelector('small').textContent = S.voice ? 'Recording — read along now 🎙️' : 'Making your video…';
-        dlg.querySelector('.nm-controls').classList.add('busy');
+        bar.querySelector('small').textContent = useVoice ? 'Recording — read along now 🎙️' : 'Making your video…';
 
         const done = new Promise(resolve => { recorder.onstop = resolve; });
         recorder.start(500);
+        if (voiceSrc) voiceSrc.start(ac.currentTime + 0.4);
         const t0 = performance.now();
         const frame = now => {
             const t = (now - t0) / 1000;
-            draw(ctx, slides, t, per, pal, S.character);
+            const lv = level ? level() : null;
+            // The music dips while the narrator speaks
+            if (voiceSrc && S.musicGain && !S.fading) S.musicGain.gain.setTargetAtTime(lv > 0.05 ? M().volume * 0.35 : M().volume, ac.currentTime, 0.1);
+            draw(ctx, slides, t, per, pal, S.character, lv);
             bar.querySelector('span').style.width = `${Math.min(100, (t / total) * 100)}%`;
             if (S.musicGain && t > total - 1.2 && !S.fading) { S.fading = true; S.musicGain.gain.setTargetAtTime(0.0001, S.ac.currentTime, 0.35); } // fade the music out at the end
             if (t < total + 0.3) S.raf = requestAnimationFrame(frame);
@@ -833,11 +1113,13 @@ document.addEventListener('DOMContentLoaded', () => {
         stream.getTracks().forEach(t => t.stop());
         if (mic) mic.getTracks().forEach(t => t.stop());
         S.stream = S.mic = null;
+        S.liveLevel = 0;
         stopSound();
         if (S.cancelled || !chunks.length) return;
         const type = (recorder.mimeType || mime || 'video/webm').split(';')[0];
         S.videoBlob = new Blob(chunks, { type });
         S.videoType = type;
+        S.videoSecs = Math.round(total);
         paint();
     }
 
@@ -1003,7 +1285,7 @@ document.addEventListener('DOMContentLoaded', () => {
         file.duration = S.audioDuration;
         const title = S.note.title ? `🎙️ ${S.note.title}` : '🎙️ Listen to my note';
         try {
-            await app.createEntry({ title, text: S.note.text, shared: true, color: S.note.color, audience: S.audience === 'public' ? 'public' : 'friends' }, [file]);
+            await app.createEntry({ title, text: S.note.text, shared: true, color: S.note.color, audience: S.audience === 'public' ? 'public' : 'friends', origin: 'post' }, [file]);
             dlg.close();
             app.showToast('Posted — your note is on the Feed as audio 🎧');
             setTimeout(() => app.setView('feed'), 400);
@@ -1023,7 +1305,12 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (what === 'tab') { if (S.recorder && S.recorder.state === 'recording') return; S.tab = el.dataset.tab; paint(); }
         else if (what === 'look') { S.look = el.dataset.look; paint(); }
         else if (what === 'speed') { S.speed = el.dataset.speed; paint(); }
-        else if (what === 'char') { S.character = el.dataset.char; paint(); }
+        else if (what === 'char') {
+            S.character = el.dataset.char;
+            // A presenter reads in their own voice (when voices are available)
+            if (PRESENTER_VOICE[S.character] && await checkTTS()) S.narrate = PRESENTER_VOICE[S.character];
+            paint();
+        } else if (what === 'narrate') { S.narrate = el.dataset.voice; await checkTTS(); paint(); }
         else if (what === 'music') {
             M().music = el.dataset.music;
             paint();
@@ -1095,7 +1382,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Picking a note (from the Feed) ----------
     function pickNote(anchor) {
-        const notes = (app.getNotes() || []).filter(n => !n.trashedAt && !n.archived && (String(n.text || '').trim() || String(n.title || '').trim()))
+        const notes = (app.getNotes() || []).filter(n => !n.trashedAt && !n.archived && n.origin !== 'post' && (String(n.text || '').trim() || String(n.title || '').trim()))
             .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)).slice(0, 12);
         if (!notes.length) return app.showToast('Write a note first — then turn it into a video or audio');
         app.openPopover(anchor, [

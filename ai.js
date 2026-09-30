@@ -261,7 +261,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function recentEntries() {
         return app.getNotes()
             // Private entries never leave the device
-            .filter(n => !n.trashedAt && !n.archived && !n.private)
+            .filter(n => !n.trashedAt && !n.archived && !n.private && n.origin !== 'post')
             .slice(0, 10)
             .map(n => `${new Date(n.createdAt).toDateString()} — ${n.title || 'Untitled'}${n.mood ? ` (mood: ${n.mood})` : ''}\n${app.fullText(n)}`)
             .join('\n\n---\n\n')
