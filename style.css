@@ -13384,3 +13384,13 @@ html.kb-open dialog.auth:modal { top: var(--vvtop, 0px); bottom: auto; height: v
     :is(.mcard, .nh-template, .ex-tile, .gm-tile):hover::after { opacity: 1; }
 }
 .notes-home :is(.nh-templates, .nh-pinned) { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); }
+
+/* Notes: a card can never be wider than the screen — the list column is capped, and anything long
+   inside a card (a link, a long word, a voice note, a photo) wraps or shrinks to fit */
+.masonry.as-list { grid-template-columns: minmax(0, 1fr); }
+.masonry > .mcard { min-width: 0; max-width: 100%; }
+.mcard :is(h3, .mcard-body, .mcard-hashtags, .mcard-tags) { min-width: 0; overflow-wrap: anywhere; }
+.mcard :is(img, video, audio, svg, canvas, .vn, .mcard-audio) { max-width: 100%; }
+/* …and the sections around them: a grid column there also grew to fit its widest content */
+.notes-home, .nh-sec { grid-template-columns: minmax(0, 1fr); }
+.nh-sec > *, .notes-home > * { min-width: 0; }

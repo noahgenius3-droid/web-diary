@@ -325,13 +325,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function startDirect(person, opts = {}) {
         if (!me()) return;
+        unlockSound(); // iPhones only allow sound that starts from a tap: wake the sound engine now, before any waiting
         const ok = await join(dmTopic(person.id), { title: person.display_name, subtitle: opts.video ? 'Video call' : 'Voice call', person }, { ...opts, log: { direction: 'out', peer: person.id, video: !!opts.video } });
         if (!ok) return;
         call.ringing = person.id;
+        startRingback();
         paintPanel();
         call.ringTimer = setTimeout(() => {
             if (call && call.ringing === person.id) {
                 call.endStatus = 'no_answer';
+                stopRingback();
                 paintPanel(`${person.display_name} didn’t answer`);
                 setTimeout(() => leave(true), 1400);
             }
@@ -481,6 +484,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (call.people.size > 1 && call.ringing) {
             call.ringing = null;
+            stopRingback();
             clearTimeout(call.ringTimer);
         }
         if (call.people.size > 1 && !call.started) call.started = Date.now();
@@ -641,6 +645,7 @@ document.addEventListener('DOMContentLoaded', () => {
         clearInterval(c.tick);
         clearInterval(c.stats);
         clearTimeout(c.ringTimer);
+        stopRingback();
         if (notify && c.ringing) ring(c.ringing, 'cancel', { from: me() }).catch(() => {});
         c.peers.forEach(p => { p.pc.close(); if (p.audio) p.audio.remove(); });
         c.local.getTracks().forEach(t => t.stop());
@@ -1546,6 +1551,50 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     let ringTimer = null;
+
+    function unlockSound() {
+        try {
+            chimeCtx = chimeCtx || new (window.AudioContext || window.webkitAudioContext)();
+            if (chimeCtx.state === 'suspended') chimeCtx.resume();
+        } catch (e) { /* sound is optional */ }
+    }
+
+    // Ringback: what the caller hears while the other phone rings — the classic double ring
+    // (two short bursts of 400 + 450 Hz, then a pause), repeating until they answer
+    let ringback = null;
+    function ringbackBurst(at, length) {
+        const gain = chimeCtx.createGain();
+        gain.gain.setValueAtTime(0.0001, at);
+        gain.gain.exponentialRampToValueAtTime(0.09, at + 0.03);
+        gain.gain.setValueAtTime(0.09, at + length - 0.04);
+        gain.gain.exponentialRampToValueAtTime(0.0001, at + length);
+        gain.connect(chimeCtx.destination);
+        [400, 450].forEach(f => {
+            const osc = chimeCtx.createOscillator();
+            osc.frequency.value = f;
+            osc.connect(gain);
+            osc.start(at);
+            osc.stop(at + length + 0.02);
+        });
+    }
+    function startRingback() {
+        stopRingback();
+        unlockSound();
+        if (!chimeCtx) return;
+        const cycle = () => {
+            try {
+                const t = chimeCtx.currentTime + 0.05;
+                ringbackBurst(t, 0.4);
+                ringbackBurst(t + 0.6, 0.4);
+            } catch (e) { /* sound is optional */ }
+        };
+        cycle();
+        ringback = setInterval(cycle, 3000);
+    }
+    function stopRingback() {
+        clearInterval(ringback);
+        ringback = null;
+    }
 
     function startRingtone() {
         stopRingtone();
