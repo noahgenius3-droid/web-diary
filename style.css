@@ -13653,10 +13653,17 @@ body[data-view="feed"] .post.ig .post-text { font-size: 1.02rem; line-height: 1.
 
 .req-note { display: block; margin-top: 3px; color: var(--text); font-size: 0.86rem; font-style: italic; overflow-wrap: anywhere; }
 /* "A new version is ready" */
-.update-bar { position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom, 0px)); z-index: 300; display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 24px); padding: 8px 8px 8px 16px; border-radius: 999px; background: #18181b; color: #fff; font-size: 0.9rem; font-weight: 600; box-shadow: 0 14px 30px -12px rgba(0, 0, 0, 0.5); transform: translateX(-50%); animation: update-in 280ms cubic-bezier(0.2, 0.9, 0.3, 1); }
-.update-bar button { min-height: 36px; padding: 0 14px; border: 0; border-radius: 999px; background: #fff; color: #18181b; font: inherit; font-weight: 800; cursor: pointer; }
-.update-bar .update-later { min-width: 36px; padding: 0; background: rgba(255, 255, 255, 0.14); color: #fff; }
-@keyframes update-in { from { opacity: 0; transform: translate(-50%, 12px); } }
+/* Compact pill, centred without transforms so it never shrinks to half the screen on phones */
+.update-bar { position: fixed; left: 12px; right: 12px; bottom: calc(148px + env(safe-area-inset-bottom, 0px)); z-index: 300; display: flex; align-items: center; gap: 8px; width: fit-content; max-width: 360px; margin: 0 auto; padding: 5px 5px 5px 6px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.1); background: #18181b; color: #fff; font-size: 0.875rem; font-weight: 600; line-height: 1.2; box-shadow: 0 12px 28px -12px rgba(0, 0, 0, 0.55); animation: update-in 280ms cubic-bezier(0.2, 0.9, 0.3, 1); }
+.update-ic { display: grid; place-items: center; flex: none; width: 28px; height: 28px; border-radius: 50%; background: linear-gradient(135deg, #4f46e5, #db2777); }
+.update-ic .i { width: 15px; height: 15px; }
+.update-text { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 2px; }
+.update-bar button { display: grid; place-items: center; flex: none; min-height: 32px; height: 32px; padding: 0 14px; border: 0; border-radius: 999px; background: #fff; color: #18181b; font: inherit; font-size: 0.84rem; font-weight: 800; cursor: pointer; touch-action: manipulation; user-select: none; -webkit-user-select: none; transition: transform 100ms ease-out; }
+.update-bar button:active { transform: scale(0.95); }
+.update-bar .update-later { width: 32px; min-width: 32px; padding: 0; background: rgba(255, 255, 255, 0.12); color: rgba(255, 255, 255, 0.85); position: relative; }
+.update-bar .update-later::after { content: ''; position: absolute; inset: -6px; }
+.update-bar .update-later .i { width: 15px; height: 15px; }
+@keyframes update-in { from { opacity: 0; transform: translateY(12px); } }
 @media (min-width: 761px) { .update-bar { bottom: 24px; } }
 @media (prefers-reduced-motion: reduce) { .update-bar { animation: none; } }
 

@@ -3122,8 +3122,8 @@ if (window.HTMLFormElement && !HTMLFormElement.prototype.requestSubmit) {
         const bar = document.createElement('div');
         bar.className = 'update-bar';
         bar.setAttribute('role', 'status');
-        bar.innerHTML = '<span>A new version of Cordial is ready</span><button type="button">Update</button><button type="button" class="update-later" aria-label="Later">✕</button>';
-        bar.querySelector('button').addEventListener('click', () => location.reload());
+        bar.innerHTML = '<span class="update-ic" aria-hidden="true"><svg class="i"><use href="#i-sparkle"/></svg></span><span class="update-text">New version ready</span><button type="button" class="update-go">Update</button><button type="button" class="update-later" aria-label="Not now"><svg class="i"><use href="#i-close"/></svg></button>';
+        bar.querySelector('.update-go').addEventListener('click', () => location.reload());
         bar.querySelector('.update-later').addEventListener('click', () => bar.remove());
         document.body.append(bar);
     }
