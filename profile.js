@@ -27,11 +27,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function load(id) {
         const token = ++P.token;
-        Object.assign(P, { id, data: null, loading: true, error: false, posts: null, reposts: null, activity: null, trivia: undefined, tab: 'posts' });
-        const [{ data, error }] = await Promise.all([
+        Object.assign(P, { id, data: null, loading: true, error: false, posts: null, reposts: null, activity: null, trivia: undefined, tab: 'posts', friends: null });
+        const [{ data, error }, fr] = await Promise.all([
             client.rpc('diary_profile_full', { p_id: id }),
+            client.rpc('diary_friends_list', { p_user: id, p_limit: 12 }),
             I.refreshPresence ? I.refreshPresence([id]) : null
         ]);
+        P.friends = (fr && fr.data) || [];
         if (token !== P.token) return;
         P.loading = false;
         P.error = !!error;
@@ -173,12 +175,31 @@ document.addEventListener('DOMContentLoaded', () => {
                     : p.limited ? '<p class="ps-note">Some of this profile is only visible to their friends.</p>' : ''}
                 ${stats ? `<div class="pf-stats">
                     ${stat('', 'Posts', stats.posts)}
+                    ${stat('friends', 'Friends', stats.friends || 0)}
                     ${stat('followers', 'Followers', stats.followers)}
                     ${stat('following', 'Following', stats.following)}
                     ${stat('', 'Reactions', stats.reactions)}
                     ${stat('', 'Reposts', stats.reposts)}
-                </div>` : p.blocked ? '' : '<p class="pf-private muted small"><svg class="i"><use href="#i-lock"/></svg>Their numbers and follower lists are private.</p>'}
+                </div>
+                ${friendsStrip(p)}` : p.blocked ? '' : '<p class="pf-private muted small"><svg class="i"><use href="#i-lock"/></svg>Their numbers and follower lists are private.</p>'}
             </header>`;
+    }
+
+    function friendsStrip(p) {
+        const list = (P.friends || []).slice(0, 8);
+        if (!list.length) return '';
+        const total = (p.stats && p.stats.friends) || list.length;
+        const mutual = (P.friends || []).filter(x => x.friend && x.id !== me()).length;
+        return `
+            <section class="pf-friends" aria-label="Friends">
+                <header><h2>Friends <span>${fmt(total)}</span></h2>
+                    ${p.id !== me() && mutual ? `<small>${mutual} mutual</small>` : ''}
+                    <button type="button" class="link-btn accent" data-pf="list" data-which="friends">See all</button></header>
+                <div class="pf-friends-row">${list.map(x => `
+                    <button type="button" class="pf-friend" data-profile="${esc(x.id)}" aria-label="${esc(x.display_name)}’s profile">
+                        ${avatar(x, 'lg')}<span>${esc(x.id === me() ? 'You' : String(x.display_name || '').split(' ')[0])}</span>${x.friend && x.id !== me() && p.id !== me() ? '<i class="pf-mutual" aria-label="Mutual friend"></i>' : ''}
+                    </button>`).join('')}</div>
+            </section>`;
     }
 
     // A steady colour per person for the cover band
@@ -278,8 +299,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!p) return;
         const dlg = document.createElement('dialog');
         dlg.className = 'sheet-dialog reactors-sheet';
-        dlg.setAttribute('aria-label', which === 'followers' ? 'Followers' : 'Following');
-        dlg.innerHTML = `<div class="rx-card"><header class="rx-head"><h2>${which === 'followers' ? 'Followers' : 'Following'}</h2><button type="button" class="icon-btn" data-x="close" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button></header>
+        const TITLE = { followers: 'Followers', following: 'Following', friends: `${p.id === me() ? 'Your' : `${esc((p.display_name || '').split(' ')[0])}’s`} friends` };
+        dlg.setAttribute('aria-label', which === 'friends' ? 'Friends' : TITLE[which]);
+        dlg.innerHTML = `<div class="rx-card"><header class="rx-head"><h2>${TITLE[which]}</h2><button type="button" class="icon-btn" data-x="close" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button></header>
             <label class="search rx-search"><svg class="i"><use href="#i-search"/></svg><input type="search" placeholder="Search" aria-label="Search this list"></label>
             <div class="rx-list"><span class="lv-spinner" aria-hidden="true"></span></div></div>`;
         document.body.append(dlg);
@@ -292,9 +314,9 @@ document.addEventListener('DOMContentLoaded', () => {
             dlg.querySelector('.rx-list').innerHTML = shown.map(x => `
                 <div class="rx-row">
                     <button type="button" class="rx-who" data-profile="${esc(x.id)}" aria-label="${esc(x.display_name)}’s profile">${avatar(x, 'md')}</button>
-                    <button type="button" class="rx-name" data-profile="${esc(x.id)}"><strong>${esc(x.id === me() ? 'You' : x.display_name)}</strong><small>@${esc(x.username)}${x.friend ? ' · Friend' : ''}</small></button>
+                    <button type="button" class="rx-name" data-profile="${esc(x.id)}"><strong>${esc(x.id === me() ? 'You' : x.display_name)}</strong><small>@${esc(x.username)}${x.id === me() ? '' : x.friend ? (which === 'friends' && p.id !== me() ? ' · Mutual friend' : ' · Friend') : ''}</small></button>
                     ${x.id === me() || x.friend ? '' : I.followButton({ ...x })}
-                </div>`).join('') || `<p class="muted small">${q ? 'No one matches.' : which === 'followers' ? 'No followers yet.' : 'Not following anyone yet.'}</p>`;
+                </div>`).join('') || `<p class="muted small">${q ? 'No one matches.' : which === 'followers' ? 'No followers yet.' : which === 'friends' ? 'No friends yet.' : 'Not following anyone yet.'}</p>`;
             hydrateStorage(dlg);
         };
         dlg.querySelector('input').addEventListener('input', paintList);
@@ -304,7 +326,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const f = e.target.closest('.follow-btn');
             if (f) I.toggleFollow(f.dataset.id, f.dataset.name);
         }, true);
-        const { data, error } = await client.rpc('diary_follow_list', { p_user: p.id, p_which: which, p_limit: 300 });
+        const { data, error } = which === 'friends'
+            ? await client.rpc('diary_friends_list', { p_user: p.id, p_limit: 300 })
+            : await client.rpc('diary_follow_list', { p_user: p.id, p_which: which, p_limit: 300 });
         if (!dlg.isConnected) return;
         if (error) { dlg.querySelector('.rx-list').innerHTML = '<p class="muted small">Couldn’t load this list.</p>'; return; }
         list = data || [];
@@ -353,14 +377,23 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.disabled = true;
             btn.textContent = 'Saving…';
             const interests = form.interests.value.split(/[,\n#]/).map(x => x.trim().toLowerCase()).filter(x => x.length >= 2 && x.length <= 30).slice(0, 12);
+            const details = { bio: form.bio.value.trim().slice(0, 300), location: form.location.value.trim().slice(0, 60), interests, updated_at: new Date().toISOString() };
+            // Update your details row, or create it the first time. (Not an upsert: that also rewrites user_id,
+            // which people may not change, so the database refused every save.)
+            const saveDetails = async () => {
+                const up = await client.from('diary_profile_details').update(details).eq('user_id', me()).select('user_id');
+                if (up.error || (up.data && up.data.length)) return up;
+                return client.from('diary_profile_details').insert({ user_id: me(), ...details });
+            };
             const [a, b] = await Promise.all([
-                name !== s.profile.display_name ? client.from('diary_profiles').update({ display_name: name }).eq('id', me()).select().single() : { data: s.profile },
-                client.from('diary_profile_details').upsert({ user_id: me(), bio: form.bio.value.trim().slice(0, 300), location: form.location.value.trim().slice(0, 60), interests }, { onConflict: 'user_id' })
+                name !== s.profile.display_name ? client.from('diary_profiles').update({ display_name: name }).eq('id', me()).select('id, username, display_name, avatar_path, cover_path').single() : { data: s.profile },
+                saveDetails()
             ]);
             if (a.error || b.error) {
                 btn.disabled = false;
                 btn.textContent = 'Save';
-                return app.showToast('Couldn’t save your profile — please try again');
+                console.warn('Profile save failed', a.error || b.error);
+                return app.showToast(`Couldn’t save your profile — ${(a.error || b.error).message || 'please try again'}`);
             }
             if (a.data) s.profile = { ...s.profile, ...a.data };
             dlg.close();

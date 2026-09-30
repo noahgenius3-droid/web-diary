@@ -3998,14 +3998,18 @@ document.addEventListener('DOMContentLoaded', () => {
         const recent = loaded ? thread.items.slice(-2) : (s.previews.get(key) || []);
         return `
             <div class="comments" data-comments="${key}" data-mode="card">
-                ${total ? `<button type="button" class="link-btn muted-link" data-action="post-open" data-key="${key}">View ${total === 1 ? '1 comment' : `all ${total} comments`}</button>` : ''}
                 ${recent.length ? `<div class="comment-preview">${recent.map(c => `
-                    <p class="cp-line" data-action="post-open" data-key="${key}"><strong>${who(c)}</strong> ${linkTags(esc(c.body))}${c.audio_path ? `<span class="cp-voice"><svg class="i"><use href="#i-mic"/></svg>Voice comment · ${Media.formatDuration(c.audio_duration || 0)}</span>` : ''}</p>`).join('')}</div>` : ''}
+                    <div class="cp-item" data-action="post-open" data-key="${key}">
+                        <span class="cp-av">${avatar({ id: c.author, ...(c.author_profile || { display_name: 'Someone' }) }, 'xs')}</span>
+                        <p class="cp-line"><strong>${who(c)}</strong> ${c.body ? linkTags(esc(c.body)) : ''}${c.audio_path ? `<span class="cp-voice"><svg class="i"><use href="#i-mic"/></svg>Voice comment · ${Media.formatDuration(c.audio_duration || 0)}</span>` : ''}</p>
+                    </div>`).join('')}</div>` : ''}
+                ${total > recent.length ? `<button type="button" class="link-btn muted-link cp-all" data-action="post-open" data-key="${key}">${recent.length ? `View all ${total} comments` : total === 1 ? 'View 1 comment' : `View ${total} comments`}</button>` : ''}
                 ${canComment ? `
                     <form class="comment-form" data-form="comment" data-key="${key}">
+                        <span class="cf-av" aria-hidden="true">${avatar(s.profile, 'xs')}</span>
                         <input name="body" maxlength="2000" placeholder="Add a comment…" autocomplete="off" enterkeyhint="send" aria-label="Add a comment">
                         ${micButton()}
-                        <button class="link-btn accent">Post</button>
+                        <button class="c-send" aria-label="Post comment"><svg class="i"><use href="#i-send"/></svg></button>
                     </form>` : ''}
             </div>`;
     }
@@ -4331,7 +4335,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         ${avatar(s.profile, 'sm')}
                         <input name="body" id="pv-input" maxlength="2000" placeholder="${first ? `Reply to ${first}…` : 'Add a comment…'}" autocomplete="off" enterkeyhint="send" aria-label="Add a comment">
                         ${micButton()}
-                        <button class="pv-send" disabled>Post</button>
+                        <button class="pv-send" disabled aria-label="Post comment"><svg class="i"><use href="#i-send"/></svg></button>
                     </form>` : `<p class="pv-locked">${o.kind === 'post' ? 'Join the community to comment.' : 'Comments are off for this post.'}</p>`}
             </footer>`;
     }

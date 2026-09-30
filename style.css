@@ -13449,3 +13449,69 @@ html.kb-open dialog.auth:modal { top: var(--vvtop, 0px); bottom: auto; height: v
 @keyframes wpm-gain { 0% { opacity: 0; transform: translateY(8px) scale(0.8); } 12% { opacity: 1; transform: none; } 80% { opacity: 1; } 100% { opacity: 0; transform: translateY(-6px); } }
 .wpm-game.offline .wpm-bag { color: #f59e0b; font-weight: 700; }
 @media (prefers-reduced-motion: reduce) { .wpm-gain { animation: none; } }
+
+/* ---------- Profile: friends ---------- */
+.pf-stats { grid-template-columns: repeat(6, minmax(0, 1fr)) !important; }
+@media (max-width: 480px) { .pf-stats { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; row-gap: 10px; } }
+.pf-friends { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.pf-friends header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+.pf-friends h2 { margin: 0; font-size: 1.05rem; font-weight: 800; letter-spacing: -0.015em; }
+.pf-friends h2 span { margin-left: 4px; color: var(--text-muted); font-weight: 600; }
+.pf-friends header small { color: var(--text-muted); font-size: 0.82rem; }
+.pf-friends header .link-btn { margin-left: auto; font-weight: 700; }
+.pf-friends-row { display: flex; gap: 12px; overflow-x: auto; scrollbar-width: none; padding: 2px 2px 4px; overscroll-behavior-x: contain; }
+.pf-friends-row::-webkit-scrollbar { display: none; }
+.pf-friend { position: relative; flex: none; display: grid; justify-items: center; gap: 6px; width: 64px; padding: 0; border: 0; background: none; color: var(--text); font: inherit; cursor: pointer; }
+.pf-friend span { max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.78rem; font-weight: 600; }
+.pf-friend .avatar { transition: transform 140ms cubic-bezier(0.2, 0.9, 0.3, 1); }
+.pf-friend:active .avatar { transform: scale(0.94); }
+.pf-mutual { position: absolute; top: 40px; right: 6px; width: 14px; height: 14px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 2px var(--surface); }
+
+/* ==========================================================================
+   Feed, upgraded: cleaner cards, clearer actions, comments that read like a conversation
+   ========================================================================== */
+body[data-view="feed"] .post.ig { border-radius: 16px; border-color: color-mix(in srgb, var(--text) 8%, transparent); box-shadow: 0 1px 2px rgba(13, 10, 36, 0.04), 0 10px 28px -22px rgba(13, 10, 36, 0.45); }
+body[data-view="feed"] .post.ig .post-head { padding: 14px 16px 10px; }
+body[data-view="feed"] .post.ig .post-who strong, body[data-view="feed"] .post.ig .post-who .name-link { font-weight: 800; letter-spacing: -0.01em; }
+body[data-view="feed"] .post.ig .post-text { font-size: 1.02rem; line-height: 1.55; }
+/* Actions: comfortable hit areas, counts beside icons, a gentle press */
+.post-actions { gap: 2px; padding: 4px 10px; }
+.post-actions .act { min-height: 44px; min-width: 44px; border-radius: 12px; }
+.post-actions .act:active { transform: scale(0.92); }
+.post-actions .like-btn[aria-pressed="true"] .i { animation: like-pop 360ms cubic-bezier(0.2, 0.9, 0.3, 1.4); }
+@keyframes like-pop { 40% { transform: scale(1.28); } }
+@media (prefers-reduced-motion: reduce) { .post-actions .like-btn[aria-pressed="true"] .i { animation: none; } }
+
+/* Comments on a card: faces, bubbles, a real input */
+.post.ig .comments { display: grid; gap: 8px; padding: 4px 16px 14px; }
+.comment-preview { display: grid; gap: 8px; margin: 0; }
+.cp-item { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+.cp-av { flex: none; margin-top: 2px; }
+.cp-line { margin: 0 !important; padding: 7px 12px; border-radius: 4px 16px 16px 16px; background: var(--input); font-size: 0.92rem; line-height: 1.45; min-width: 0; overflow-wrap: anywhere; display: block !important; -webkit-line-clamp: unset !important; }
+.cp-line strong { margin-right: 4px; font-weight: 800; }
+.cp-all { justify-self: start; padding: 0; font-size: 0.86rem; font-weight: 700; }
+.comment-form { display: flex; align-items: center; gap: 8px; margin: 2px 0 0; padding: 4px 4px 4px 4px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); transition: border-color 160ms, box-shadow 160ms; }
+.comment-form:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.cf-av { flex: none; display: grid; }
+.comment-form input { flex: 1; min-width: 0; min-height: 36px; padding: 0 4px; border: 0 !important; background: none !important; box-shadow: none !important; outline: none; }
+.c-send, .pv-send { display: grid; place-items: center; flex: none; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: var(--accent); color: var(--on-accent); cursor: pointer; transition: transform 120ms, opacity 160ms; }
+.c-send .i, .pv-send .i { width: 17px; height: 17px; }
+.c-send:active, .pv-send:active { transform: scale(0.9); }
+.pv-send:disabled { opacity: 0.35; cursor: default; }
+.comment-form:has(input:placeholder-shown) .c-send { opacity: 0.35; }
+
+/* Full comments (post view and sheet): bubbles, clear names, tidy meta row */
+.comment.full { display: flex; align-items: flex-start; gap: 10px; padding: 6px 0; }
+.comment.full .c-av { flex: none; padding: 0; border: 0; background: none; border-radius: 50%; cursor: pointer; }
+.comment.full .c-main { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.comment.full .c-bubble { justify-self: start; max-width: 100%; padding: 8px 12px; border-radius: 4px 18px 18px 18px; background: var(--input); font-size: 0.95rem; line-height: 1.45; overflow-wrap: anywhere; }
+.comment.full .c-bubble strong { display: block; margin-bottom: 1px; font-size: 0.84rem; font-weight: 800; }
+.comment.full .comment-meta { display: flex; align-items: center; gap: 4px; padding-left: 12px; font-size: 0.78rem; color: var(--text-muted); }
+.comment.full .comment-meta .link-btn { font-size: 0.78rem; font-weight: 700; color: var(--text-muted); }
+@media (hover: hover) and (pointer: fine) { .comment.full .comment-meta .link-btn:hover { color: var(--text); } }
+.pv-c-head { display: flex; align-items: baseline; gap: 6px; font-size: 1.05rem; font-weight: 900; letter-spacing: -0.015em; }
+.pv-c-head span { color: var(--text-muted); font-weight: 600; }
+.pv-compose { gap: 8px; border-radius: 999px; }
+.pv-c-empty { display: grid; justify-items: center; gap: 4px; padding: 26px 12px; color: var(--text-muted); text-align: center; }
+.pv-c-empty .i { width: 30px; height: 30px; color: var(--accent); opacity: 0.8; }
+.pv-c-empty strong { color: var(--text); }
