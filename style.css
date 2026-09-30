@@ -14017,7 +14017,7 @@ body[data-view="spaces"] .fab { display: none; }
 .nm-hint { margin: 8px 0 0; color: var(--text-muted); font-size: 0.8rem; line-height: 1.45; }
 
 /* ---------- Notes sent to a friend's Inbox (note streaks) ---------- */
-.share-ic.inbox { background: color-mix(in srgb, #22c55e 18%, transparent); color: #16a34a; }
+.share-ic.dm { background: color-mix(in srgb, #22c55e 18%, transparent); color: #16a34a; }
 .share-ic.story { background: linear-gradient(135deg, #f59e0b, #db2777); color: #fff; }
 .msg-note { display: grid; gap: 6px; width: min(280px, 72vw); padding: 12px 14px; border-radius: 16px; background: var(--card, #fde68a); color: #1f2937; text-align: left; }
 .msg-note-tag { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.02em; opacity: 0.75; }
@@ -14056,3 +14056,7 @@ dialog.ns { width: min(460px, calc(100vw - 24px)); max-height: calc(100dvh - 24p
 .reel-via .i { width: 14px; height: 14px; }
 .reel-act[data-action="reel-reshare"][aria-pressed="true"] { color: #22c55e; }
 @media (max-width: 760px) { .reels-head { display: none; } }
+
+/* Share sheet: rows never shrink inside the scrolling body (the cover row was getting squashed) */
+.share-body > * { flex-shrink: 0; }
+.share-row { min-width: 0; }

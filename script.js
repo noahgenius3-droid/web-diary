@@ -2211,13 +2211,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         rows.push(`
+            <p class="share-label">Share to</p>
             <button class="share-row" data-share="feed"${blocked ? ' disabled' : ''}>
                 <span class="share-ic feed"><svg class="i"><use href="#i-feed"/></svg></span>
                 <span class="share-text"><strong>Friends feed</strong><small>${n.shared ? 'Shared — your friends can see it' : 'Post it for your friends to see'}</small></span>
                 <span class="share-switch${n.shared ? ' on' : ''}" aria-hidden="true"></span>
             </button>
             <button class="share-row" data-share="friend"${blocked ? ' disabled' : ''}>
-                <span class="share-ic inbox"><svg class="i"><use href="#i-chat"/></svg></span>
+                <span class="share-ic dm"><svg class="i"><use href="#i-chat"/></svg></span>
                 <span class="share-text"><strong>Send to a friend’s Inbox</strong><small>Just for them — send one a day to keep a 🔥 note streak going</small></span>
             </button>
             <button class="share-row" data-share="story"${blocked ? ' disabled' : ''}>
