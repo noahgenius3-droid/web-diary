@@ -92,6 +92,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.diarySocial = {
         available,
+        isGuest: () => !!(s.session && s.session.user && s.session.user.is_anonymous),
+        openUpgrade: reason => openUpgrade(reason),
         isSignedIn: signedIn,
         async accessToken() {
             if (!client) return null;
@@ -352,6 +354,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function quickPost(text, audience = 'friends') {
+        if (isGuest()) { openUpgrade('Create a free account to share to the feed. You’ll keep your scores and badges.'); return false; }
         if (!signedIn() || !String(text || '').trim()) return false;
         const note = await app.createEntry({ text: String(text).slice(0, 5000), shared: true, audience });
         clearTimeout(shareTimers.get(note.id));
@@ -379,29 +382,34 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // ---------- Auth ----------
+    // Modes: signin · signup · guest (just a name) · verify (confirm your email, by link or code) · upgrade (guest → account)
     const authDialog = $('auth');
     let authMode = 'signin';
+    const pending = { email: '', type: 'signup' }; // the email we're waiting on, and what kind of confirmation it is
+    const BACK_TO = () => location.origin + location.pathname;
+    const isGuest = () => !!(s.session && s.session.user && s.session.user.is_anonymous);
 
-    function openAuth(reason = '') {
-        setAuthMode('signin');
+    function openAuth(reason = '', mode = 'signin') {
+        setAuthMode(mode);
         $('auth-reason').textContent = reason;
         $('auth-reason').hidden = !reason;
-        showAuthMessage('');
         if (!available) showAuthMessage('Couldn’t reach the sign-in service. Check your connection and reload the page.', true);
         if (!authDialog.open) authDialog.showModal();
-        $('auth-email').focus();
+        const first = authDialog.querySelector('.field:not([hidden]) input');
+        if (first) first.focus();
     }
 
+    const TITLES = { signin: 'Welcome back', signup: 'Create your account', guest: 'Try Cordial as a guest', verify: 'Confirm your email', upgrade: 'Create your free account' };
+    const SUBMITS = { signin: 'Sign in', signup: 'Create account', guest: 'Continue as a guest', verify: 'Confirm', upgrade: 'Send confirmation email' };
     function setAuthMode(mode) {
         authMode = mode;
-        const signup = mode === 'signup';
-        $('auth-forgot').hidden = signup;
-        authDialog.querySelectorAll('.signup-only').forEach(el => { el.hidden = !signup; });
-        authDialog.querySelectorAll('.auth-tabs .tab').forEach(t =>
-            t.setAttribute('aria-selected', String(t.dataset.mode === mode)));
-        $('auth-title').textContent = signup ? 'Create your account' : 'Welcome back';
-        $('auth-submit').textContent = signup ? 'Create account' : 'Sign in';
-        $('auth-password').autocomplete = signup ? 'new-password' : 'current-password';
+        authDialog.querySelectorAll('[data-show]').forEach(el => { el.hidden = !el.dataset.show.split(' ').includes(mode); });
+        authDialog.querySelector('.auth-tabs').hidden = mode === 'verify' || mode === 'upgrade';
+        authDialog.querySelectorAll('.auth-tabs .tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.mode === mode)));
+        $('auth-title').textContent = TITLES[mode];
+        $('auth-submit').textContent = SUBMITS[mode];
+        $('auth-password').autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
+        $('auth-resend').hidden = mode !== 'verify';
         showAuthMessage('');
     }
 
@@ -412,10 +420,31 @@ document.addEventListener('DOMContentLoaded', () => {
         el.classList.toggle('error', isError);
     }
 
+    // Waiting on an email: show where it went, offer the code box and "send again"
+    function awaitEmail(email, type, text) {
+        pending.email = email;
+        pending.type = type;
+        setAuthMode('verify');
+        $('auth-code').value = '';
+        showAuthMessage(text || `We sent an email to ${email}. Tap the link in it on this phone — or, if it shows a 6-digit code, type it here.`);
+        if (!authDialog.open) authDialog.showModal();
+    }
+
     authDialog.querySelectorAll('.auth-tabs .tab').forEach(t =>
         t.addEventListener('click', () => setAuthMode(t.dataset.mode)));
 
     $('auth-cancel').addEventListener('click', () => authDialog.close());
+
+    $('auth-resend').addEventListener('click', async () => {
+        const email = pending.email || $('auth-email').value.trim();
+        if (!client || !email) return showAuthMessage('Type your email first.', true);
+        const btn = $('auth-resend');
+        btn.disabled = true;
+        const { error } = await client.auth.resend({ type: pending.type === 'email_change' ? 'email_change' : 'signup', email, options: { emailRedirectTo: BACK_TO() } });
+        btn.disabled = false;
+        if (error) return showAuthMessage(/rate|seconds|many/i.test(error.message) ? 'Please wait a minute before asking for another email.' : (error.message || 'Couldn’t send the email — try again.'), true);
+        showAuthMessage(`Sent again to ${email}. It can take a minute — check your spam folder too.`);
+    });
 
     // Forgot password: Supabase emails a link that brings them back here signed in (PASSWORD_RECOVERY)
     $('auth-forgot').addEventListener('click', async () => {
@@ -427,7 +456,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         const btn = $('auth-forgot');
         btn.disabled = true;
-        const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+        const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo: BACK_TO() });
         btn.disabled = false;
         if (error) {
             return showAuthMessage(/rate|seconds/i.test(error.message)
@@ -437,22 +466,46 @@ document.addEventListener('DOMContentLoaded', () => {
         showAuthMessage(`If ${email} has an account, a reset link is on its way. Open it on this device to choose a new password.`);
     });
 
-    async function chooseNewPassword() {
+    async function chooseNewPassword(opts = {}) {
         for (;;) {
-            const r = await app.ask({ title: 'Choose a new password', text: 'You’re signed in from your reset link. Pick a new password (at least 8 characters).', value: '', placeholder: 'New password', ok: 'Save password', inputType: 'password' });
-            if (!r) return app.showToast('Password not changed — you can change it any time in Settings');
+            const r = await app.ask({ title: opts.title || 'Choose a new password', text: opts.text || 'You’re signed in from your reset link. Pick a new password (at least 8 characters).', value: '', placeholder: 'New password', ok: 'Save password', inputType: 'password' });
+            if (!r) return app.showToast(opts.skipped || 'Password not changed — you can change it any time in Settings');
             if (r.value.length < 8) { app.showToast('Use at least 8 characters'); continue; }
             const { error } = await client.auth.updateUser({ password: r.value });
             if (error) {
                 app.showToast(/different|same/i.test(error.message) ? 'Pick a password you haven’t used before' : 'Couldn’t save your password — try again');
                 continue;
             }
-            return app.showToast('Password updated — you’re signed in');
+            return app.showToast(opts.done || 'Password updated — you’re signed in');
         }
     }
+
+    // A guest who confirmed their email: pick a password and they're a full member
+    const UPGRADE_KEY = 'cordialUpgrading';
+    const upgrading = () => { try { return localStorage.getItem(UPGRADE_KEY) === '1'; } catch (e) { return false; } };
+    async function finishUpgrade() {
+        try { localStorage.removeItem(UPGRADE_KEY); } catch (e) { /* private mode */ }
+        await client.auth.refreshSession();
+        await chooseNewPassword({ title: 'Last step: choose a password', text: 'Your email is confirmed. Pick a password (at least 8 characters) so you can sign in on any device.',
+            done: 'Welcome to Cordial — your account is ready 🎉', skipped: 'Your account is ready — set a password any time with “Forgot password?”' });
+        paintGuest();
+        app.render();
+    }
+
     $('auth-username').addEventListener('input', e => {
         e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '');
     });
+    $('auth-code').addEventListener('input', e => { e.target.value = e.target.value.replace(/\D/g, ''); });
+
+    function friendlyAuthError(err) {
+        const m = String((err && err.message) || '');
+        if (/anonymous sign-ins are disabled/i.test(m)) return 'Guest access isn’t switched on yet — create a free account instead.';
+        if (/invalid login credentials/i.test(m)) return 'That email and password don’t match. Check them, or tap “Forgot password?”.';
+        if (/already registered|already been registered|already exists/i.test(m)) return 'There’s already an account with that email — sign in instead.';
+        if (/rate|too many|seconds/i.test(m)) return 'Too many tries — please wait a minute and try again.';
+        if (/token has expired|invalid.*(otp|token)|otp.*(expired|invalid)/i.test(m)) return 'That code didn’t work — it may have expired. Tap “Send the email again” for a new one.';
+        return m || 'Something went wrong. Please try again.';
+    }
 
     $('auth-form').addEventListener('submit', async e => {
         e.preventDefault();
@@ -462,15 +515,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const name = $('auth-name').value.trim();
         const username = $('auth-username').value.trim();
 
-        if (!email || !password) return showAuthMessage('Enter your email and password.', true);
-        if (authMode === 'signup') {
+        if ((authMode === 'signin' || authMode === 'signup') && (!email || !password)) return showAuthMessage('Enter your email and password.', true);
+        if (authMode === 'signup' || authMode === 'guest') {
             if (!name) return showAuthMessage('Tell us your name.', true);
+        }
+        if (authMode === 'signup' || authMode === 'upgrade') {
             if (!USERNAME_RE.test(username)) return showAuthMessage('Usernames are 3–20 lowercase letters, numbers or _.', true);
+        }
+        if (authMode === 'upgrade' && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return showAuthMessage('Enter your email address.', true);
+        if (authMode === 'signup') {
             if (password.length < 6) return showAuthMessage('Use at least 6 characters for your password.', true);
             if ($('auth-password2').value !== password) {
                 $('auth-password2').focus();
                 return showAuthMessage('The two passwords don’t match — tap the eye to check what you typed.', true);
             }
+        }
+        if (authMode === 'verify' && !/^\d{6,8}$/.test($('auth-code').value)) {
+            return showAuthMessage('Type the code from the email, or just tap the link in it.', true);
         }
 
         const submit = $('auth-submit');
@@ -478,27 +539,120 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             if (authMode === 'signin') {
                 const { error } = await client.auth.signInWithPassword({ email, password });
-                if (error) throw error;
+                if (error) {
+                    if (error.code === 'email_not_confirmed' || /not confirmed/i.test(error.message)) {
+                        return awaitEmail(email, 'signup', `You haven’t confirmed ${email} yet. Tap the link in the email we sent (check spam too), type its code here, or send it again.`);
+                    }
+                    throw error;
+                }
                 authDialog.close();
-            } else {
+            } else if (authMode === 'signup') {
                 const { data, error } = await client.auth.signUp({
                     email, password,
-                    options: { data: { username, display_name: name } }
+                    options: { data: { username, display_name: name }, emailRedirectTo: BACK_TO() }
                 });
                 if (error) throw error;
-                if (data.session) {
-                    authDialog.close();
-                } else {
+                // Supabase hides whether an email is taken: an existing address comes back with no identities
+                if (data.user && Array.isArray(data.user.identities) && !data.user.identities.length) {
                     setAuthMode('signin');
-                    showAuthMessage('Almost there — check your inbox to confirm your email, then sign in here.');
+                    return showAuthMessage('There’s already an account with that email — sign in instead.', true);
                 }
+                if (data.session) authDialog.close();
+                else awaitEmail(email, 'signup');
+            } else if (authMode === 'guest') {
+                const { error } = await client.auth.signInAnonymously({ options: { data: { display_name: name.slice(0, 40) } } });
+                if (error) throw error;
+                authDialog.close();
+            } else if (authMode === 'verify') {
+                const { error } = await client.auth.verifyOtp({ email: pending.email, token: $('auth-code').value, type: pending.type });
+                if (error) throw error;
+                authDialog.close();
+                if (pending.type === 'email_change') finishUpgrade();
+            } else if (authMode === 'upgrade') {
+                if (username !== s.profile.username) {
+                    const { error: nameErr } = await client.from('diary_profiles').update({ username }).eq('id', s.profile.id);
+                    if (nameErr) return showAuthMessage(nameErr.code === '23505' ? `@${username} is taken — try another.` : 'Couldn’t save that username — try another.', true);
+                    s.profile.username = username;
+                }
+                const { error } = await client.auth.updateUser({ email }, { emailRedirectTo: BACK_TO() });
+                if (error) throw error;
+                try { localStorage.setItem(UPGRADE_KEY, '1'); } catch (e2) { /* private mode */ }
+                awaitEmail(email, 'email_change', `Nearly there! We sent a confirmation email to ${email}. Tap the link in it on this phone — or type its 6-digit code here. Then you’ll pick a password.`);
             }
         } catch (err) {
-            showAuthMessage(err.message || 'Something went wrong. Please try again.', true);
+            showAuthMessage(friendlyAuthError(err), true);
         } finally {
             submit.disabled = false;
         }
     });
+
+    // Coming back from an email link that didn't work (expired, already used, opened by a mail scanner…)
+    (() => {
+        const read = str => new URLSearchParams(String(str || '').replace(/^[#?]/, ''));
+        const h = read(location.hash), q = read(location.search);
+        const code = h.get('error_code') || q.get('error_code');
+        if (!code && !h.get('error') && !q.get('error')) return;
+        history.replaceState(null, '', location.pathname + (q.get('error') || q.get('error_code') ? '' : location.search));
+        setTimeout(() => {
+            if (s.session && !isGuest()) return app.showToast('You’re already signed in');
+            openAuth('', 'signin');
+            showAuthMessage(code === 'otp_expired'
+                ? 'That email link has expired or was already used. If you’ve already confirmed, just sign in. If not, type your email and tap “Send the email again”.'
+                : 'That link didn’t work. Sign in, or type your email and tap “Send the email again”.', true);
+            $('auth-resend').hidden = false;
+            pending.type = 'signup';
+            pending.email = '';
+        }, 600);
+    })();
+
+    // ---------- Guests ----------
+    function paintGuest() { document.body.classList.toggle('is-guest', isGuest()); }
+    function openUpgrade(reason) {
+        if (!isGuest()) return;
+        openAuth(reason || 'Create a free account to post, comment, react, chat and add friends. You’ll keep your name, games and diary.', 'upgrade');
+        $('auth-username').value = /^guest_/.test(s.profile && s.profile.username || '') ? '' : (s.profile && s.profile.username) || '';
+    }
+    function guestCardHTML() {
+        if (!isGuest()) return '';
+        return `
+            <div class="guest-card">
+                <span class="guest-ic"><svg class="i"><use href="#i-user-plus"/></svg></span>
+                <span class="guest-text"><strong>You’re browsing as a guest</strong><small>Create a free account to post, react, comment and chat — you’ll keep everything.</small></span>
+                <button type="button" class="primary-btn" data-action="guest-upgrade">Create account</button>
+            </div>`;
+    }
+    const GUEST_WALL = (title, text) => `<div class="empty guest-wall">
+        <svg class="i"><use href="#i-user-plus"/></svg>
+        <p class="empty-title">${title}</p>
+        <p>${text}</p>
+        <button class="primary-btn" style="margin-top:18px" data-action="guest-upgrade">Create a free account</button>
+    </div>`;
+    // Things other people would see from you: members only (the server enforces this too)
+    const MEMBER_ACTIONS = new Set(['like', 'react', 'repost', 'follow', 'people-add', 'people-accept', 'suggest-add', 'accept-request', 'message-friend',
+        'open-chat', 'call-friend', 'call-group', 'gc-call', 'live-start', 'story-add', 'reel-add', 'reel-like', 'reel-convert', 'reel-story', 'mk-new', 'mk-req',
+        'mk-deal', 'lib-new', 'feed-add-photos', 'feed-camera', 'feed-audio', 'feed-video', 'quick-reply', 'share-own', 'st-verify', 'find-friends']);
+    const MEMBER_FORMS = new Set(['add-friend', 'cm-post', 'comment', 'feed-post', 'gc-send', 'mk-request', 'mk-save', 'mk-send', 'send-message']);
+    document.addEventListener('click', e => {
+        if (e.target.closest('[data-action="try-guest"]')) { e.preventDefault(); return openAuth('', 'guest'); }
+        if (!isGuest()) return;
+        const el = e.target.closest('[data-action], [data-wpm="new"]');
+        if (!el) return;
+        if (el.dataset.action === 'guest-upgrade') { e.preventDefault(); return openUpgrade(); }
+        if (MEMBER_ACTIONS.has(el.dataset.action) || el.dataset.wpm === 'new') {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            openUpgrade();
+        }
+    }, true);
+    document.addEventListener('submit', e => {
+        if (!isGuest()) return;
+        const form = e.target.closest('form[data-form]');
+        if (form && MEMBER_FORMS.has(form.dataset.form)) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            openUpgrade();
+        }
+    }, true);
 
     async function signOut() {
         // This device stops getting the account's lock-screen alerts
@@ -518,6 +672,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const previousUser = s.session ? s.session.user.id : null;
         s.session = session;
 
+        paintGuest();
         if (!session) {
             resetSocial();
             app.render();
@@ -525,6 +680,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (previousUser === session.user.id && s.profile) {
             if (event === 'PASSWORD_RECOVERY') chooseNewPassword();
+            else if (!session.user.is_anonymous && upgrading()) finishUpgrade();
+            if (event === 'USER_UPDATED') app.render();
             return; // token refresh
         }
 
@@ -547,7 +704,8 @@ document.addEventListener('DOMContentLoaded', () => {
         syncAllShared();
         app.render();
         if (event === 'PASSWORD_RECOVERY') chooseNewPassword();
-        else if (event === 'SIGNED_IN' && previousUser === null) app.showToast(`Signed in as @${s.profile.username}`);
+        else if (!isGuest() && upgrading()) finishUpgrade();
+        else if (event === 'SIGNED_IN' && previousUser === null) app.showToast(isGuest() ? `Welcome, ${s.profile.display_name.split(' ')[0]}! You’re in as a guest` : `Signed in as @${s.profile.username}`);
     }
 
     function resetSocial() {
@@ -598,10 +756,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (existing) return existing;
 
         const meta = user.user_metadata || {};
-        let username = String(meta.username || '').toLowerCase();
+        const guestName = () => `guest_${Math.random().toString(36).slice(2, 8).padEnd(6, '0')}`;
+        let username = user.is_anonymous ? guestName() : String(meta.username || '').toLowerCase();
         const displayName = String(meta.display_name || String(user.email || 'friend').split('@')[0]).slice(0, 40);
 
         for (;;) {
+            if (!USERNAME_RE.test(username) && user.is_anonymous) username = guestName();
             if (!USERNAME_RE.test(username)) {
                 const r = await app.ask({
                     title: 'Choose a username',
@@ -619,6 +779,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 .insert({ id: user.id, username, display_name: displayName }).select().single();
             if (!error) return data;
             if (error.code === '23505') {
+                if (user.is_anonymous) { username = guestName(); continue; }
                 app.showToast(`@${username} is taken — try another`);
                 username = '';
                 continue;
@@ -3155,6 +3316,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <p class="empty-title">Sign in to connect with friends</p>
                 <p>${pitch}</p>
                 <button class="primary-btn" style="margin-top:18px" data-action="sign-in">Sign in or create an account</button>
+                <button class="link-btn gate-guest" data-action="try-guest">Or just have a look as a guest</button>
             </div>`;
         }
         return null;
@@ -3239,6 +3401,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 <section class="social-main">
                     ${announcementHTML()}
+                    ${guestCardHTML()}
                     ${window.diaryStories ? window.diaryStories.strip() : ''}
                     ${window.diaryLive ? window.diaryLive.strip() : ''}
                     <button class="new-posts" data-action="feed-refresh"${s.feedStale ? '' : ' hidden'}><svg class="i"><use href="#i-refresh"/></svg>New posts</button>
@@ -4387,7 +4550,7 @@ document.addEventListener('DOMContentLoaded', () => {
         respond, loadFriends, openChat, focusPost, commentsBlock, addComment, deleteComment, toggleSaved, postsFor,
         changeAvatar, removeAvatar, signOut, openAuth, hashtags, commentCount, followButton, toggleFollow, loadFollows,
         pickAudio, uploadAudio, voiceHTML, POST_AUDIO, linkTags, emojiPicker, POST_REACTIONS, peopleResults,
-        presenceText, refreshPresence, paintPresence, heartbeat,
+        presenceText, refreshPresence, paintPresence, heartbeat, isGuest, openUpgrade, guestCardHTML,
         chooseDelete, openRecentlyDeleted, editedTag, showHistory, prefOf, setPref, isMuted, muteMenu, soundMenu, FOREVER,
         statusOf, contactCardHTML, pickContact, deviceId, deviceLabel, STATUS,
         loadFeed: () => { if (s.feed === null) loadFeed(); },
@@ -4410,6 +4573,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Inbox (chat) ----------
     app.views.messages = () => {
+        if (isGuest()) {
+            app.setTitle('Messages');
+            return GUEST_WALL('Chat with friends', 'Messages, calls and friends need a free account. It takes a minute, and you’ll keep your name, games and diary.');
+        }
         app.setTitle('Messages');
         const blocked = gate('Chat privately with friends and see what they’re writing.');
         if (blocked) return blocked;

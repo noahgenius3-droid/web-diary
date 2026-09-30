@@ -12927,3 +12927,23 @@ input, textarea, [contenteditable="true"] { caret-color: var(--accent); }
 .wpm-pick-foot { padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--border); }
 .wpm-pick-foot .primary-btn { width: 100%; min-height: 48px; }
 .wpm-pick-foot .primary-btn:disabled { opacity: 0.5; }
+
+/* ==========================================================================
+   Guests and sign-up
+   ========================================================================== */
+body.is-guest .post-composer, body.is-guest .fab { display: none !important; }
+.guest-card { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; padding: 12px 12px 12px 14px; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); border-radius: 18px;
+    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, var(--surface)), var(--surface)); }
+.guest-ic { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 12px; background: var(--accent-soft); color: var(--accent); }
+.guest-ic .i { width: 22px; height: 22px; }
+.guest-text { flex: 1; min-width: 0; display: grid; gap: 2px; line-height: 1.35; }
+.guest-text small { color: var(--text-muted); font-size: 0.84rem; }
+.guest-card .primary-btn { flex: none; min-height: 40px; padding: 0 14px; }
+@media (max-width: 480px) { .guest-card { flex-wrap: wrap; } .guest-card .primary-btn { width: 100%; } }
+.guest-wall > .i { width: 44px; height: 44px; color: var(--accent); margin-bottom: 8px; }
+.auth-note { margin: 0 0 4px; padding: 10px 12px; border-radius: 12px; background: var(--input); color: var(--text-muted); font-size: 0.88rem; line-height: 1.45; }
+.auth .field small { font-weight: 500; color: var(--text-muted); }
+#auth-code { letter-spacing: 0.3em; font-variant-numeric: tabular-nums; }
+.auth-resend { justify-self: start; margin-top: -4px; }
+.auth .tabs[hidden], .auth [data-show][hidden] { display: none !important; }
+.gate-guest { display: block; margin: 12px auto 0; }
