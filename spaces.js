@@ -695,16 +695,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!quiet) app.render();
     }
 
-    async function leaveClicked() {
+    // Leaving quietly never ends the room — hosts end it with the "End room" button
+    function leaveClicked() {
         if (roleOf(me()) === 'host' && R.people.size > 1) {
             const cohost = [...R.people.keys()].some(id => roleOf(id) === 'cohost');
-            const end = await app.ask({
-                title: 'Leave the room?',
-                text: cohost ? 'Your co-host keeps it going while you’re away. Or end it for everyone.' : 'The room stays open for a few minutes so you can come back. Or end it for everyone now.',
-                ok: 'End for everyone', danger: true
-            });
-            if (end) return endRoom();
-            if (!R) return;
+            app.showToast(cohost ? 'You left — your co-host keeps the room going' : 'You left — the room stays open a few minutes if you want to come back');
         }
         leave(false);
     }
@@ -768,15 +763,50 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (room.hidden) return;
         room.className = `sp-room theme-${esc(x.theme || 'violet')}`;
-        room.innerHTML = `
-            <div class="sp-sheet">
-                <header class="sp-room-head">
+        // The sheet is built once per room; only its parts are redrawn, so the notes you're typing are never disturbed
+        if (room.dataset.for !== R.id || !room.querySelector('.sp-sheet')) {
+            room.dataset.for = R.id;
+            room.innerHTML = `
+                <div class="sp-sheet">
+                    <header class="sp-room-head"></header>
+                    <div class="sp-room-body"></div>
+                    <section class="sp-notes" aria-label="Your notes" hidden>
+                        <header class="sp-notes-head">
+                            <strong>📝 Your notes</strong>
+                            <span class="sp-notes-saved" aria-live="polite">Kept on this device</span>
+                            <button type="button" class="sp-icon" data-sp="notes" aria-label="Hide notes">${ic('i-chevron-down')}</button>
+                        </header>
+                        <textarea class="sp-notes-text" aria-label="Your notes" placeholder="Jot down ideas, quotes, names, links… They stay here while you listen."></textarea>
+                        <div class="sp-notes-actions">
+                            <button type="button" class="sp-notes-btn" data-sp="notes-stamp">⏱ Add time & speaker</button>
+                            <button type="button" class="sp-notes-btn primary" data-sp="notes-save">Save to my diary</button>
+                        </div>
+                    </section>
+                    <footer class="sp-room-foot"></footer>
+                </div>`;
+            const ta = room.querySelector('.sp-notes-text');
+            try { ta.value = localStorage.getItem(`cordialSpaceNotes:${R.id}`) || ''; } catch (e) { /* private mode */ }
+            let saveTimer = null;
+            ta.addEventListener('input', () => {
+                clearTimeout(saveTimer);
+                const id = R && R.id;
+                saveTimer = setTimeout(() => {
+                    try { localStorage.setItem(`cordialSpaceNotes:${id}`, ta.value); } catch (e) { /* private mode */ }
+                    const saved = room.querySelector('.sp-notes-saved');
+                    if (saved) saved.textContent = 'Kept on this device ✓';
+                }, 400);
+            });
+        }
+        const sheet = room.querySelector('.sp-sheet');
+        const notesOpen = !sheet.querySelector('.sp-notes').hidden;
+        sheet.querySelector('.sp-room-head').innerHTML = `
                     <button type="button" class="sp-icon sp-room-close" data-sp="minimise" aria-label="Minimise — keep listening">${ic('i-chevron-down')}</button>
                     <span class="sp-live"><i aria-hidden="true"></i>LIVE</span>
-                    <span class="sp-head-count">${ids.length} in the room</span>
-                    <button type="button" class="sp-icon" data-sp="menu" aria-label="Room options">${ic('i-more')}</button>
-                </header>
-                <div class="sp-room-body">
+                    <span class="sp-head-count">${ids.length} here</span>
+                    <button type="button" class="sp-icon${notesOpen ? ' on' : ''}" data-sp="notes" aria-label="${notesOpen ? 'Hide notes' : 'Take notes'}" aria-pressed="${notesOpen}">${ic('i-pencil')}</button>
+                    ${isHost() ? '<button type="button" class="sp-end" data-sp="end">End room</button>' : ''}
+                    <button type="button" class="sp-icon" data-sp="menu" aria-label="Room options">${ic('i-more')}</button>`;
+        sheet.querySelector('.sp-room-body').innerHTML = `
                     <div class="sp-room-title">
                         ${x.topic ? `<span class="sp-topic">${esc(x.topic)}</span>` : ''}
                         <h2>${esc(x.title)}</h2>
@@ -793,16 +823,56 @@ document.addEventListener('DOMContentLoaded', () => {
                     <h4 class="sp-sec-h">On stage · ${stage.length}</h4>
                     <div class="sp-people stage">${stage.map(tile).join('')}</div>
                     <h4 class="sp-sec-h">Listening · ${audience.length}</h4>
-                    ${audience.length ? `<div class="sp-people">${audience.map(tile).join('')}</div>` : `<p class="muted sp-empty-aud">No listeners yet. ${mineRole === 'host' ? 'Share the link to bring people in.' : ''}</p>`}
-                </div>
-                <footer class="sp-room-foot">
+                    ${audience.length ? `<div class="sp-people">${audience.map(tile).join('')}</div>` : `<p class="muted sp-empty-aud">No listeners yet. ${mineRole === 'host' ? 'Share the link to bring people in.' : ''}</p>`}`;
+        sheet.querySelector('.sp-room-foot').innerHTML = `
                     <button type="button" class="sp-leave" data-sp="leave">✌️ Leave quietly</button>
                     <div class="sp-react" role="group" aria-label="React">${REACTIONS.slice(0, 3).map(e => `<button type="button" class="sp-emoji" data-sp="react" data-emoji="${e}" aria-label="React ${e}">${e}</button>`).join('')}</div>
                     ${speaker
                         ? `<button type="button" class="sp-round big${R.muted ? '' : ' on'}" data-sp="mic" aria-label="${R.muted ? 'Unmute' : 'Mute'}" aria-pressed="${!R.muted}">${ic(R.muted ? 'i-mic-off' : 'i-mic')}</button>`
-                        : `<button type="button" class="sp-round big${R.hand ? ' on' : ''}" data-sp="hand" aria-label="${R.hand ? 'Lower your hand' : 'Raise your hand to speak'}" aria-pressed="${R.hand}"><span aria-hidden="true">✋</span></button>`}
-                </footer>
-            </div>`;
+                        : `<button type="button" class="sp-round big${R.hand ? ' on' : ''}" data-sp="hand" aria-label="${R.hand ? 'Lower your hand' : 'Raise your hand to speak'}" aria-pressed="${R.hand}"><span aria-hidden="true">✋</span></button>`}`;
+    }
+
+    // ---------- Notes while you listen ----------
+    function toggleNotes() {
+        const panel = room.querySelector('.sp-notes');
+        if (!panel) return;
+        panel.hidden = !panel.hidden;
+        paint();
+        if (!panel.hidden) setTimeout(() => room.querySelector('.sp-notes-text')?.focus(), 50);
+    }
+
+    // "[7:42 pm · Bolu, Ada] " at the cursor: who was talking when you wrote it
+    function stampNote() {
+        const ta = room.querySelector('.sp-notes-text');
+        if (!ta || !R) return;
+        const talking = [...R.speaking].filter(id => id !== me()).map(id => String((R.people.get(id) || {}).name || '').split(' ')[0]).filter(Boolean);
+        const time = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }).toLowerCase();
+        const stamp = `[${time}${talking.length ? ` · ${talking.join(', ')}` : ''}] `;
+        const at = ta.selectionStart ?? ta.value.length;
+        const before = ta.value.slice(0, at);
+        const lead = before && !before.endsWith('\n') ? '\n' : '';
+        ta.value = before + lead + stamp + ta.value.slice(ta.selectionEnd ?? at);
+        const pos = (before + lead + stamp).length;
+        ta.focus();
+        ta.setSelectionRange(pos, pos);
+        ta.dispatchEvent(new Event('input'));
+    }
+
+    async function saveNotes(btn) {
+        const ta = room.querySelector('.sp-notes-text');
+        const text = ta ? ta.value.trim() : '';
+        if (!text) return app.showToast('Write something first');
+        btn.disabled = true;
+        try {
+            await app.createEntry({ title: `🎙️ Notes · ${R.info.title}`, text, shared: false });
+            app.showToast('Saved to your diary 📝 — only you can see it');
+            const saved = room.querySelector('.sp-notes-saved');
+            if (saved) saved.textContent = 'Saved to your diary ✓';
+        } catch (e) {
+            app.showToast('Couldn’t save your notes — try again');
+        } finally {
+            btn.disabled = false;
+        }
     }
 
     const onRoomClick = async e => {
@@ -819,6 +889,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (what === 'minimise') minimise();
         else if (what === 'menu') roomMenu(el);
         else if (what === 'leave') leaveClicked();
+        else if (what === 'end') endRoom();
+        else if (what === 'notes') toggleNotes();
+        else if (what === 'notes-stamp') stampNote();
+        else if (what === 'notes-save') saveNotes(el);
         else if (what === 'mic') toggleMic();
         else if (what === 'react') react(el.dataset.emoji);
         else if (what === 'invite') setRole(el.dataset.id, 'speaker', `${String((R.people.get(el.dataset.id) || {}).name || 'They').split(' ')[0]} is on stage`);
