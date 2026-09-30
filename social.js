@@ -144,7 +144,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         app.openPopover(anchor, [
-            { label: `@${s.profile.username}`, icon: 'i-user', onClick: () => app.setView('messages') },
+            { label: `@${s.profile.username} · View profile`, icon: 'i-user', onClick: () => (window.diaryProfile ? window.diaryProfile.open(s.profile.id) : app.setView('profile', { profileId: s.profile.id })) },
             { label: s.profile.avatar_path ? 'Change profile photo' : 'Add profile photo', icon: 'i-camera', onClick: changeAvatar },
             ...(s.profile.avatar_path ? [{ label: 'Remove photo', icon: 'i-trash', onClick: removeAvatar }] : []),
             { label: 'Change name', icon: 'i-pencil', onClick: () => app.renameUser() },

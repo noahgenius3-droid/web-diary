@@ -44,7 +44,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const id = P.id;
         const token = P.token;
         if (!P.data || P.data.blocked) return;
-        if (P.tab === 'posts' && P.posts === null) {
+        if ((P.tab === 'posts' || P.tab === 'photos') && P.posts === null) {
             const { data } = await client.from('diary_shared_entries').select(I.FEED_SELECT).eq('author', id).order('shared_at', { ascending: false }).limit(40);
             if (token !== P.token) return;
             P.posts = (data || []).map(p => (I.decorateRepost(p), p));
@@ -129,7 +129,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const btn = (act, icon, label, cls = '') => `<button type="button" class="pf-btn ${cls}" data-pf="${act}"><svg class="i"><use href="#${icon}"/></svg><span>${label}</span></button>`;
         let actions;
         if (mine) {
-            actions = btn('edit', 'i-edit', 'Edit profile', 'primary') + btn('share', 'i-share', 'Share profile');
+            actions = btn('edit', 'i-pencil', 'Edit profile', 'primary') + btn('share', 'i-share', 'Share profile');
         } else if (p.blocked) {
             actions = btn('unblock', 'i-block', 'Unblock', 'primary');
         } else {
@@ -149,7 +149,10 @@ document.addEventListener('DOMContentLoaded', () => {
         ].filter(Boolean);
         return `
             <header class="pf-head">
-                <div class="pf-cover c-${esc(avatarColor(p.id))}" aria-hidden="true"></div>
+                <div class="pf-cover c-${esc(avatarColor(p.id))}${p.cover_path ? ' has-img' : ''}">
+                    ${p.cover_path ? `<button type="button" class="pf-cover-view" data-pf="cover-view" aria-label="View ${esc(p.display_name)}’s cover photo"><img src="${esc(I.avatarUrl(p.cover_path))}" alt="" loading="lazy" decoding="async"></button>` : ''}
+                    ${mine ? `<button type="button" class="pf-cover-edit" data-pf="cover" aria-haspopup="menu"><svg class="i"><use href="#i-camera"/></svg><span>${p.cover_path ? 'Edit cover' : 'Add cover'}</span></button>` : ''}
+                </div>
                 <div class="pf-id">
                     <div class="pf-photo${online ? ' online' : ''}">${avatar(p, 'xl')}${mine ? '<button type="button" class="pf-photo-edit" data-pf="photo" aria-label="Change profile photo"><svg class="i"><use href="#i-camera"/></svg></button>' : ''}</div>
                     <div class="pf-names">
@@ -188,7 +191,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function tabsHTML(p) {
         const mine = p.id === me();
-        const tabs = [['posts', 'Posts'], ['reposts', 'Reposts'], ['about', 'About'], ...(mine ? [['activity', 'Activity']] : [])];
+        const tabs = [['posts', 'Posts'], ['photos', 'Photos'], ['reposts', 'Reposts'], ['about', 'About'], ...(mine ? [['activity', 'Activity']] : [])];
         return `<div class="pf-tabs" role="tablist" aria-label="Profile sections">${tabs.map(([k, l]) =>
             `<button type="button" role="tab" class="pf-tab" data-pf="tab" data-tab="${k}" aria-selected="${P.tab === k}">${l}</button>`).join('')}</div>`;
     }
@@ -200,6 +203,15 @@ document.addEventListener('DOMContentLoaded', () => {
             if (P.posts === null) return '<div class="post-skel"><span class="sk-row"><i class="sk-av"></i><i class="sk-line w40"></i></span><i class="sk-line"></i><i class="sk-line w70"></i></div>';
             if (!P.posts.length) return `<div class="empty small"><p class="empty-title">No posts ${mine ? 'yet' : 'you can see'}</p><p>${mine ? 'Share an entry or write a post from the feed — it shows up here.' : p.friends ? `${first} hasn’t shared anything yet.` : `${first}’s friends-only posts show here once you’re friends. Posts for everyone always show.`}</p></div>`;
             return `<div class="feed-list">${P.posts.map(x => I.postCard(x)).join('')}</div>`;
+        }
+        if (P.tab === 'photos') {
+            if (P.posts === null) return `<div class="pf-photos">${'<span class="pf-ph skel"></span>'.repeat(6)}</div>`;
+            const photos = P.posts.flatMap(x => (x.photos || []).filter(ph => ph && typeof ph.path === 'string' && !/\.(mp4|mov|webm)$/i.test(ph.path)).map(ph => ({ ph, post: x })));
+            if (!photos.length) return `<div class="empty small"><p class="empty-title">No photos ${mine ? 'yet' : 'you can see'}</p><p>${mine ? 'Photos you add to posts collect here.' : `Photos from ${first}’s posts show here.`}</p></div>`;
+            return `<div class="pf-photos">${photos.slice(0, 90).map(({ ph, post }) => `
+                <button type="button" class="pf-ph" data-pf="open-post" data-id="${esc(post.id)}" aria-label="Open the post with this photo">
+                    <img data-path="${esc(ph.path)}" data-bucket="${esc(ph.bucket || 'diary-feed')}" alt="" loading="lazy">
+                </button>`).join('')}</div>`;
         }
         if (P.tab === 'reposts') {
             if (P.reposts === null) return '<div class="post-skel"><i class="sk-line"></i><i class="sk-line w70"></i></div>';
@@ -309,7 +321,7 @@ document.addEventListener('DOMContentLoaded', () => {
         dlg.innerHTML = `
             <form class="rx-card pf-edit-form" method="dialog">
                 <header class="rx-head"><h2 id="pf-edit-title">Edit profile</h2><button type="button" class="icon-btn" data-x="close" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button></header>
-                <div class="pf-edit-photo">${avatar(s.profile, 'xl')}<button type="button" class="chip" data-x="photo"><svg class="i"><use href="#i-camera"/></svg>Change photo</button></div>
+                <div class="pf-edit-photo">${avatar(s.profile, 'xl')}<button type="button" class="chip" data-x="photo"><svg class="i"><use href="#i-camera"/></svg>Change photo</button><button type="button" class="chip" data-x="cover"><svg class="i"><use href="#i-image"/></svg>${P.data && P.data.cover_path ? 'Change cover' : 'Add cover'}</button></div>
                 <label class="field"><span>Name</span><input name="display_name" maxlength="40" required value="${esc(s.profile.display_name)}" autocomplete="name"></label>
                 <label class="field"><span>Bio <small class="muted" data-count="bio">${(d.bio || '').length}/300</small></span><textarea name="bio" maxlength="300" rows="3" placeholder="A line or two about you">${esc(d.bio || '')}</textarea></label>
                 <label class="field"><span>Location</span><input name="location" maxlength="60" value="${esc(d.location || '')}" placeholder="City, country" autocomplete="address-level2"></label>
@@ -325,6 +337,7 @@ document.addEventListener('DOMContentLoaded', () => {
         form.bio.addEventListener('input', () => { dlg.querySelector('[data-count="bio"]').textContent = `${form.bio.value.length}/300`; });
         dlg.addEventListener('click', async e => {
             if (e.target === dlg || e.target.closest('[data-x="close"]')) return dlg.close();
+            if (e.target.closest('[data-x="cover"]')) { dlg.close(); return changeCover(); }
             if (e.target.closest('[data-x="photo"]')) {
                 await I.changeAvatar();
                 dlg.querySelector('.pf-edit-photo .avatar')?.replaceWith(document.createRange().createContextualFragment(avatar(s.profile, 'xl')));
@@ -356,6 +369,39 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // ---------- Cover photo ----------
+    async function changeCover() {
+        const [file] = await Media.pickFiles('image/*', false);
+        if (!file) return;
+        let blob;
+        try { blob = await Media.compressImage(file, 1800, 0.85); } catch (e) { return app.showToast('Couldn’t read that photo — try a JPEG or PNG'); }
+        if (window.PhotoEditor && blob.type !== 'image/gif') {
+            const edited = await window.PhotoEditor.open(blob, { title: 'Cover photo', done: 'Use photo' });
+            if (!edited) return;
+            blob = edited;
+        }
+        app.showToast('Updating your cover…');
+        const path = `${me()}/cover-${I.randomId()}.jpg`;
+        const up = await client.storage.from('diary-avatars').upload(path, blob, { contentType: blob.type || 'image/jpeg', upsert: false });
+        if (up.error) return app.showToast('Couldn’t upload your cover photo');
+        const old = P.data && P.data.cover_path;
+        const { error } = await client.from('diary_profiles').update({ cover_path: path }).eq('id', me());
+        if (error) { client.storage.from('diary-avatars').remove([path]); return app.showToast('Couldn’t save your cover photo'); }
+        if (old) client.storage.from('diary-avatars').remove([old]);
+        s.profile.cover_path = path;
+        app.showToast('Cover photo updated');
+        load(me());
+    }
+    async function removeCover() {
+        const old = P.data && P.data.cover_path;
+        const { error } = await client.from('diary_profiles').update({ cover_path: null }).eq('id', me());
+        if (error) return app.showToast('Couldn’t remove your cover');
+        if (old) client.storage.from('diary-avatars').remove([old]);
+        s.profile.cover_path = null;
+        app.showToast('Cover removed');
+        load(me());
+    }
+
     // ---------- Actions ----------
     async function act(what, el) {
         const p = P.data;
@@ -374,6 +420,16 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (what === 'photo') {
             await I.changeAvatar();
             refresh();
+        } else if (what === 'cover') {
+            const items = [{ label: p.cover_path ? 'Change cover photo' : 'Upload a cover photo', icon: 'i-image', onClick: () => changeCover() }];
+            if (p.cover_path) items.push({ label: 'Remove cover', icon: 'i-trash', danger: true, onClick: () => removeCover() });
+            app.openPopover(el, items);
+        } else if (what === 'cover-view') {
+            const url = I.avatarUrl(p.cover_path);
+            if (window.ZoomViewer) window.ZoomViewer.open([url], { origin: el.querySelector('img') });
+            else if (window.Media && Media.lightbox) Media.lightbox(url);
+        } else if (what === 'open-post') {
+            I.openEntry(el.dataset.id);
         } else if (what === 'share') {
             const url = `${location.origin}${location.pathname}#/profile/${encodeURIComponent(p.id)}`;
             if (navigator.share) {
@@ -453,6 +509,12 @@ document.addEventListener('DOMContentLoaded', () => {
     app.onRefresh && app.onRefresh('profile', () => load(app.state.profileId));
 
     window.diaryProfile = { open, reload: () => P.id && load(P.id) };
+
+    const previousAfter = app.hooks.afterRender;
+    app.hooks.afterRender = (view, how) => {
+        if (previousAfter) previousAfter(view, how);
+        if (view === 'profile') hydrateStorage(content);
+    };
 
     // Anything marked data-profile="<user id>" opens that person's page
     document.addEventListener('click', e => {
