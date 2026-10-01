@@ -15102,12 +15102,9 @@ body.chat-open #content.repaint .inbox .chat-pane { animation: none !important; 
 .lv-setup-fx .lv-fx-opt { width: 58px; font-size: 0.72rem; }
 .lv-fx-opt canvas.lv-fx-sw { display: block; width: 52px; height: 52px; border-radius: 50%; background: #222; object-fit: cover; }
 .lv-setup-fx .lv-fx-opt canvas.lv-fx-sw { width: 48px; height: 48px; }
-#lv-screen[aria-pressed="true"] { background: #ef4444; color: #fff; }
-.lv-screen-pill {
     position: absolute; z-index: 3; left: 50%; top: calc(64px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); margin: 0;
     padding: 6px 12px; border-radius: 999px; background: rgba(239, 68, 68, 0.9); color: #fff; font-size: 0.78rem; font-weight: 700; white-space: nowrap;
 }
-.lv-screen-pill[hidden] { display: none; }
 dialog.live[data-screen="1"] .lv-title-line { display: none; }
 
 /* ---------- Feed: Go live, right where you'd look for it ---------- */
@@ -15152,11 +15149,9 @@ dialog.live[data-screen="1"] .lv-title-line { display: none; }
 
 /* Phones: the host's controls stack on the right */
 @media (max-width: 760px) {
-    .lv-bar #lv-invite-btn, .lv-bar #lv-screen { position: absolute; right: 10px; width: 42px; height: 42px; }
+    .lv-bar #lv-invite-btn { position: absolute; right: 10px; width: 42px; height: 42px; }
     .lv-bar #lv-invite-btn { bottom: calc(100% + 150px); }
-    .lv-bar #lv-screen { bottom: calc(100% + 198px); }
     dialog.live.hosting .lv-bar #lv-fit { bottom: calc(100% + 198px); }
-    dialog.live.hosting .lv-bar:has(#lv-screen) #lv-fit { bottom: calc(100% + 246px); }
 }
 /* Your own camera in a call: natural orientation, as everyone else sees it */
 .call-tile.self:not(.screen) .call-video-slot video { transform: none; }
@@ -15176,12 +15171,11 @@ dialog.live.mini[data-video="wide"] { width: 280px; height: 158px; }
 @keyframes lv-mini-in { from { opacity: 0; transform: scale(0.92); } }
 @media (prefers-reduced-motion: reduce) { dialog.live.mini { animation: none; } }
 dialog.live.mini #lv-video { object-fit: cover !important; transform: none !important; }
-dialog.live.mini :is(.lv-top, .lv-title-line, .lv-hop, .lv-status, .lv-hearts, .lv-pin, .lv-chat, .lv-fx-strip, .lv-invite, .lv-setup, .lv-bar, .lv-screen-pill) { display: none !important; }
+dialog.live.mini :is(.lv-top, .lv-title-line, .lv-hop, .lv-status, .lv-hearts, .lv-pin, .lv-chat, .lv-fx-strip, .lv-invite, .lv-setup, .lv-bar) { display: none !important; }
 dialog.live.mini .lv-mini-bar { position: absolute; z-index: 5; top: 6px; right: 6px; left: 6px; display: flex; justify-content: space-between; }
 .lv-mini-btn { display: grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: 50%; background: rgba(0, 0, 0, 0.55); color: #fff; cursor: pointer; touch-action: manipulation; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
 .lv-mini-btn .i { width: 17px; height: 17px; }
 dialog.live.mini::after { content: 'LIVE'; position: absolute; left: 8px; bottom: 8px; padding: 2px 7px; border-radius: 6px; background: #ef4444; color: #fff; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.04em; }
-.lv-screen-pill { max-width: calc(100% - 32px); white-space: normal; text-align: center; }
 .lv-wait { transition: opacity 400ms ease, transform 400ms ease; }
 .lv-wait.leaving { opacity: 0; transform: translateY(-6px); }
 @media (prefers-reduced-motion: reduce) { .lv-wait { transition: none; } }

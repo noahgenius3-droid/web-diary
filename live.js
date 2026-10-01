@@ -113,7 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return 'filter' in document.createElement('canvas').getContext('2d') ? '2d' : null;
         } catch (e) { return null; }
     })();
-    const outgoingVideo = () => L.screen || (L.fx && L.fx.track) || (L.media && L.media.getVideoTracks()[0]) || null;
+    const outgoingVideo = () => (L.fx && L.fx.track) || (L.media && L.media.getVideoTracks()[0]) || null;
 
     // One colour step as a matrix: rows for red, green and blue, each [r, g, b, offset] (Filter Effects spec)
     function stepMatrix([k, v]) {
@@ -231,7 +231,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function setFilter(key) {
         L.filter = key;
         const css = fxCss(key);
-        if (!L.screen) video.style.filter = css; // your own preview, instantly
+        video.style.filter = css; // your own preview, instantly
         if (css) startFx(); else stopFx();
         const track = outgoingVideo();
         L.peers.forEach(p => { if (p.vs && track) p.vs.replaceTrack(track).catch(() => {}); });
@@ -247,72 +247,6 @@ document.addEventListener('DOMContentLoaded', () => {
         document.querySelectorAll('#live .lv-fx-sw').forEach(c => {
             try { c.getContext('2d').drawImage(video, (w - side) / 2, (h - side) / 2, side, side, 0, 0, 96, 96); } catch (e) { /* not ready */ }
         });
-    }
-
-    // ---------- Sharing your screen ----------
-    // Computers only (phone browsers can't share their screen). Viewers get the screen instead of the camera;
-    // stopping — here or with the browser's own "Stop sharing" — brings the camera (and its filter) back.
-    const canShareScreen = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
-    async function toggleScreen() {
-        if (L.screen) return stopScreen();
-        if (L.mode !== 'live') return;
-        let stream;
-        try {
-            // Suggest the entire screen (a shared window or tab can't be captured while it's minimized), keep
-            // Cordial's own tab out of the list, and allow switching what's shared without stopping
-            stream = await navigator.mediaDevices.getDisplayMedia({
-                video: { displaySurface: 'monitor', frameRate: { ideal: 15, max: 30 } }, audio: false,
-                selfBrowserSurface: 'exclude', surfaceSwitching: 'include', monitorTypeSurfaces: 'include'
-            });
-        } catch (e) {
-            return app.showToast(e && e.name === 'NotAllowedError' ? 'Screen sharing was cancelled' : 'Couldn’t share your screen — try again');
-        }
-        const track = stream.getVideoTracks()[0];
-        if (!track || L.mode !== 'live') { stream.getTracks().forEach(t => t.stop()); return; }
-        if ('contentHint' in track) track.contentHint = 'detail'; // keep text sharp
-        L.screen = track;
-        track.addEventListener('ended', stopScreen);
-        // A minimized shared window sends no pictures: say so, instead of looking like it stopped
-        const pill = () => $('lv-screen-pill');
-        track.addEventListener('mute', () => { if (L.screen === track && pill()) pill().textContent = 'Shared window is minimized — viewers see a paused picture'; });
-        track.addEventListener('unmute', () => { if (L.screen === track && pill()) pill().textContent = 'You’re sharing your screen'; });
-        const surface = (track.getSettings && track.getSettings().displaySurface) || '';
-        if (surface === 'window' || surface === 'browser') app.showToast('Tip: keep that window open while you share — or share your entire screen to switch freely');
-        L.peers.forEach(p => { if (p.vs) p.vs.replaceTrack(track).catch(() => {}); });
-        video.srcObject = new MediaStream([track]);
-        video.classList.remove('mirror');
-        video.style.filter = '';
-        video.play().catch(() => {});
-        send('screen', { on: true });
-        paintScreen();
-    }
-    function stopScreen() {
-        const t = L.screen;
-        if (!t) return;
-        L.screen = null;
-        t.stop();
-        const out = outgoingVideo();
-        L.peers.forEach(p => { if (p.vs && out) p.vs.replaceTrack(out).catch(() => {}); });
-        if (L.media) {
-            video.srcObject = new MediaStream(L.media.getTracks());
-            video.classList.remove('mirror'); // natural orientation, as viewers see it
-            video.style.filter = fxCss(L.filter || 'none');
-            video.play().catch(() => {});
-        }
-        if (L.mode === 'live') send('screen', { on: false });
-        paintScreen();
-    }
-    function paintScreen() {
-        const on = !!L.screen;
-        dialog.dataset.screen = on ? '1' : '';
-        const btn = $('lv-screen');
-        if (btn) {
-            btn.setAttribute('aria-pressed', String(on));
-            btn.setAttribute('aria-label', on ? 'Stop sharing your screen' : 'Share your screen');
-        }
-        const pill = $('lv-screen-pill');
-        if (pill) { pill.hidden = !on; if (on) pill.textContent = 'You’re sharing your screen'; }
-        if (typeof adapt === 'function') adapt();
     }
 
     // ---------- Inviting people ----------
@@ -671,7 +605,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const old = L.media.getVideoTracks()[0];
             if ('contentHint' in track) track.contentHint = 'motion';
             if (L.fx) L.fx.src.srcObject = new MediaStream([track]);
-            else if (!L.screen) L.peers.forEach(p => { if (p.vs) p.vs.replaceTrack(track).catch(() => {}); });
+            else L.peers.forEach(p => { if (p.vs) p.vs.replaceTrack(track).catch(() => {}); });
             L.media.removeTrack(old);
             old.stop();
             L.media.addTrack(track);
@@ -825,15 +759,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (isHost && payload.from) {
                     hostOffer(payload.from);
                     if (L.pin) send('pin', { pin: L.pin });
-                    if (L.screen) send('screen', { on: true });
                 }
-            })
-            .on('broadcast', { event: 'screen' }, ({ payload }) => {
-                if (isHost) return;
-                dialog.dataset.screen = payload && payload.on ? '1' : '';
-                const pill = $('lv-screen-pill');
-                if (pill) { pill.hidden = !(payload && payload.on); pill.textContent = 'Sharing their screen'; }
-                adapt();
             })
             .on('broadcast', { event: 'pin' }, ({ payload }) => {
                 if (isHost) return;
@@ -934,9 +860,6 @@ document.addEventListener('DOMContentLoaded', () => {
         L.peers.forEach((_, id) => closePeer(id));
         if (L.pc) try { L.pc.close(); } catch (e) {}
         L.pc = null;
-        if (L.screen) { L.screen.stop(); L.screen = null; }
-        dialog.dataset.screen = '';
-        if ($('lv-screen-pill')) $('lv-screen-pill').hidden = true;
         stopFx();
         L.filter = 'none';
         video.style.filter = '';
@@ -979,12 +902,12 @@ document.addEventListener('DOMContentLoaded', () => {
         // A shared screen is always shown whole.
         const box = video.getBoundingClientRect();
         const crop = box.width && box.height ? 1 - Math.min(vw / vh, box.width / box.height) / Math.max(vw / vh, box.width / box.height) : 0;
-        const fit = dialog.dataset.screen === '1' ? 'contain' : (L.fit || (!desk && crop > 0.2 ? 'contain' : 'cover'));
+        const fit = L.fit || (!desk && crop > 0.2 ? 'contain' : 'cover');
         L.fitNow = fit;
         video.style.objectFit = fit;
         video.style.transform = '';
         const btn = $('lv-fit');
-        btn.hidden = !(L.mode === 'watch' || L.mode === 'live') || desk || crop <= 0.02 || dialog.dataset.screen === '1';
+        btn.hidden = !(L.mode === 'watch' || L.mode === 'live') || desk || crop <= 0.02;
         btn.setAttribute('aria-pressed', String(fit === 'contain'));
         btn.setAttribute('aria-label', fit === 'contain' ? 'Fill the screen' : 'Show the whole picture');
     }
@@ -1078,8 +1001,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target.closest('#lv-invite-x')) toggleInvite(false);
     });
     $('lv-invite-q').addEventListener('input', paintInvite);
-    if (!canShareScreen) $('lv-screen').remove();
-    else $('lv-screen').addEventListener('click', toggleScreen);
     if (!fxEngine) { $('lv-fx').remove(); $('lv-setup-fx').remove(); } // this browser can't draw filters into the stream
     else $('lv-fx').addEventListener('click', () => {
         const strip = $('lv-fx-strip');
