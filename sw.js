@@ -4,7 +4,7 @@
 //
 // Strategy: when online, always fetch fresh (so a new deploy shows up right away) and refresh the saved copy;
 // when the network fails, answer from the saved copy. Supabase data (posts, messages…) is never cached here.
-const CACHE = 'cordial-shell-v82';
+const CACHE = 'cordial-shell-v83';
 const SHELL = [
     '/', '/index.html', '/manifest.webmanifest',
     '/style.css', '/photoedit.css',
@@ -69,6 +69,26 @@ async function cacheFirst(request) {
     return refresh;
 }
 
+// Saved by the file's address without its token; kept across app updates, cleared on sign-out
+const PHOTOS = 'diary-photos';
+const PHOTO_LIMIT = 500;
+async function photo(request, url) {
+    const key = url.origin + url.pathname.replace('/object/sign/', '/object/');
+    const cache = await caches.open(PHOTOS);
+    const saved = await cache.match(key);
+    if (saved) return saved;
+    try {
+        const fresh = await fetch(new Request(request.url, { mode: 'cors', credentials: 'omit' }));
+        if (fresh.ok) {
+            await cache.put(key, fresh.clone());
+            cache.keys().then(keys => Promise.all(keys.slice(0, Math.max(0, keys.length - PHOTO_LIMIT)).map(k => cache.delete(k)))).catch(() => {});
+        }
+        return fresh;
+    } catch (e) {
+        return fetch(request);
+    }
+}
+
 self.addEventListener('fetch', event => {
     const { request } = event;
     if (request.method !== 'GET') return;
@@ -87,6 +107,13 @@ self.addEventListener('fetch', event => {
     // Fonts and the CDN libraries
     if (STATIC_HOSTS.includes(url.hostname)) {
         event.respondWith(cacheFirst(request));
+        return;
+    }
+    // Pictures from Cordial's storage (feed photos, avatars): uploads never change, so once a picture is on the
+    // device it's shown straight away, even after its signed link is renewed
+    if (request.destination === 'image' && url.pathname.startsWith('/storage/v1/object/')) {
+        event.respondWith(photo(request, url));
+        return;
     }
     // Everything else (Supabase data, uploads, video) goes straight to the network
 });

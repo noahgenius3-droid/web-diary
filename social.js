@@ -758,6 +758,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         paintGuest();
         if (!session) {
+            if (event === 'SIGNED_OUT') {
+                // Signing out: forget this account's picture links and the saved pictures on this device
+                try { Object.keys(localStorage).filter(k => k.startsWith('diaryUrls:')).forEach(k => localStorage.removeItem(k)); } catch (e) {}
+                urlsRestored = null;
+                if (window.caches) caches.delete('diary-photos').catch(() => {});
+            }
             resetSocial();
             app.render();
             return;
@@ -2601,10 +2607,35 @@ document.addEventListener('DOMContentLoaded', () => {
     // Signing requests in flight, by "bucket:path" — overlapping calls wait for the same one. A fresh URL
     // for a video that's already loading would restart it (and cancel play()), so each file is signed once.
     const signing = new Map();
+    // Signed links are kept on the device for a day, so after a refresh every picture has the same address as
+    // before and comes straight from the browser's cache instead of downloading again.
+    const URL_TTL = 24 * 3600;
+    const urlsKey = () => `diaryUrls:${(s.session && s.session.user && s.session.user.id) || 'anon'}`;
+    let urlsRestored = null;
+    function restoreUrls() {
+        const k = urlsKey();
+        if (urlsRestored === k) return;
+        urlsRestored = k;
+        try {
+            const saved = JSON.parse(localStorage.getItem(k) || '{}');
+            const now = Date.now();
+            Object.entries(saved).forEach(([key, v]) => { if (v && v.expires > now + 60000 && !s.urls.has(key)) s.urls.set(key, v); });
+        } catch (e) { /* private mode */ }
+    }
+    let saveUrlsTimer = null;
+    function saveUrls() {
+        clearTimeout(saveUrlsTimer);
+        saveUrlsTimer = setTimeout(() => {
+            const now = Date.now();
+            const keep = [...s.urls.entries()].filter(([, v]) => v.expires > now + 60000).slice(-600);
+            try { localStorage.setItem(urlsKey(), JSON.stringify(Object.fromEntries(keep))); } catch (e) { /* full or private */ }
+        }, 400);
+    }
 
     async function hydrateStorage(root) {
         const els = [...root.querySelectorAll('[data-path]:not([data-hydrated])')];
         if (!els.length || !client) return;
+        restoreUrls();
         const now = Date.now();
         const key = el => `${el.dataset.bucket || BUCKET}:${el.dataset.path}`;
         const byBucket = new Map();
@@ -2617,10 +2648,11 @@ document.addEventListener('DOMContentLoaded', () => {
             byBucket.get(bucket).add(el.dataset.path);
         });
         [...byBucket.entries()].forEach(([bucket, paths]) => {
-            const request = client.storage.from(bucket).createSignedUrls([...paths], 3600).then(({ data }) => {
+            const request = client.storage.from(bucket).createSignedUrls([...paths], URL_TTL).then(({ data }) => {
                 (data || []).forEach(d => {
-                    if (d.signedUrl) s.urls.set(`${bucket}:${d.path}`, { url: d.signedUrl, expires: now + 3600 * 1000 });
+                    if (d.signedUrl) s.urls.set(`${bucket}:${d.path}`, { url: d.signedUrl, expires: now + URL_TTL * 1000 });
                 });
+                saveUrls();
             }).catch(() => {}).finally(() => paths.forEach(p => signing.delete(`${bucket}:${p}`)));
             paths.forEach(p => signing.set(`${bucket}:${p}`, request));
         });
