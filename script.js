@@ -430,7 +430,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function topModal() {
         const open = [...document.querySelectorAll('dialog[open]')].filter(d => {
-            try { return d.matches(':modal'); } catch (e) { return true; }
+            try { return d.matches(':modal') && !d.classList.contains('mini'); } catch (e) { return !d.classList.contains('mini'); }
         });
         return open.pop() || null;
     }

@@ -24,7 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
         '🎉', '✨', '🔥', '❤️', '💙', '💚', '💛', '🌸', '🌞', '🌙', '☕', '📚', '✍️', '🎧', '🏃', '✅'];
 
     const available = !!(window.supabase && cfg);
-    const client = available ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey) : null;
+    const client = available ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey, { realtime: { worker: true, heartbeatIntervalMs: 25000 } }) : null;
 
     const s = {
         session: null,
@@ -759,6 +759,22 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // TURN relays (from the diary-turn function) join the list every call, audio room and live already uses, so
+    // people on networks that block direct connections (many mobile carriers) can still see and hear each other
+    async function loadRelays() {
+        try {
+            const token = s.session && s.session.access_token;
+            if (!token || !Array.isArray(cfg.iceServers)) return;
+            const res = await fetch(`${cfg.supabaseUrl}/functions/v1/diary-turn`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, apikey: cfg.supabaseKey } });
+            const data = await res.json();
+            if (!data || !Array.isArray(data.iceServers) || !data.iceServers.length) return;
+            for (let i = cfg.iceServers.length - 1; i >= 0; i--) if (cfg.iceServers[i].relay) cfg.iceServers.splice(i, 1);
+            data.iceServers.forEach(x => cfg.iceServers.push({ ...x, relay: true }));
+            clearTimeout(loadRelays.timer);
+            loadRelays.timer = setTimeout(loadRelays, Math.max(600, (data.ttl || 43200) - 900) * 1000);
+        } catch (e) { /* STUN only */ }
+    }
+
     async function handleSession(session, event) {
         const previousUser = s.session ? s.session.user.id : null;
         s.session = session;
@@ -795,6 +811,7 @@ document.addEventListener('DOMContentLoaded', () => {
         subscribe();
         emptyIncognitoTrash();
         loadPrefs().then(() => app.requestRender('messages'));
+        loadRelays();
         registerDevice();
         setTimeout(flushOutbox, 1500);
         if (s.pendingRoute) { const r = s.pendingRoute; s.pendingRoute = null; setTimeout(() => routeTo(r), 300); }

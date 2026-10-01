@@ -49,6 +49,19 @@ document.addEventListener('DOMContentLoaded', () => {
             : { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 }, resizeMode: 'none' };
     };
 
+    // Timers that keep going while Cordial is in the background (sharing your screen puts it behind another
+    // window, where browsers slow ordinary timers to about once a minute)
+    function bgEvery(ms, fn) {
+        try {
+            const w = new Worker(URL.createObjectURL(new Blob([`setInterval(() => postMessage(0), ${ms});`], { type: 'text/javascript' })));
+            w.onmessage = () => fn();
+            return { stop: () => w.terminate() };
+        } catch (e) {
+            const t = setInterval(fn, ms);
+            return { stop: () => clearInterval(t) };
+        }
+    }
+
     // ---------- Picture quality ----------
     // The host sends one copy per viewer, so the upload is shared out: a few viewers get full resolution and a
     // generous bitrate; a bigger audience gets each copy scaled down a little rather than everyone stuttering.
@@ -178,7 +191,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (L.fx.track && 'contentHint' in L.fx.track) L.fx.track.contentHint = 'motion';
         src.srcObject = new MediaStream(L.media.getVideoTracks());
         src.play().catch(() => {});
-        const draw = () => {
+        const frame = () => {
             const f = L.fx;
             if (!f) return;
             const w = f.src.videoWidth, h = f.src.videoHeight;
@@ -199,15 +212,17 @@ document.addEventListener('DOMContentLoaded', () => {
                     f.ctx.drawImage(f.src, 0, 0, cw, ch);
                 }
             }
-            f.raf = requestAnimationFrame(draw);
         };
-        draw();
+        const loop = () => { frame(); if (L.fx) L.fx.raf = requestAnimationFrame(loop); };
+        loop();
+        L.fx.bg = bgEvery(40, () => { if (document.hidden) frame(); });
     }
     function stopFx() {
         const f = L.fx;
         if (!f) return;
         L.fx = null;
         cancelAnimationFrame(f.raf);
+        if (f.bg) f.bg.stop();
         if (f.track) f.track.stop();
         if (f.g) { const lose = f.g.gl.getExtension('WEBGL_lose_context'); if (lose) lose.loseContext(); }
         f.src.srcObject = null;
@@ -327,6 +342,26 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.textContent = 'Invited';
         btn.setAttribute('aria-pressed', 'true');
         if (navigator.vibrate) navigator.vibrate(8);
+    }
+
+    // ---------- Minimize ----------
+    function showStage() {
+        if (dialog.open && dialog.classList.contains('mini')) { expand(); return; }
+        if (!dialog.open) dialog.showModal();
+    }
+    function minimize() {
+        if (!L.mode || L.mode === 'setup' || L.mode === 'ended') return;
+        dialog.close();
+        dialog.classList.add('mini');
+        dialog.show(); // not modal: the page underneath works normally
+        video.play().catch(() => {});
+    }
+    function expand() {
+        dialog.close();
+        dialog.classList.remove('mini');
+        dialog.showModal();
+        video.play().catch(() => {});
+        adapt();
     }
 
     // ---------- Pinned comment ----------
@@ -530,7 +565,7 @@ document.addEventListener('DOMContentLoaded', () => {
         dialog.classList.add('hosting');
         setMode('setup');
         status('');
-        dialog.showModal();
+        showStage();
         setTimeout(() => $('lv-title').focus(), 200);
     }
 
@@ -568,9 +603,9 @@ document.addEventListener('DOMContentLoaded', () => {
         status(`<span class="lv-wait">You’re live${L.stream.audience === 'public' ? ' to everyone' : ''}. Waiting for someone to join…</span>`);
         paintTitle();
         joinChannel(true);
-        L.beat = setInterval(() => {
-            client.from('diary_live_streams').update({ last_seen: new Date().toISOString() }).eq('id', L.stream.id).then(() => {});
-        }, HEARTBEAT);
+        L.beat = bgEvery(HEARTBEAT, () => {
+            if (L.stream) client.from('diary_live_streams').update({ last_seen: new Date().toISOString() }).eq('id', L.stream.id).then(() => {});
+        });
         if (navigator.vibrate) navigator.vibrate(20);
         loadLive();
     }
@@ -708,7 +743,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.ended_at || Date.now() - Date.parse(data.last_seen) > FRESH) {
             setMode('ended');
             status(`<strong>This live video has ended</strong><span>${esc((data.host_profile && data.host_profile.display_name) || 'They')} went live ${timeAgo(data.started_at)}.</span>`);
-            dialog.showModal();
+            showStage();
             return;
         }
         setMode('watch');
@@ -718,7 +753,7 @@ document.addEventListener('DOMContentLoaded', () => {
         L.viewers = 0;
         paintViewers();
         status('<span class="lv-spinner" aria-hidden="true"></span><span>Connecting…</span>');
-        dialog.showModal();
+        showStage();
         joinChannel(false);
     }
 
@@ -834,7 +869,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (isHost && L.viewers > 0) status('');
                 if (isHost) {
                     // Someone who vanished without saying goodbye
-                    [...L.peers.keys()].forEach(id => { if (!keys.includes(id)) closePeer(id); });
+                    [...L.peers.keys()].forEach(id => {
+                        const p = L.peers.get(id);
+                        if (!keys.includes(id) && !(p && p.pc.connectionState === 'connected')) closePeer(id);
+                    });
                 }
             })
             .on('presence', { event: 'join' }, ({ key, newPresences }) => {
@@ -862,7 +900,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Leaving ----------
     function cleanup(keepOpen = false) {
-        clearInterval(L.beat);
+        if (L.beat && L.beat.stop) L.beat.stop(); else clearInterval(L.beat);
+        L.beat = null;
         clearInterval(L.clock);
         if (L.mode === 'watch') send('leave', {});
         L.peers.forEach((_, id) => closePeer(id));
@@ -893,6 +932,7 @@ document.addEventListener('DOMContentLoaded', () => {
         $('lv-title-line').hidden = true;
         $('lv-hop').hidden = true;
         if (dialog.open && !keepOpen) dialog.close();
+        dialog.classList.remove('mini');
     }
 
     // ---------- Fit the device ----------
@@ -910,12 +950,10 @@ document.addEventListener('DOMContentLoaded', () => {
         // A shared screen is always shown whole.
         const box = video.getBoundingClientRect();
         const crop = box.width && box.height ? 1 - Math.min(vw / vh, box.width / box.height) / Math.max(vw / vh, box.width / box.height) : 0;
-        const fit = dialog.dataset.screen === '1' ? 'contain' : (L.fit || 'cover');
-        const gentle = fit === 'cover' && !desk && crop > 0.35;
-        const enlarge = gentle ? Math.min(1 / (1 - crop), 1.25) : 1;
+        const fit = dialog.dataset.screen === '1' ? 'contain' : (L.fit || (!desk && crop > 0.2 ? 'contain' : 'cover'));
         L.fitNow = fit;
-        video.style.objectFit = gentle ? 'contain' : fit;
-        video.style.transform = enlarge > 1 ? `scale(${enlarge.toFixed(3)})` : '';
+        video.style.objectFit = fit;
+        video.style.transform = '';
         const btn = $('lv-fit');
         btn.hidden = !(L.mode === 'watch' || L.mode === 'live') || desk || crop <= 0.02 || dialog.dataset.screen === '1';
         btn.setAttribute('aria-pressed', String(fit === 'contain'));
@@ -998,6 +1036,9 @@ document.addEventListener('DOMContentLoaded', () => {
     $('lv-hop').addEventListener('click', e => { const b = e.target.closest('[data-hop]'); if (b) hop(Number(b.dataset.hop)); });
     $('lv-title').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); startBroadcast(); } });
     $('lv-close').addEventListener('click', leave);
+    $('lv-min').addEventListener('click', minimize);
+    $('lv-mini-open').addEventListener('click', expand);
+    $('lv-mini-close').addEventListener('click', () => leave());
     $('lv-end').addEventListener('click', leave);
     $('lv-flip').addEventListener('click', flipCamera);
     $('lv-invite-btn').addEventListener('click', () => toggleInvite());

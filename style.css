@@ -15160,3 +15160,24 @@ dialog.live[data-screen="1"] .lv-title-line { display: none; }
 }
 /* Your own camera in a call: natural orientation, as everyone else sees it */
 .call-tile.self:not(.screen) .call-video-slot video { transform: none; }
+
+/* ---------- Live: minimized to a floating player ---------- */
+.lv-mini-bar { display: none; }
+.lv-top .lv-min { margin-left: 0; }
+dialog.live.mini {
+    position: fixed; inset: auto 16px calc(84px + env(safe-area-inset-bottom, 0px)) auto; z-index: 900;
+    width: 168px; height: 300px; max-width: none; max-height: none; margin: 0; padding: 0;
+    border: 0; border-radius: 16px; overflow: hidden; background: #000;
+    box-shadow: 0 18px 40px -12px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.08);
+    animation: lv-mini-in 200ms ease-out;
+}
+dialog.live.mini[data-video="wide"] { width: 280px; height: 158px; }
+@media (min-width: 900px) { dialog.live.mini { bottom: 24px; right: 24px; width: 220px; height: 390px; } dialog.live.mini[data-video="wide"] { width: 360px; height: 203px; } }
+@keyframes lv-mini-in { from { opacity: 0; transform: scale(0.92); } }
+@media (prefers-reduced-motion: reduce) { dialog.live.mini { animation: none; } }
+dialog.live.mini #lv-video { object-fit: cover !important; transform: none !important; }
+dialog.live.mini :is(.lv-top, .lv-title-line, .lv-hop, .lv-status, .lv-hearts, .lv-pin, .lv-chat, .lv-fx-strip, .lv-invite, .lv-setup, .lv-bar, .lv-screen-pill) { display: none !important; }
+dialog.live.mini .lv-mini-bar { position: absolute; z-index: 5; top: 6px; right: 6px; left: 6px; display: flex; justify-content: space-between; }
+.lv-mini-btn { display: grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: 50%; background: rgba(0, 0, 0, 0.55); color: #fff; cursor: pointer; touch-action: manipulation; -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+.lv-mini-btn .i { width: 17px; height: 17px; }
+dialog.live.mini::after { content: 'LIVE'; position: absolute; left: 8px; bottom: 8px; padding: 2px 7px; border-radius: 6px; background: #ef4444; color: #fff; font-size: 0.68rem; font-weight: 800; letter-spacing: 0.04em; }
