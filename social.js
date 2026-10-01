@@ -1373,7 +1373,77 @@ document.addEventListener('DOMContentLoaded', () => {
         s.rec.mode = 'locked';
         const hint = $('rec-hint');
         if (hint) hint.textContent = 'Recording — tap send when you’re done';
+        paintVnHint();
         updateComposerButton();
+    }
+
+    function paintVnHint() {
+        const hint = $('vn-hint');
+        const mic = $('vn-mic');
+        if (!s.rec) return;
+        const paused = !!(s.rec.controller && s.rec.controller.paused && s.rec.controller.paused());
+        if (hint) hint.textContent = paused ? 'Paused — tap the mic to carry on' : s.rec.mode === 'locked' ? 'Recording — tap send when you’re done' : 'Release to send · slide left to cancel';
+        if (mic) {
+            mic.setAttribute('aria-pressed', String(paused));
+            mic.setAttribute('aria-label', paused ? 'Resume recording' : 'Pause recording');
+            mic.classList.toggle('paused', paused);
+            mic.innerHTML = `<svg class="i"><use href="#${paused ? 'i-play' : 'i-mic'}"/></svg>`;
+        }
+    }
+
+    function toggleVnPause() {
+        const rec = s.rec;
+        if (!rec || !rec.controller) return;
+        if (rec.mode !== 'locked') lockVoice();
+        if (rec.controller.paused()) rec.controller.resume(); else rec.controller.pause();
+        paintVnHint();
+    }
+
+    // The waveform: two soft lines (purple and green) that swell with your voice, like the design
+    let vnRaf = 0;
+    function startVnWave() {
+        cancelAnimationFrame(vnRaf);
+        const canvas = $('vn-wave');
+        if (!canvas) return;
+        const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const draw = now => {
+            const rec = s.rec;
+            if (!rec || !canvas.isConnected) return;
+            const dpr = Math.min(2, window.devicePixelRatio || 1);
+            const w = canvas.clientWidth, h = canvas.clientHeight;
+            if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+            const ctx = canvas.getContext('2d');
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, w, h);
+            const levels = rec.levels.length ? rec.levels : [0.1];
+            const paused = rec.controller && rec.controller.paused && rec.controller.paused();
+            const t = reduce || paused ? 0 : now / 1000;
+            // How loud it was at this point across the width (older on the left, newest on the right)
+            // Smoothed loudness: blend neighbouring readings so the curve flows instead of stepping
+            const smooth = levels.map((v, i) => (levels[i - 1] ?? v) * 0.25 + v * 0.5 + (levels[i + 1] ?? v) * 0.25);
+            const amp = x => {
+                const pos = Math.min(smooth.length - 1, Math.max(0, (x / w) * (smooth.length - 1)));
+                const i = Math.floor(pos), f = pos - i;
+                const v = smooth[i] * (1 - f) + (smooth[i + 1] ?? smooth[i]) * f;
+                const edge = Math.sin(Math.PI * Math.min(1, Math.max(0, x / w))); // taper at both ends
+                return (0.18 + 0.82 * v) * edge * (h * 0.42);
+            };
+            const line = (colour, freq, speed, phase, scale, width) => {
+                ctx.beginPath();
+                for (let x = 0; x <= w; x += 2) {
+                    const y = h / 2 + Math.sin(x * freq + t * speed + phase) * amp(x) * scale * (0.65 + 0.35 * Math.sin(x * 0.031 + phase));
+                    if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                }
+                ctx.strokeStyle = colour;
+                ctx.lineWidth = width;
+                ctx.lineJoin = 'round';
+                ctx.stroke();
+            };
+            line('rgba(52, 211, 153, 0.85)', 0.115, -5, 1.3, 0.75, 1.6);
+            line('#6c5ce7', 0.085, 6, 0, 1, 2);
+            if (!reduce) vnRaf = requestAnimationFrame(draw);
+        };
+        vnRaf = requestAnimationFrame(draw);
     }
 
     async function finishVoice(send) {
@@ -1407,6 +1477,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function showRecBar() {
         content.querySelector('.composer')?.classList.add('recording');
+        const sheet = $('vn-sheet');
+        if (sheet) {
+            sheet.hidden = false;
+            content.querySelector('.chat-pane')?.classList.add('vn-on');
+            paintVnHint();
+            startVnWave();
+        }
         const hint = $('rec-hint');
         if (hint && s.rec) hint.textContent = s.rec.mode === 'locked' ? 'Recording — tap send when you’re done' : '‹ Slide left to cancel';
         if (s.rec) paintRec(s.rec, null, (Date.now() - s.rec.down) / 1000);
@@ -1415,6 +1492,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function hideRecBar() {
         content.querySelector('.composer')?.classList.remove('recording');
+        const sheet = $('vn-sheet');
+        if (sheet) sheet.hidden = true;
+        content.querySelector('.chat-pane')?.classList.remove('vn-on');
+        cancelAnimationFrame(vnRaf);
     }
 
     function paintRec(rec, level, secs) {
@@ -1425,6 +1506,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const time = $('rec-time');
         const wave = $('rec-wave');
         if (time) time.textContent = Media.formatDuration(secs);
+        const vnTime = $('vn-time');
+        if (vnTime) vnTime.textContent = Media.formatDuration(secs);
         if (wave) wave.innerHTML = rec.levels.map(v => `<span style="height:${Math.round(Math.max(0.12, v) * 100)}%"></span>`).join('');
         if (secs >= 300 && s.rec === rec) finishVoice(true); // 5 minute cap
     }
@@ -5108,7 +5191,20 @@ document.addEventListener('DOMContentLoaded', () => {
                         <svg class="i"><use href="#i-mic"/></svg>
                     </button>
                 </div>
-            </form>`;
+            </form>
+            <div class="vn-sheet" id="vn-sheet" hidden>
+                <div class="vn-card" role="group" aria-label="Recording a voice note">
+                    <p class="vn-title"><b>Voice</b> Note</p>
+                    <canvas class="vn-wave" id="vn-wave" aria-hidden="true"></canvas>
+                    <p class="vn-time" id="vn-time" aria-live="off">0:00</p>
+                    <p class="vn-hint" id="vn-hint" aria-live="polite"></p>
+                    <div class="vn-actions">
+                        <button type="button" class="vn-btn" data-action="vn-cancel" aria-label="Delete the recording"><svg class="i"><use href="#i-close"/></svg></button>
+                        <button type="button" class="vn-mic" id="vn-mic" data-action="vn-pause" aria-label="Pause recording" aria-pressed="false"><svg class="i"><use href="#i-mic"/></svg></button>
+                        <button type="button" class="vn-btn send" data-action="vn-send" aria-label="Send the voice note"><svg class="i"><use href="#i-send"/></svg></button>
+                    </div>
+                </div>
+            </div>`;
     }
 
     // Mic when there's nothing to send (WhatsApp style), send arrow otherwise
@@ -5698,6 +5794,8 @@ document.addEventListener('DOMContentLoaded', () => {
             el.textContent = `${next}×`;
         },
         'vn-cancel': () => cancelVoice(),
+        'vn-send': () => { if (s.rec) finishVoice(true); },
+        'vn-pause': () => toggleVnPause(),
         'remove-pending': el => {
             const list = s.pending[s.activeFriend] || [];
             const item = list.find(p => p.id === el.dataset.id);

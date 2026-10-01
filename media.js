@@ -259,8 +259,12 @@ window.Media = (() => {
         }
         const buffer = analyser ? new Uint8Array(analyser.fftSize) : null;
         const started = Date.now();
+        let pausedAt = null, pausedTotal = 0;
+        // Recording time, not counting pauses
+        const elapsed = () => (Date.now() - started - pausedTotal - (pausedAt ? Date.now() - pausedAt : 0)) / 1000;
 
         const tick = setInterval(() => {
+            if (pausedAt) return; // the waveform and the clock hold still while paused
             let level = 0.2;
             if (analyser) {
                 analyser.getByteTimeDomainData(buffer);
@@ -272,7 +276,7 @@ window.Media = (() => {
                 level = Math.min(1, Math.sqrt(sum / buffer.length) * 3.5);
             }
             levels.push(level);
-            if (onLevel) onLevel(level, (Date.now() - started) / 1000);
+            if (onLevel) onLevel(level, elapsed());
         }, 100);
 
         const cleanup = () => {
@@ -285,9 +289,24 @@ window.Media = (() => {
         recorder.start(250);
 
         return {
-            elapsed: () => (Date.now() - started) / 1000,
+            elapsed,
+            paused: () => !!pausedAt,
+            pause: () => {
+                if (pausedAt || recorder.state !== 'recording' || !recorder.pause) return false;
+                recorder.pause();
+                pausedAt = Date.now();
+                return true;
+            },
+            resume: () => {
+                if (!pausedAt || !recorder.resume) return false;
+                recorder.resume();
+                pausedTotal += Date.now() - pausedAt;
+                pausedAt = null;
+                return true;
+            },
             stop: () => new Promise(resolve => {
-                const duration = (Date.now() - started) / 1000;
+                const duration = elapsed();
+                if (pausedAt && recorder.resume) { try { recorder.resume(); } catch (e) { /* stopping anyway */ } }
                 recorder.onstop = () => {
                     cleanup();
                     const type = (recorder.mimeType || mime || 'audio/webm').split(';')[0];
