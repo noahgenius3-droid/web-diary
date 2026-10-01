@@ -232,6 +232,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 { cmd: 'remix', label: 'Share as a video or audio', icon: 'i-reel', run: () => {
                     if (!window.diaryNoteMedia) return;
                     window.diaryNoteMedia.open({ title: edTitle.value, text: Rich.toText(edBody.innerHTML), color: editing && editing.color, createdAt: editing && editing.createdAt });
+                } },
+                // Turn the note into presentation slides
+                { cmd: 'slides', label: 'Turn into slides', icon: 'i-slides', run: () => {
+                    if (!window.diaryNoteSlides) return;
+                    window.diaryNoteSlides.open({ title: edTitle.value, text: Rich.toText(edBody.innerHTML), color: editing && editing.color, createdAt: editing && editing.createdAt });
                 } }
             ]
         });
@@ -2225,6 +2230,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 <span class="share-ic story"><svg class="i"><use href="#i-plus"/></svg></span>
                 <span class="share-text"><strong>Add to your story</strong><small>A coloured card of your note, for 24 hours</small></span>
             </button>
+            <button class="share-row" data-share="slides"${n.private && !privateUnlocked ? ' disabled' : ''}>
+                <span class="share-ic slides"><svg class="i"><use href="#i-slides"/></svg></span>
+                <span class="share-text"><strong>Turn into slides</strong><small>A presentation with a template picked for this note</small></span>
+            </button>
             <p class="share-label">Your groups</p>`);
 
         if (!signed) {
@@ -2338,6 +2347,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const note = editing && editing.id === n.id ? { ...n, ...editing } : n;
             shareSheet.close();
             if (window.diaryNoteShare) window.diaryNoteShare.send({ title: note.title, text: bodyText(note), color: note.color });
+            return;
+        } else if (what === 'slides') {
+            const note = editing && editing.id === n.id ? { ...n, ...editing } : n;
+            shareSheet.close();
+            if (window.diaryNoteSlides) window.diaryNoteSlides.open({ title: note.title, text: bodyText(note), color: note.color, createdAt: note.createdAt });
             return;
         } else if (what === 'story') {
             if (!window.diaryStories || !window.diaryStories.shareText) return;

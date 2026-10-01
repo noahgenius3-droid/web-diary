@@ -5378,7 +5378,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 { label: 'Reel', icon: 'i-reel', tile: true, onClick: () => window.diaryStories && window.diaryStories.addReel() },
                 { label: 'Live', icon: 'i-live', tile: true, onClick: run('live-start') },
                 { label: 'Audio room', icon: 'i-headphones', tile: true, onClick: run('space-new') },
-                { label: 'Note → video', icon: 'i-sparkle', tile: true, onClick: run('note-media') }
+                { label: 'Note → video', icon: 'i-sparkle', tile: true, onClick: run('note-media') },
+                { label: 'Note → slides', icon: 'i-slides', tile: true, onClick: run('note-slides') }
             ]);
         },
         'feed-filter': el => { s.feedAuthor = null; s.feedFilter = el.dataset.filter; app.render(); },
