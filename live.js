@@ -139,7 +139,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const gl = canvas.getContext('webgl', { antialias: false, alpha: false, premultipliedAlpha: false });
         if (!gl) return null;
         const shader = (type, src) => { const sh = gl.createShader(type); gl.shaderSource(sh, src); gl.compileShader(sh); return gl.getShaderParameter(sh, gl.COMPILE_STATUS) ? sh : null; };
-        const vs = shader(gl.VERTEX_SHADER, 'attribute vec2 p; varying vec2 v; void main() { v = (p + 1.0) * 0.5; gl_Position = vec4(p, 0.0, 1.0); }');
+        const vs = shader(gl.VERTEX_SHADER, 'attribute vec2 p; varying vec2 v; void main() { v = vec2((p.x + 1.0) * 0.5, (1.0 - p.y) * 0.5); gl_Position = vec4(p, 0.0, 1.0); }');
         const fs = shader(gl.FRAGMENT_SHADER, 'precision mediump float; varying vec2 v; uniform sampler2D t; uniform mat3 m; uniform vec3 o; void main() { vec3 c = texture2D(t, v).rgb; gl_FragColor = vec4(clamp(m * c + o, 0.0, 1.0), 1.0); }');
         if (!vs || !fs) return null;
         const prog = gl.createProgram();
@@ -157,7 +157,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const tex = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, tex);
         [[gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE], [gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR]].forEach(([k, v]) => gl.texParameteri(gl.TEXTURE_2D, k, v));
-        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
         return { gl, uM: gl.getUniformLocation(prog, 'm'), uO: gl.getUniformLocation(prog, 'o') };
     }
 
@@ -237,7 +237,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------- Sharing your screen ----------
     // Computers only (phone browsers can't share their screen). Viewers get the screen instead of the camera;
     // stopping — here or with the browser's own "Stop sharing" — brings the camera (and its filter) back.
-    const canShareScreen = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) && !window.matchMedia('(pointer: coarse)').matches;
+    const canShareScreen = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
     async function toggleScreen() {
         if (L.screen) return stopScreen();
         if (L.mode !== 'live') return;
@@ -287,6 +287,46 @@ document.addEventListener('DOMContentLoaded', () => {
         const pill = $('lv-screen-pill');
         if (pill) pill.hidden = !on;
         if (typeof adapt === 'function') adapt();
+    }
+
+    // ---------- Inviting people ----------
+    const invited = new Set();
+    function liveLink() { return `${location.origin}${location.pathname}?live=${encodeURIComponent(L.stream.id)}`; }
+    function paintInvite() {
+        const box = $('lv-invite');
+        if (!box) return;
+        const q = ($('lv-invite-q') && $('lv-invite-q').value || '').trim().toLowerCase();
+        const friends = (s.friends || []).filter(f => !q || `${f.display_name} ${f.username}`.toLowerCase().includes(q));
+        $('lv-invite-list').innerHTML = friends.length ? friends.map(f => {
+            const done = invited.has(f.id);
+            return `<li class="lv-inv-row">${avatar(f, 'sm')}<span class="lv-inv-name"><strong>${esc(f.display_name)}</strong><small>@${esc(f.username)}</small></span>
+                <button type="button" class="lv-inv-btn" data-invite="${esc(f.id)}"${done ? ' disabled aria-pressed="true"' : ''}>${done ? 'Invited' : 'Invite'}</button></li>`;
+        }).join('') : `<li class="lv-inv-empty">${(s.friends || []).length ? 'No friends match that name.' : 'Add friends to invite them — or share the link.'}</li>`;
+        I.hydrateStorage($('lv-invite-list'));
+    }
+    function toggleInvite(open) {
+        const box = $('lv-invite');
+        const show = open !== undefined ? open : box.hidden;
+        box.hidden = !show;
+        $('lv-invite-btn').setAttribute('aria-expanded', String(show));
+        if (show) { if ($('lv-fx-strip')) $('lv-fx-strip').hidden = true; paintInvite(); }
+    }
+    async function inviteFriend(id, btn) {
+        if (!L.stream || L.mode !== 'live' || invited.has(id)) return;
+        const f = (s.friends || []).find(x => x.id === id);
+        btn.disabled = true;
+        btn.textContent = 'Sending…';
+        const title = L.stream.title || 'my live video';
+        const { error } = await client.from('diary_messages').insert({ recipient: id, body: `🔴 I’m live on Cordial: “${esc(title)}” — come and watch: ${esc(liveLink())}` });
+        if (error) {
+            btn.disabled = false;
+            btn.textContent = 'Invite';
+            return app.showToast(`Couldn’t invite ${f ? f.display_name.split(' ')[0] : 'them'} — try again`);
+        }
+        invited.add(id);
+        btn.textContent = 'Invited';
+        btn.setAttribute('aria-pressed', 'true');
+        if (navigator.vibrate) navigator.vibrate(8);
     }
 
     // ---------- Pinned comment ----------
@@ -839,6 +879,8 @@ document.addEventListener('DOMContentLoaded', () => {
         L.pin = null;
         L.myPin = null;
         paintPin();
+        invited.clear();
+        if ($('lv-invite')) $('lv-invite').hidden = true;
         if (L.media) L.media.getTracks().forEach(t => t.stop());
         L.media = null;
         if (L.channel) client.removeChannel(L.channel);
@@ -862,19 +904,20 @@ document.addEventListener('DOMContentLoaded', () => {
         const wideVideo = vw > vh * 1.1;
         dialog.dataset.video = wideVideo ? 'wide' : 'tall';
         const desk = window.matchMedia('(min-width: 900px) and (min-height: 600px) and (hover: hover)').matches;
-        // Filling the screen crops whatever doesn't match its shape. A small trim is fine; anything more looks
-        // zoomed in, so then the whole picture is shown (for the host and viewers alike) unless they choose fill.
+        // On a phone the live covers the whole screen, using the least zoom that fills it (the camera is asked for
+        // a tall picture, so that's only a slight trim). If the picture's shape is far off (a sideways stream), it's
+        // enlarged by at most 25% rather than cropped hard. "Show the whole picture" is always one tap away.
+        // A shared screen is always shown whole.
         const box = video.getBoundingClientRect();
         const crop = box.width && box.height ? 1 - Math.min(vw / vh, box.width / box.height) / Math.max(vw / vh, box.width / box.height) : 0;
-        const fit = L.fit || (dialog.dataset.screen === '1' || (!desk && crop > 0.12) ? 'contain' : 'cover');
-        // "Fill" shows the whole picture enlarged by at most 15%: more immersive, but the subject and the space
-        // around it stay in frame on any screen. A small natural trim (shapes already close) still fills.
-        const enlarge = fit === 'cover' && crop > 0.12 && dialog.dataset.screen !== '1' ? Math.min(1 / (1 - crop), 1.15) : 1;
+        const fit = dialog.dataset.screen === '1' ? 'contain' : (L.fit || 'cover');
+        const gentle = fit === 'cover' && !desk && crop > 0.35;
+        const enlarge = gentle ? Math.min(1 / (1 - crop), 1.25) : 1;
         L.fitNow = fit;
-        video.style.objectFit = enlarge > 1 ? 'contain' : fit;
+        video.style.objectFit = gentle ? 'contain' : fit;
         video.style.transform = enlarge > 1 ? `scale(${enlarge.toFixed(3)})` : '';
         const btn = $('lv-fit');
-        btn.hidden = !(L.mode === 'watch' || L.mode === 'live') || desk || crop <= 0.12;
+        btn.hidden = !(L.mode === 'watch' || L.mode === 'live') || desk || crop <= 0.02 || dialog.dataset.screen === '1';
         btn.setAttribute('aria-pressed', String(fit === 'contain'));
         btn.setAttribute('aria-label', fit === 'contain' ? 'Fill the screen' : 'Show the whole picture');
     }
@@ -957,6 +1000,14 @@ document.addEventListener('DOMContentLoaded', () => {
     $('lv-close').addEventListener('click', leave);
     $('lv-end').addEventListener('click', leave);
     $('lv-flip').addEventListener('click', flipCamera);
+    $('lv-invite-btn').addEventListener('click', () => toggleInvite());
+    $('lv-invite').addEventListener('click', e => {
+        const b = e.target.closest('[data-invite]');
+        if (b) return inviteFriend(b.dataset.invite, b);
+        if (e.target.closest('#lv-invite-link')) shareLive();
+        if (e.target.closest('#lv-invite-x')) toggleInvite(false);
+    });
+    $('lv-invite-q').addEventListener('input', paintInvite);
     if (!canShareScreen) $('lv-screen').remove();
     else $('lv-screen').addEventListener('click', toggleScreen);
     if (!fxEngine) { $('lv-fx').remove(); $('lv-setup-fx').remove(); } // this browser can't draw filters into the stream

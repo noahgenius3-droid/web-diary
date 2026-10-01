@@ -15123,3 +15123,40 @@ dialog.live[data-screen="1"] .lv-title-line { display: none; }
 .feed-v2 .post-composer .pc-quick.pc-more { color: var(--accent); background: var(--accent-soft); }
 @media (max-width: 380px) { .feed-v2 .post-composer .pc-quick { width: 40px; height: 40px; } }
 @media (max-width: 360px) { .feed-v2 .post-composer:not(.open):not(:focus-within) .pc-quick[data-action="feed-add-photos"] { display: none; } }
+
+/* ---------- Live: invite people ---------- */
+.lv-invite {
+    position: absolute; z-index: 6; left: 0; right: 0; bottom: 0; max-height: min(70%, 560px);
+    display: flex; flex-direction: column; gap: 10px; padding: 14px 16px calc(14px + env(safe-area-inset-bottom, 0px));
+    border-radius: 20px 20px 0 0; background: rgba(16, 16, 20, 0.94); color: #fff;
+    -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); animation: lv-sheet-in 200ms ease-out;
+}
+.lv-invite[hidden] { display: none; }
+@keyframes lv-sheet-in { from { transform: translateY(16px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .lv-invite { animation: none; } }
+.lv-invite-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.lv-invite-head h3 { margin: 0; font-size: 1rem; font-weight: 700; }
+.lv-invite-q { width: 100%; min-height: 42px; padding: 0 14px; border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 12px; background: rgba(255, 255, 255, 0.08); color: #fff; font: inherit; font-size: 16px; }
+.lv-invite-q::placeholder { color: rgba(255, 255, 255, 0.55); }
+.lv-invite-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; overscroll-behavior: contain; display: grid; gap: 2px; min-height: 0; flex: 1; }
+.lv-inv-row { display: flex; align-items: center; gap: 10px; min-height: 52px; }
+.lv-inv-name { flex: 1; min-width: 0; display: grid; }
+.lv-inv-name strong, .lv-inv-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lv-inv-name small { opacity: 0.65; font-size: 0.78rem; }
+.lv-inv-btn { flex: none; min-height: 36px; min-width: 76px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--accent); color: var(--on-accent); font: inherit; font-size: 0.84rem; font-weight: 700; cursor: pointer; touch-action: manipulation; }
+.lv-inv-btn:disabled { background: rgba(255, 255, 255, 0.14); color: #fff; cursor: default; }
+.lv-inv-empty { padding: 12px 0; opacity: 0.7; font-size: 0.88rem; }
+.lv-invite-link { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 12px; background: none; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+.lv-invite-link .i { width: 18px; height: 18px; }
+#lv-invite-btn[aria-expanded="true"] { background: var(--accent); color: var(--on-accent); }
+
+/* Phones: the host's controls stack on the right */
+@media (max-width: 760px) {
+    .lv-bar #lv-invite-btn, .lv-bar #lv-screen { position: absolute; right: 10px; width: 42px; height: 42px; }
+    .lv-bar #lv-invite-btn { bottom: calc(100% + 150px); }
+    .lv-bar #lv-screen { bottom: calc(100% + 198px); }
+    dialog.live.hosting .lv-bar #lv-fit { bottom: calc(100% + 198px); }
+    dialog.live.hosting .lv-bar:has(#lv-screen) #lv-fit { bottom: calc(100% + 246px); }
+}
+/* Your own camera in a call: natural orientation, as everyone else sees it */
+.call-tile.self:not(.screen) .call-video-slot video { transform: none; }
