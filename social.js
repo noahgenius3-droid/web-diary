@@ -3631,12 +3631,12 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="pc-photos" id="feed-photos" hidden></div>
                         <div class="pc-audio" id="feed-audio" hidden></div>
                         <div class="pc-foot">
-                            <button type="button" class="pc-tool" data-action="feed-add-photos"><svg class="i"><use href="#i-image"/></svg>Photo</button>
-                            <button type="button" class="pc-tool camera" data-action="feed-camera"><svg class="i"><use href="#i-camera"/></svg>Camera</button>
-                            <button type="button" class="pc-tool audio" data-action="feed-audio" aria-haspopup="menu"><svg class="i"><use href="#i-music"/></svg>Audio</button>
-                            <button type="button" class="pc-tool video" data-action="feed-video"><svg class="i"><use href="#i-reel"/></svg>Video</button>
-                            <button type="button" class="pc-tool note-media" data-action="note-media" aria-haspopup="menu" title="Turn one of your notes into a video or audio post"><svg class="i"><use href="#i-sparkle"/></svg>Note → video</button>
-                            <button type="button" class="pc-tool live" data-action="live-start"><svg class="i"><use href="#i-live"/></svg>Live</button>
+                            <button type="button" class="pc-tool" data-action="feed-add-photos"><svg class="i"><use href="#i-image"/></svg><span class="pc-tl">Photo</span></button>
+                            <button type="button" class="pc-tool camera" data-action="feed-camera"><svg class="i"><use href="#i-camera"/></svg><span class="pc-tl">Camera</span></button>
+                            <button type="button" class="pc-tool audio" data-action="feed-audio" aria-haspopup="menu"><svg class="i"><use href="#i-music"/></svg><span class="pc-tl">Audio</span></button>
+                            <button type="button" class="pc-tool video" data-action="feed-video"><svg class="i"><use href="#i-reel"/></svg><span class="pc-tl">Video</span></button>
+                            <button type="button" class="pc-tool note-media" data-action="note-media" aria-haspopup="menu" title="Turn one of your notes into a video or audio post"><svg class="i"><use href="#i-sparkle"/></svg><span class="pc-tl">Note<span class="pc-tl-more"> → video</span></span></button>
+                            <button type="button" class="pc-tool live" data-action="live-start"><svg class="i"><use href="#i-live"/></svg><span class="pc-tl">Live</span></button>
                             <button type="button" class="pc-tool story-toggle" data-action="feed-story-toggle" aria-pressed="${s.feedStory}" title="Also add this post to your story"><span class="pc-story-ring" aria-hidden="true"></span>Story</button>
                             <button type="button" class="pc-audience" data-action="feed-audience" aria-haspopup="menu" title="Who can see this post — it’s also saved to your diary">${s.feedAudience === 'public'
                                 ? '<svg class="i"><use href="#i-globe"/></svg>Everyone'

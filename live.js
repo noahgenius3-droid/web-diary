@@ -40,6 +40,12 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const me = () => s.profile && s.profile.id;
+    const cameraFor = facing => {
+        const upright = window.innerHeight > window.innerWidth && window.matchMedia('(pointer: coarse)').matches;
+        return upright
+            ? { facingMode: facing, width: { ideal: 720 }, height: { ideal: 1280 } }
+            : { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } };
+    };
     const reduced = () => document.documentElement.dataset.motion === 'reduce' || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     window.diaryLive = {
@@ -195,7 +201,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!navigator.mediaDevices || !window.RTCPeerConnection) return app.showToast('Live video isn’t supported in this browser');
         try {
             L.media = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: L.facing, width: { ideal: 1280 }, height: { ideal: 720 } },
+                video: cameraFor(L.facing),
                 audio: { echoCancellation: true, noiseSuppression: true }
             });
         } catch (e) {
@@ -291,7 +297,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!L.media) return;
         const next = L.facing === 'user' ? 'environment' : 'user';
         try {
-            const fresh = await navigator.mediaDevices.getUserMedia({ video: { facingMode: next, width: { ideal: 1280 }, height: { ideal: 720 } } });
+            const fresh = await navigator.mediaDevices.getUserMedia({ video: cameraFor(next) });
             const track = fresh.getVideoTracks()[0];
             const old = L.media.getVideoTracks()[0];
             L.peers.forEach(p => p.pc.getSenders().filter(x => x.track && x.track.kind === 'video').forEach(x => x.replaceTrack(track)));
@@ -341,6 +347,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!data) return app.showToast('That live video isn’t available');
         if (data.host === me()) return app.showToast('That’s your own live video');
         L.stream = data;
+        L.fit = null;
         L.selfId = `${me()}:${Math.random().toString(36).slice(2, 8)}`;
         dialog.classList.remove('hosting');
         $('lv-chat').innerHTML = '';
@@ -503,6 +510,32 @@ document.addEventListener('DOMContentLoaded', () => {
         $('lv-hop').hidden = true;
         if (dialog.open && !keepOpen) dialog.close();
     }
+
+    // ---------- Fit the device ----------
+    // Wide stream on a computer: a wide stage. Tall stream: a tall stage. On a phone the stage is the whole
+    // screen; a stream whose shape doesn't match the screen is shown whole (fit) unless you choose fill.
+    function adapt() {
+        const vw = video.videoWidth, vh = video.videoHeight;
+        if (!vw || !vh) return;
+        const wideVideo = vw > vh * 1.1;
+        dialog.dataset.video = wideVideo ? 'wide' : 'tall';
+        const screenTall = window.innerHeight >= window.innerWidth;
+        const desk = window.matchMedia('(min-width: 900px) and (min-height: 600px) and (hover: hover)').matches;
+        const mismatch = !desk && wideVideo === screenTall;
+        const fit = L.fit || (mismatch && L.mode === 'watch' ? 'contain' : 'cover');
+        video.style.objectFit = fit;
+        const btn = $('lv-fit');
+        btn.hidden = !(L.mode === 'watch') || desk;
+        btn.setAttribute('aria-pressed', String(fit === 'contain'));
+        btn.setAttribute('aria-label', fit === 'contain' ? 'Fill the screen' : 'Show the whole picture');
+    }
+    video.addEventListener('loadedmetadata', adapt);
+    video.addEventListener('resize', adapt);
+    window.addEventListener('resize', () => { if (L.mode) adapt(); });
+    $('lv-fit').addEventListener('click', () => {
+        L.fit = video.style.objectFit === 'contain' ? 'cover' : 'contain';
+        adapt();
+    });
 
     // ---------- Many lives at once: hop between them ----------
     function others() { return (L.list || []).filter(x => x.host !== me()); }
