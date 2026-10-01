@@ -14745,3 +14745,112 @@ dialog.nsd::backdrop { background: rgba(8, 10, 20, .6); backdrop-filter: blur(4p
 .pl-today .g-tile.lead { grid-column: auto; grid-row: auto; }
 .pl-standing.out p { flex: 1 1 220px; }
 @media (max-width: 760px) { .explore #ex-body { gap: 28px; } }
+
+/* ==========================================================================
+   Feed, refined: content first. One control row, a compact composer, posts with four actions,
+   notes and Playnote results that look like themselves, and a two-column desktop layout.
+   ========================================================================== */
+.feed-v2 { grid-template-columns: minmax(0, 640px) 300px; justify-content: center; gap: 32px; }
+.feed-v2 .social-left { display: none; }
+@media (max-width: 1100px) { .feed-v2 { grid-template-columns: minmax(0, 620px) 270px; gap: 24px; } }
+@media (max-width: 900px) { .feed-v2 { grid-template-columns: minmax(0, 1fr); } }
+
+/* One control row: tabs with an underline, then search and filter */
+.feed-v2 .feed-bar { gap: 2px; margin: 0 0 14px; padding: 4px 0 0; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--panel) 92%, transparent); }
+.feed-v2 .feed-tabs { padding: 0; gap: 0; border-radius: 0; background: none; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+.feed-v2 .feed-tabs::-webkit-scrollbar { display: none; }
+.feed-v2 .feed-tab { position: relative; flex: none; min-height: 44px; padding: 0 12px; border-radius: 0; background: none; box-shadow: none; color: var(--text-muted); font-weight: 600; }
+.feed-v2 .feed-tab[aria-selected="true"] { background: none; box-shadow: none; color: var(--text); }
+.feed-v2 .feed-tab[aria-selected="true"]::after { content: ''; position: absolute; left: 12px; right: 12px; bottom: 0; height: 2px; border-radius: 2px; background: var(--accent); }
+@media (hover: hover) and (pointer: fine) { .feed-v2 .feed-tab:hover { color: var(--text); } }
+.feed-v2 .feed-search-btn, .feed-v2 .feed-filter-btn { flex: none; width: 40px; height: 40px; margin-bottom: 2px; border: 0; border-radius: 10px; background: none; color: var(--text-muted); }
+.feed-v2 .feed-search-btn[aria-expanded="true"], .feed-v2 .feed-filter-btn.on { background: var(--accent-soft); color: var(--accent); }
+.feed-v2 .filter-chip { justify-self: start; margin: -4px 0 12px; }
+
+/* Stories: a light row of avatars, not a card */
+.feed-v2 .stories-bar { margin: 0 0 6px; padding: 2px 0 6px; border-radius: 0; background: none; box-shadow: none; }
+.feed-v2 .stories-bar .stories { gap: 12px; }
+.feed-v2 .story { gap: 6px; font-size: 0.74rem; font-weight: 500; color: var(--text-muted); }
+.feed-v2 .story-ring { width: 62px; height: 62px; }
+.feed-v2 .stories-empty { align-self: center; max-width: 220px; margin: 0; }
+
+/* Composer: one line until you start writing */
+.feed-v2 .post-composer { padding: 12px 14px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: none; }
+.feed-v2 .post-composer:not(.open):not(:focus-within):not(:has(textarea:not(:placeholder-shown))):not(:has(.pc-photos:not([hidden]))):not(:has(.pc-audio:not([hidden]))) .pc-foot { display: none; }
+.feed-v2 .pc-more { color: var(--accent); }
+
+/* Posts: content leads; quiet chrome */
+.feed-v2 .feed-list { display: grid; gap: 14px; }
+body[data-view="feed"] .feed-v2 .post.ig { border: 1px solid var(--border); box-shadow: none; }
+@media (hover: hover) and (pointer: fine) { body[data-view="feed"] .feed-v2 .post.ig:hover { box-shadow: none; border-color: color-mix(in srgb, var(--text) 18%, var(--border)); } }
+.feed-v2 .post-actions { gap: 2px; padding: 4px 8px 0; }
+.feed-v2 .post-actions .act .i { width: 22px; height: 22px; }
+.feed-v2 .react-sum-row { padding: 0 16px; }
+.feed-v2 .feed-list .comments[data-mode="card"] .comment-form { display: none; }
+.feed-v2 .feed-list .post.ig .comments { padding-top: 2px; }
+
+/* A shared note */
+.post-note {
+    position: relative; display: grid; gap: 6px; margin: 2px 16px 8px; padding: 16px 18px 12px; overflow: hidden;
+    border-radius: 14px; background: color-mix(in srgb, var(--nc) 9%, var(--surface));
+}
+.post-note::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 3px; background: var(--nc); }
+.pn-kind { display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; font-weight: 700; color: color-mix(in srgb, var(--nc, var(--accent)) 65%, var(--text)); }
+.pn-kind .i { width: 15px; height: 15px; }
+.pn-meta { color: var(--text-muted); font-weight: 500; }
+.pn-meta::before { content: '·'; margin: 0 6px 0 2px; }
+.pn-title { font-family: var(--serif); font-size: 1.32rem; font-weight: 600; line-height: 1.25; letter-spacing: -0.015em; text-wrap: balance; }
+.pn-preview { color: color-mix(in srgb, var(--text) 82%, transparent); font-size: 0.98rem; line-height: 1.55; white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.pn-open { justify-self: start; display: inline-flex; align-items: center; gap: 4px; min-height: 36px; margin-top: 2px; padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-size: 0.88rem; font-weight: 700; cursor: pointer; }
+.pn-open .i { width: 15px; height: 15px; transition: transform 180ms ease-out; }
+@media (hover: hover) and (pointer: fine) { .pn-open:hover .i { transform: translateX(3px); } }
+
+/* A Playnote result: a short preview and one way in */
+.post-playnote {
+    display: grid; gap: 8px; margin: 2px 16px 8px; padding: 16px 18px; border-radius: 14px;
+    background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+.post-playnote .pn-kind { color: var(--accent); }
+.pp-text { font-size: 1.02rem; font-weight: 600; line-height: 1.5; }
+.pp-play { justify-self: start; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 16px; border: 0; border-radius: 999px; background: var(--accent); color: var(--on-accent); font: inherit; font-size: 0.88rem; font-weight: 700; cursor: pointer; touch-action: manipulation; }
+.pp-play .i { width: 15px; height: 15px; }
+.pp-play:active { transform: scale(0.97); }
+
+/* Right column: you first, then only what has something in it */
+.feed-v2 .social-right { gap: 14px; }
+.you-box { display: grid; gap: 12px; }
+.you-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.you-head .contact-name { min-width: 0; }
+.you-head .contact-name small { font-size: 0.76rem; }
+.you-links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+.you-links .social-nav-item { min-height: 38px; padding: 0 10px; border-radius: 10px; font-size: 0.85rem; }
+
+/* Empty states with a way forward */
+.feed-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 14px; }
+
+@media (max-width: 760px) {
+    /* On a phone, posts run edge to edge, separated by a hairline */
+    .feed-v2 .feed-list { gap: 0; margin: 0 -12px; }
+    body[data-view="feed"] .feed-v2 .feed-list .post.ig { border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }
+    .feed-v2 .feed-bar { margin: 0 -12px 12px; padding: 2px 4px 0; }
+    .feed-v2 .feed-tab { padding: 0 10px; font-size: 0.86rem; }
+    .feed-v2 .feed-tab[aria-selected="true"]::after { left: 10px; right: 10px; }
+    .feed-v2 .stories-bar { margin: 0 -12px 4px; padding: 2px 12px 6px; }
+    .feed-v2 .post-note, .feed-v2 .post-playnote { margin: 2px 12px 8px; }
+    .feed-v2 .social-right { margin-top: 12px; }
+}
+/* Feed, phone fixes: the control row is docked in the top bar there; posts already run edge to edge */
+@media (max-width: 760px) {
+    .feed-v2 .feed-list { margin: 0; }
+    .topbar-dock .feed-bar { gap: 2px; border-bottom: 0; }
+    .topbar-dock .feed-tabs { padding: 0; gap: 0; border-radius: 0; background: none; }
+    .topbar-dock .feed-tab { position: relative; flex: none; min-height: 40px; padding: 0 10px; border-radius: 0; background: none; box-shadow: none; color: var(--text-muted); font-size: 0.88rem; font-weight: 600; }
+    .topbar-dock .feed-tab[aria-selected="true"] { background: none; box-shadow: none; color: var(--text); }
+    .topbar-dock .feed-tab[aria-selected="true"]::after { content: ''; position: absolute; left: 10px; right: 10px; bottom: 2px; height: 2px; border-radius: 2px; background: var(--accent); }
+    .topbar-dock :is(.feed-search-btn, .feed-filter-btn) { flex: none; width: 40px; height: 40px; border: 0; border-radius: 10px; background: none; color: var(--text-muted); }
+    .topbar-dock :is(.feed-search-btn[aria-expanded="true"], .feed-filter-btn.on) { background: var(--accent-soft); color: var(--accent); }
+}
+.feed-v2 .stories-bar { border: 0; }
+.feed-v2 .feed-list { grid-template-columns: minmax(0, 1fr); }
+.feed-v2 .feed-list > * { min-width: 0; }
+@media (max-width: 760px) { .topbar-dock .feed-tabs { -webkit-mask-image: linear-gradient(90deg, #000 85%, transparent); mask-image: linear-gradient(90deg, #000 85%, transparent); } }

@@ -493,6 +493,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    window.diaryExplore = { showTab: tab => { E.tab = tab; E.query = ''; E.raw = ''; app.setView('explore'); } };
+
     const previousAfter = app.hooks.afterRender;
     app.hooks.afterRender = view => {
         if (previousAfter) previousAfter(view);

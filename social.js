@@ -3622,8 +3622,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const online = s.friends.filter(f => s.online.has(f.id));
 
         return `
-            <div class="social">
-                <aside class="social-left">
+            <div class="social feed-v2">
+                <aside class="social-left" hidden>
                     <div class="profile-card">
                         <button class="profile-photo" data-action="change-avatar" aria-label="Change profile photo">
                             ${avatar(s.profile, 'xl')}
@@ -3675,12 +3675,9 @@ document.addEventListener('DOMContentLoaded', () => {
                             }).join('')}
                         </div>
                         <button class="icon-btn feed-search-btn" data-action="feed-search-toggle" aria-label="Search posts" aria-expanded="${!!s.feedSearchOpen}"><svg class="i"><use href="#i-search"/></svg></button>
-                        <button class="chip reels-chip" data-action="go-reels"><svg class="i"><use href="#i-reel"/></svg><span>Reels</span></button>
-                        <button type="button" class="feed-create" data-action="feed-create" aria-haspopup="menu" aria-label="Create: post, story, reel, live or audio room"><svg class="i"><use href="#i-plus"/></svg></button>
+                        <button type="button" class="icon-btn feed-filter-btn${(s.feedType || 'all') !== 'all' ? ' on' : ''}" data-action="feed-kind-menu" aria-haspopup="menu" aria-label="Show only: ${esc((FEED_KINDS.find(t => t[0] === (s.feedType || 'all')) || ['', 'All'])[1])}"><svg class="i"><use href="#i-filter"/></svg></button>
                     </div>
-                    <div class="feed-types" role="group" aria-label="Show only">
-                        ${FEED_KINDS.map(([k, l, icon]) => `<button type="button" class="feed-type" aria-pressed="${(s.feedType || 'all') === k}" data-action="feed-type" data-type="${k}">${icon ? `<svg class="i"><use href="#${icon}"/></svg>` : ''}${l}</button>`).join('')}
-                    </div>
+                    ${(s.feedType || 'all') !== 'all' ? `<button type="button" class="chip filter-chip" data-action="feed-type" data-type="all"><svg class="i"><use href="#i-close"/></svg>${esc((FEED_KINDS.find(t => t[0] === s.feedType) || ['', ''])[1])} only · show everything</button>` : ''}
                     <label class="search feed-search"${s.feedSearchOpen ? '' : ' hidden'}>
                         <svg class="i"><use href="#i-search"/></svg>
                         <input type="search" id="feed-search" placeholder="Search posts, people and #tags" aria-label="Search posts" enterkeyhint="search">
@@ -3689,9 +3686,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     <form class="post-composer${s.feedDraft.text || s.feedDraft.photos.length ? ' open' : ''}" data-form="feed-post">
                         <div class="pc-row">
                             ${avatar(s.profile, 'md')}
-                            <textarea id="feed-text" rows="1" maxlength="5000" placeholder="What’s new, ${esc(s.profile.display_name.split(' ')[0])}?" aria-label="Write a post"></textarea>
-                            <button type="button" class="pc-quick live" data-action="live-start" aria-label="Go live"><svg class="i"><use href="#i-live"/></svg></button>
+                            <textarea id="feed-text" rows="1" maxlength="5000" placeholder="What would you like to share?" aria-label="Write a post"></textarea>
                             <button type="button" class="pc-quick" data-action="feed-add-photos" aria-label="Add photos"><svg class="i"><use href="#i-image"/></svg></button>
+                            <button type="button" class="pc-quick pc-more" data-action="feed-create" aria-haspopup="menu" aria-label="More ways to share: note, Playnote, story, reel, live, audio room"><svg class="i"><use href="#i-plus"/></svg></button>
                         </div>
                         <div class="pc-photos" id="feed-photos" hidden></div>
                         <div class="pc-audio" id="feed-audio" hidden></div>
@@ -3714,10 +3711,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${window.diaryPlay && s.feedFilter === 'all' && !s.feedAuthor && s.feedSort === 'foryou' ? window.diaryPlay.feedCard() : ''}
                     ${filterLabel && s.feedFilter !== 'saved' ? `<button class="chip filter-chip" data-action="feed-all"><svg class="i"><use href="#i-close"/></svg>${esc(filterLabel)} · show everything</button>` : ''}
                     <div class="feed-list">
-                        ${feedItems(list).join('') || `<div class="empty">
-                            <p class="empty-title">${(s.feedType || 'all') !== 'all' ? `No ${(FEED_KINDS.find(t => t[0] === s.feedType) || [])[1].toLowerCase()} posts yet` : filterLabel ? 'Nothing here yet' : 'No posts yet'}</p>
-                            <p>${s.feedFilter === 'saved' ? 'Tap the bookmark on any post to save it here — only you can see what you save.' : 'Turn on <strong>Share with friends</strong> in an entry, or add friends to see theirs here.'}</p>
-                        </div>`}
+                        ${feedItems(list).join('') || feedEmptyHTML(filterLabel)}
                     </div>
                     ${list.length > 2 ? `
                         <div class="feed-end">
@@ -3729,8 +3723,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 </section>
 
                 <aside class="social-right">
-                    <section class="side-box">
-                        <h4>Requests ${s.incoming.length ? `<span class="count-dot">${s.incoming.length}</span>` : ''}</h4>
+                    <section class="side-box you-box" aria-label="You">
+                        <div class="you-head">
+                            <button type="button" class="row-av" data-profile="${esc(s.profile.id)}" aria-label="Your profile">${avatar(s.profile, 'md')}</button>
+                            <span class="contact-name" data-profile="${esc(s.profile.id)}" role="button" tabindex="0"><strong>${esc(s.profile.display_name)}</strong><small>${mine.length} ${mine.length === 1 ? 'post' : 'posts'} · ${s.friends.length} ${s.friends.length === 1 ? 'friend' : 'friends'} · ${likesReceived} ${likesReceived === 1 ? 'reaction' : 'reactions'}</small></span>
+                        </div>
+                        <nav class="you-links" aria-label="Your things">
+                            ${navItem('mine', 'i-user', 'My posts')}
+                            ${navItem('saved', 'i-bookmark', 'Saved')}
+                            ${window.diarySchedule ? `<button class="social-nav-item" data-action="go-scheduled"><svg class="i"><use href="#i-clock"/></svg>Scheduled<span class="count-dot" data-sched-count${window.diarySchedule.count() ? '' : ' hidden'}>${window.diarySchedule.count() || ''}</span></button>` : ''}
+                            <button class="social-nav-item" data-action="go-insights"><svg class="i"><use href="#i-chart"/></svg>Stats</button>
+                        </nav>
+                    </section>
+                    ${s.incoming.length ? `<section class="side-box">
+                        <h4>Requests <span class="count-dot">${s.incoming.length}</span></h4>
                         ${s.incoming.map(f => `
                             <div class="request-row">
                                 <button type="button" class="row-av" data-profile="${esc(f.id)}" aria-label="${esc(f.display_name)}’s profile">${avatar(f, 'md')}</button>
@@ -3742,8 +3748,8 @@ document.addEventListener('DOMContentLoaded', () => {
                                         <button class="link-btn" data-action="decline-request" data-id="${esc(f.friendshipId)}">Decline</button>
                                     </div>
                                 </div>
-                            </div>`).join('') || '<p class="muted small">No new requests.</p>'}
-                    </section>
+                            </div>`).join('')}
+                    </section>` : ''}
                     ${trendingTags().length ? `
                         <section class="side-box">
                             <h4>Trending in your circle</h4>
@@ -3759,21 +3765,22 @@ document.addEventListener('DOMContentLoaded', () => {
                                 </button>`).join('')}
                             <button class="link-btn center" data-action="go-library">Browse the Library</button>
                         </section>` : ''}
-                    <section class="side-box">
+                    ${(s.suggestions || []).length ? `<section class="side-box">
                         <h4>People you may know</h4>
-                        ${(s.suggestions || []).slice(0, 5).map(p => `
+                        ${(s.suggestions || []).slice(0, 4).map(p => `
                             <div class="suggest-row">
                                 <button type="button" class="row-av" data-profile="${esc(p.id)}" aria-label="${esc(p.display_name)}’s profile">${avatar(p, 'md')}</button>
                                 <span class="contact-name" data-profile="${esc(p.id)}" role="button" tabindex="0"><strong>${esc(p.display_name)}</strong><small>${esc(p.reason || `@${p.username}`)}</small></span>
                                 ${followButton(p, 'chip small')}
                                 <button class="icon-btn ghost accent" data-action="suggest-add" data-username="${esc(p.username)}" aria-label="Add ${esc(p.display_name)} as a friend"><svg class="i"><use href="#i-user-plus"/></svg></button>
-                            </div>`).join('') || '<p class="muted small">No suggestions right now.</p>'}
-                    </section>
-                    <section class="active-card">
-                        <span class="avatar-stack">${(online.length ? online : s.friends).slice(0, 6).map(f => avatar(f, 'sm')).join('')}</span>
+                            </div>`).join('')}
+                        <button class="link-btn center" data-action="go-explore-people">See more people</button>
+                    </section>` : ''}
+                    ${online.length ? `<section class="active-card">
+                        <span class="avatar-stack">${online.slice(0, 6).map(f => avatar(f, 'sm')).join('')}</span>
                         <p><b>${online.length}</b> ${online.length === 1 ? 'friend' : 'friends'} online</p>
-                        <small>${online.length ? 'Active now in your circle' : 'Your friends will show here when they’re online'}</small>
-                    </section>
+                        <small>Active now in your circle</small>
+                    </section>` : ''}
                 </aside>
             </div>`;
     };
@@ -4002,6 +4009,7 @@ document.addEventListener('DOMContentLoaded', () => {
             body: p.body,
             html: p.html,
             mood: p.mood,
+            color: p.color,
             photos: p.photos,
             audio: p.audio,
             bucket: FEED_BUCKET,
@@ -4138,19 +4146,92 @@ document.addEventListener('DOMContentLoaded', () => {
 `; // #tags are already links inside the text, so no second row of them
     }
 
+    // A note shared from Notes has a title and no media; a Playnote result is the #trivia share (or the word/thought of the day)
+    const NOTE_TINT = { yellow: '#eab308', pink: '#ec4899', blue: '#3b82f6', green: '#22c55e', purple: '#8b5cf6', orange: '#f97316', coral: '#f43f5e', teal: '#14b8a6', sky: '#0ea5e9', lime: '#84cc16', gray: '#64748b' };
+    function postVariant(o, photos) {
+        if (o.kind !== 'entry' || photos.length) return '';
+        const body = String(o.body || '');
+        if (/#trivia\b/i.test(body) || /^📚 Word of the day|^💭 “/.test(body)) return 'playnote';
+        if (o.title && body.trim() && !o.audio && !/^📊 /.test(o.title)) return 'note';
+        return '';
+    }
+    function noteCardHTML(o) {
+        const key = `${o.kind}:${o.id}`;
+        const body = String(o.body || '').trim();
+        const words = body.split(/\s+/).filter(Boolean).length;
+        const mins = Math.max(1, Math.round(words / 200));
+        return `
+            <div class="post-note" style="--nc:${NOTE_TINT[o.color] || 'var(--accent)'}">
+                <span class="pn-kind"><svg class="i"><use href="#i-note"/></svg>Note<span class="pn-meta">${mins} min read</span></span>
+                <strong class="pn-title">${esc(o.title)}</strong>
+                <div class="pn-preview">${linkTags(esc(body.slice(0, 420)))}</div>
+                <button type="button" class="pn-open" data-action="post-open" data-key="${esc(key)}">Read note<svg class="i"><use href="#i-forward"/></svg></button>
+            </div>`;
+    }
+    function playnoteCardHTML(o) {
+        return `
+            <div class="post-playnote">
+                <span class="pn-kind"><svg class="i"><use href="#i-trophy"/></svg>Playnote</span>
+                <div class="pp-text">${linkTags(esc(String(o.body || '')))}</div>
+                <button type="button" class="pp-play" data-action="go-play">${o.mine ? 'Play again' : 'Play today’s challenge'}<svg class="i"><use href="#i-forward"/></svg></button>
+            </div>`;
+    }
+    function feedEmptyHTML(filterLabel) {
+        const type = (s.feedType || 'all') !== 'all' ? (FEED_KINDS.find(t => t[0] === s.feedType) || ['', 'such'])[1].toLowerCase() : '';
+        const following = s.feedFilter === 'all' && !s.feedAuthor && s.feedSort === 'following';
+        const [title, text, actions] = s.feedFilter === 'saved'
+            ? ['Nothing saved yet', 'Tap the bookmark on any post to keep it here. Only you can see what you save.', '']
+            : type ? [`No ${type} posts yet`, 'Try another kind of post, or show everything.', '<button type="button" class="chip" data-action="feed-type" data-type="all">Show everything</button>']
+            : following ? ['Nobody to follow here yet', 'Follow people to see their posts in this tab.', '<button type="button" class="chip accent" data-action="go-explore-people"><svg class="i"><use href="#i-user-plus"/></svg>Find people</button>']
+            : filterLabel ? ['Nothing here yet', 'There are no posts for this right now.', '<button type="button" class="chip" data-action="feed-all">Show everything</button>']
+            : ['Your Feed is waiting', 'Share something, or add friends to see what they post.', '<button type="button" class="chip accent" data-action="feed-compose"><svg class="i"><use href="#i-pencil"/></svg>Write a post</button><button type="button" class="chip" data-action="go-explore-people"><svg class="i"><use href="#i-user-plus"/></svg>Find people</button>'];
+        return `<div class="empty feed-empty"><p class="empty-title">${title}</p><p>${text}</p>${actions ? `<div class="feed-empty-actions">${actions}</div>` : ''}</div>`;
+    }
+
+    // Share: everything you can do with a post, in one sheet
+    function openPostShare(anchor, id) {
+        const post = findPost('entry', id);
+        if (!post) return;
+        const me = s.profile.id;
+        const mine = post.author === me;
+        const name = mine ? 'you' : ((post.author_profile && post.author_profile.display_name) || 'a friend');
+        const link = `${location.origin}/#/post/${post.id}`;
+        const text = [post.title, post.body].filter(x => x && String(x).trim()).join('\n\n');
+        const friend = s.friends.some(f => f.id === post.author);
+        const items = [{ heading: 'Share' }];
+        if (mine) {
+            items.push({ label: 'Reshare to the Feed', icon: 'i-repost', onClick: () => reshareOwn(post.id) });
+            if (window.diaryStories && window.diaryStories.shareEntry) items.push({ label: 'Add to your story', icon: 'i-plus', onClick: () => window.diaryStories.shareEntry(post.local_id, post.title || post.body, post) });
+        } else {
+            if (post.allow_reposts !== false && friend) {
+                const on = (post.reposts || []).some(r => r.user_id === me);
+                items.push({ label: on ? 'Undo repost' : 'Repost to your friends', icon: 'i-repost', onClick: () => toggleRepost(post.id) });
+            }
+            if (window.diaryStories && window.diaryStories.shareText && text) items.push({ label: 'Add to your story', icon: 'i-plus', onClick: () => window.diaryStories.shareText(text.slice(0, 500), post.color) });
+        }
+        if (window.diaryNoteShare && window.diaryNoteShare.send) items.push({ label: 'Send to a friend', icon: 'i-send', onClick: () => window.diaryNoteShare.send({ title: post.title || `A post from ${name}`, text: `${text}\n\n${link}`.slice(0, 4000), color: post.color }) });
+        if (!mine && friend) items.push({ label: `Message ${name.split(' ')[0]}`, icon: 'i-chat', onClick: () => app.actions['message-friend']({ dataset: { id: post.author } }) });
+        items.push({ label: 'Copy link', icon: 'i-link', onClick: async () => {
+            try { await navigator.clipboard.writeText(link); app.showToast('Link copied'); } catch (e) { app.showToast('Couldn’t copy the link'); }
+        } });
+        if (navigator.share) items.push({ label: 'More ways to share…', icon: 'i-share', onClick: () => navigator.share({ title: post.title || 'A post on Cordial', text: text.slice(0, 200), url: link }).catch(() => {}) });
+        app.openPopover(anchor, items);
+    }
+
     function postActionsHTML(o) {
         const me = s.profile.id;
         const { profile } = postPerson(o);
         const key = `${o.kind}:${o.id}`;
         return `
             ${likeButtonHTML(o.kind, o.id, o.likes)}
-            <button class="act" data-action="post-open" data-key="${esc(key)}" data-focus="input" aria-label="Comment"><svg class="i"><use href="#i-chat"/></svg><span class="act-count">${o.commentCount || ''}</span></button>
-            ${o.canRepost ? (() => {
+            <button class="act" data-action="post-open" data-key="${esc(key)}" data-focus="input" aria-label="Comment${o.commentCount ? ` — ${o.commentCount} so far` : ''}"><svg class="i"><use href="#i-chat"/></svg><span class="act-count">${o.commentCount || ''}</span></button>
+            ${o.kind === 'entry' ? `<button class="act share-btn" data-action="post-share" data-id="${esc(o.id)}" aria-haspopup="menu" aria-label="Share${o.reposts.length ? ` — reposted ${o.reposts.length} ${o.reposts.length === 1 ? 'time' : 'times'}` : ''}"><svg class="i"><use href="#i-share"/></svg><span class="act-count">${o.reposts.length || ''}</span></button>` : ''}
+            ${o.kind === 'entry' ? '' : o.canRepost ? (() => {
                 const on = o.reposts.some(r => r.user_id === me);
                 return `<button class="act repost-btn" data-action="repost" data-id="${esc(o.id)}" aria-pressed="${on}" aria-label="${on ? 'Undo repost' : 'Repost to your friends'}"><svg class="i"><use href="#i-repost"/></svg><span class="act-count">${o.reposts.length || ''}</span></button>`;
             })() : ''}
-            ${o.canShareOwn ? `<button class="act repost-btn" data-action="share-own" data-id="${esc(o.id)}" aria-haspopup="menu" aria-pressed="${o.reposts.some(r => r.user_id === me)}" aria-label="Share: reshare or add to your story"><svg class="i"><use href="#i-repost"/></svg><span class="act-count">${o.reposts.length || ''}</span></button>` : ''}
-            ${o.mine || !s.friends.some(f => f.id === o.author) ? '' : `<button class="act" data-action="message-friend" data-id="${esc(o.author)}" aria-label="Message ${esc(profile.display_name)}"><svg class="i"><use href="#i-send"/></svg></button>`}
+            ${o.kind !== 'entry' && o.canShareOwn ? `<button class="act repost-btn" data-action="share-own" data-id="${esc(o.id)}" aria-haspopup="menu" aria-pressed="${o.reposts.some(r => r.user_id === me)}" aria-label="Share: reshare or add to your story"><svg class="i"><use href="#i-repost"/></svg><span class="act-count">${o.reposts.length || ''}</span></button>` : ''}
+            ${o.kind === 'entry' || o.mine || !s.friends.some(f => f.id === o.author) ? '' : `<button class="act" data-action="message-friend" data-id="${esc(o.author)}" aria-label="Message ${esc(profile.display_name)}"><svg class="i"><use href="#i-send"/></svg></button>`}
             ${o.kind === 'entry' ? `
                 <button class="act save-btn" data-action="save-post" data-id="${esc(o.id)}" aria-pressed="${o.saved}" aria-label="${o.saved ? 'Remove from Saved' : 'Save post'}">
                     <svg class="i"><use href="#${o.saved ? 'i-bookmark-fill' : 'i-bookmark'}"/></svg>
@@ -4165,7 +4246,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (s.detail === key) scheduleDetailRepaint();
 
         return `
-            <article class="post ig" data-post="${key}" data-search="${esc(`${profile.display_name} ${profile.username} ${o.title || ''} ${o.body || ''}`.toLowerCase())}">
+            <article class="post ig${postVariant(o, photos) ? ` is-${postVariant(o, photos)}` : ''}" data-post="${key}" data-search="${esc(`${profile.display_name} ${profile.username} ${o.title || ''} ${o.body || ''}`.toLowerCase())}">
                 ${o.pinned ? '<p class="repost-line pinned-line"><svg class="i"><use href="#i-pin-note"/></svg>Pinned by the admins</p>' : ''}
                 ${o.repostedBy ? `<p class="repost-line"><svg class="i"><use href="#i-repost"/></svg>${o.repostedById ? `<button type="button" class="name-link" data-profile="${esc(o.repostedById)}">${esc(o.repostedBy)}</button>` : esc(o.repostedBy)} ${o.reshared ? 'reshared this' : 'reposted'}</p>` : ''}
                 <header class="post-head">
@@ -4176,7 +4257,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                     <button class="more-btn" data-action="post-menu" data-kind="${o.kind}" data-id="${esc(o.id)}" aria-label="Post options"><svg class="i"><use href="#i-more"/></svg></button>
                 </header>
-                ${photos.length ? postMediaHTML(o, photos) : postCaptionHTML(o, photos, false)}
+                ${photos.length ? postMediaHTML(o, photos) : postVariant(o, photos) === 'note' ? noteCardHTML(o) : postVariant(o, photos) === 'playnote' ? playnoteCardHTML(o) : postCaptionHTML(o, photos, false)}
                 ${audioCardHTML(o.audio)}
                 ${o.bodyExtra || ''}
                 <div class="post-actions">${postActionsHTML(o)}</div>
@@ -5443,6 +5524,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 { label: 'Reel', icon: 'i-reel', tile: true, onClick: () => window.diaryStories && window.diaryStories.addReel() },
                 { label: 'Live', icon: 'i-live', tile: true, onClick: run('live-start') },
                 { label: 'Audio room', icon: 'i-headphones', tile: true, onClick: run('space-new') },
+                { label: 'Playnote', icon: 'i-trophy', tile: true, onClick: () => app.setView('play') },
                 { label: 'Note → video', icon: 'i-sparkle', tile: true, onClick: run('note-media') },
                 { label: 'Note → slides', icon: 'i-slides', tile: true, onClick: run('note-slides') }
             ]);
@@ -5512,6 +5594,17 @@ document.addEventListener('DOMContentLoaded', () => {
             ]);
         },
         'repost': el => toggleRepost(el.dataset.id),
+        'post-share': el => openPostShare(el, el.dataset.id),
+        'feed-kind-menu': el => {
+            const cur = s.feedType || 'all';
+            app.openPopover(el, [
+                { heading: 'Show only' },
+                ...FEED_KINDS.map(([k, l, icon]) => ({ label: l, icon: cur === k ? 'i-check' : (icon || 'i-feed'), onClick: () => { s.feedType = k; app.render(); } })),
+                { label: 'Open Reels', icon: 'i-reel', onClick: () => app.setView('reels') }
+            ]);
+        },
+        'feed-compose': () => { const t = $('feed-text'); if (t) { t.focus(); t.scrollIntoView({ block: 'center', behavior: 'smooth' }); } },
+        'go-explore-people': () => { if (window.diaryExplore && window.diaryExplore.showTab) window.diaryExplore.showTab('people'); else app.setView('explore'); },
         'share-own': el => {
             const post = postsFor('entry').find(p => p.id === el.dataset.id);
             if (post) openShareOwn(el, post);
