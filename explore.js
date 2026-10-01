@@ -215,21 +215,19 @@ document.addEventListener('DOMContentLoaded', () => {
     function liveCards() {
         const list = window.diaryLive ? window.diaryLive.list() : [];
         const cards = list.map(x => {
-            const p = x.host_profile || { display_name: 'A friend' };
+            const p = x.host_profile || { display_name: 'Someone' };
             const mine = x.host === s.profile.id;
             return `
-                <button type="button" class="ex-live" data-action="live-watch" data-id="${esc(x.id)}">
-                    <span class="ex-live-av">${avatar({ id: x.host, ...p }, 'lg')}<span class="live-badge">LIVE</span></span>
-                    <strong>${mine ? 'You' : esc(p.display_name)}</strong>
-                    <small>${esc(x.title || 'Live now')}</small>
-                    <small class="muted">started ${timeAgo(x.started_at)}</small>
+                <button type="button" class="lv-tile" data-action="live-watch" data-id="${esc(x.id)}" aria-label="${esc(mine ? 'Your live' : p.display_name)} — ${esc(x.title || 'Live now')}">
+                    <span class="lv-tile-top"><span class="lv-tile-live">LIVE</span>${x.audience === 'public' ? '<span class="lv-tile-aud" title="Open to everyone"><svg class="i"><use href="#i-globe"/></svg></span>' : ''}</span>
+                    <span class="lv-tile-av">${avatar({ id: x.host, ...p }, 'lg')}</span>
+                    <span class="lv-tile-text"><strong>${mine ? 'You’re live' : esc(p.display_name)}</strong><small>${esc(x.title || 'Live now')}</small><small class="lv-tile-time">started ${timeAgo(x.started_at)}</small></span>
                 </button>`;
         }).join('');
         return `${cards}
-            <button type="button" class="ex-live go" data-action="live-start">
-                <span class="ex-live-av go"><svg class="i"><use href="#i-live"/></svg></span>
-                <strong>Go live</strong>
-                <small>Share what you’re up to — friends get a heads-up</small>
+            <button type="button" class="lv-tile go" data-action="live-start">
+                <span class="lv-tile-av go"><svg class="i"><use href="#i-live"/></svg></span>
+                <span class="lv-tile-text"><strong>Go live</strong><small>To everyone, or just friends and followers</small></span>
             </button>`;
     }
 
@@ -316,7 +314,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (show('spaces') && window.diarySpaces) sections.push(window.diarySpaces.exploreSection());
         if (show('live')) {
-            sections.push(`<section class="ex-sec">${head('i-live', 'Live now', 'Friends broadcasting right now')}<div class="ex-row ex-lives">${liveCards()}</div></section>`);
+            sections.push(`<section class="ex-sec">${head('i-live', 'Live now', (window.diaryLive && window.diaryLive.list().length) ? `${window.diaryLive.list().length} live right now — tap to join` : 'Nobody’s live right now — start one')}<div class="lv-grid">${liveCards()}</div></section>`);
         }
         if (show('posts') && tags.length) {
             sections.push(`<section class="ex-sec">${head('i-trend', 'Trending tags', 'What your circle is talking about')}

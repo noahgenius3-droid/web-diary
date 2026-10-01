@@ -56,15 +56,16 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!me() || L.loading) return;
         L.loading = true;
         const { data, error } = await client.from('diary_live_streams')
-            .select(`id, host, title, started_at, last_seen, host_profile:diary_profiles!diary_live_streams_host_fkey(${PROFILE})`)
+            .select(`id, host, title, audience, started_at, last_seen, host_profile:diary_profiles!diary_live_streams_host_fkey(${PROFILE})`)
             .is('ended_at', null)
             .gt('last_seen', new Date(Date.now() - FRESH).toISOString())
             .order('started_at', { ascending: false })
-            .limit(20);
+            .limit(40);
         L.loading = false;
         const before = (L.list || []).map(x => x.id).join();
         L.list = error ? [] : data;
         paintStrips();
+        if (L.mode === 'watch') paintHop();
         if (before !== L.list.map(x => x.id).join() && !document.getElementById('ex-search')?.value) app.requestRender('explore');
         if (!L.listSub) {
             L.listSub = client.channel(`diary-live-list-${me()}`)
@@ -141,6 +142,13 @@ document.addEventListener('DOMContentLoaded', () => {
         I.hydrateStorage($('lv-host'));
     }
 
+    function paintTitle() {
+        const line = $('lv-title-line');
+        const t = L.stream && L.stream.title;
+        line.textContent = t || '';
+        line.hidden = !t || !(L.mode === 'live' || L.mode === 'watch');
+    }
+
     function paintViewers() {
         $('lv-viewers').querySelector('b').textContent = String(L.viewers);
     }
@@ -156,11 +164,15 @@ document.addEventListener('DOMContentLoaded', () => {
         L.clock = setInterval(tick, 1000);
     }
 
-    function addChat(name, text, cls = '') {
+    function addChat(name, text, cls = '', who = null) {
         const box = $('lv-chat');
-        const row = document.createElement('p');
+        const row = document.createElement('div');
         row.className = `lv-msg ${cls}`;
-        row.innerHTML = `<strong>${esc(name)}</strong> ${esc(text)}`;
+        const face = who ? avatar({ id: who.id, display_name: who.name || name, avatar_path: who.av || null }, 'sm') : '';
+        row.innerHTML = cls === 'lv-join' || cls === 'lv-love'
+            ? `${face}<span class="lv-event"><strong>${esc(name)}</strong> ${esc(text)}</span>`
+            : `${face}<span class="lv-bubble"><strong>${esc(name)}</strong><span>${esc(text)}</span></span>`;
+        if (face) I.hydrateStorage(row);
         box.append(row);
         while (box.children.length > 40) box.firstChild.remove();
         box.scrollTop = box.scrollHeight;
@@ -195,8 +207,11 @@ document.addEventListener('DOMContentLoaded', () => {
         video.play().catch(() => {});
         $('lv-chat').innerHTML = '';
         $('lv-title').value = '';
+        setAudience(L.audience || 'public');
         const fans = s.followerCount || 0;
-        $('lv-reach').textContent = `Your ${s.friends.length} ${s.friends.length === 1 ? 'friend' : 'friends'}${fans ? ` and ${fans} ${fans === 1 ? 'follower' : 'followers'}` : ''} will get a notification and can watch, chat and send hearts. Best with up to 15 people watching.`;
+        const people = s.friends.length + fans;
+        L.reachText = `Your ${s.friends.length} ${s.friends.length === 1 ? 'friend' : 'friends'}${fans ? ` and ${fans} ${fans === 1 ? 'follower' : 'followers'}` : ''} ${people === 1 ? 'gets' : 'get'} a notification`;
+        paintReach();
         paintHost(s.profile, 'Preview — only you can see this');
         dialog.classList.add('hosting');
         setMode('setup');
@@ -205,10 +220,22 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => $('lv-title').focus(), 200);
     }
 
+    function setAudience(a) {
+        L.audience = a;
+        document.querySelectorAll('.lv-aud [data-aud]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.aud === a)));
+        paintReach();
+    }
+    function paintReach() {
+        if (!L.reachText) return;
+        $('lv-reach').textContent = L.audience === 'public'
+            ? `${L.reachText}, and anyone on Cordial can find and join your live. Best with up to ${MAX_VIEWERS} people watching.`
+            : `${L.reachText} and only they can watch. Best with up to ${MAX_VIEWERS} people watching.`;
+    }
+
     async function startBroadcast() {
         const title = $('lv-title').value.trim().slice(0, 120);
         $('lv-go').disabled = true;
-        const { data, error } = await client.from('diary_live_streams').insert({ title }).select('id, host, title, started_at').single();
+        const { data, error } = await client.from('diary_live_streams').insert({ title, audience: L.audience }).select('id, host, title, audience, started_at').single();
         $('lv-go').disabled = false;
         if (error) {
             app.showToast(/duplicate|unique/i.test(error.message) ? 'You already have a live video going — end it first' : 'Couldn’t start your live video');
@@ -221,7 +248,8 @@ document.addEventListener('DOMContentLoaded', () => {
         startClock();
         L.viewers = 0;
         paintViewers();
-        status('<span class="lv-wait">You’re live. Your friends and followers have been told — waiting for someone to join…</span>');
+        status(`<span class="lv-wait">You’re live${L.stream.audience === 'public' ? ' to everyone' : ''}. Waiting for someone to join…</span>`);
+        paintTitle();
         joinChannel(true);
         L.beat = setInterval(() => {
             client.from('diary_live_streams').update({ last_seen: new Date().toISOString() }).eq('id', L.stream.id).then(() => {});
@@ -301,9 +329,9 @@ document.addEventListener('DOMContentLoaded', () => {
     async function watch(id) {
         if (!social.requireSignIn('Sign in to watch your friends live.')) return;
         if (L.mode === 'live') return app.showToast('End your own live video first');
-        if (L.mode) cleanup();
+        if (L.mode) cleanup(true);
         const { data } = await client.from('diary_live_streams')
-            .select(`id, host, title, started_at, last_seen, ended_at, host_profile:diary_profiles!diary_live_streams_host_fkey(${PROFILE})`)
+            .select(`id, host, title, audience, started_at, last_seen, ended_at, host_profile:diary_profiles!diary_live_streams_host_fkey(${PROFILE})`)
             .eq('id', id).maybeSingle();
         if (!data) return app.showToast('That live video isn’t available');
         if (data.host === me()) return app.showToast('That’s your own live video');
@@ -322,6 +350,8 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         setMode('watch');
+        paintTitle();
+        paintHop();
         startClock();
         L.viewers = 0;
         paintViewers();
@@ -403,8 +433,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (L.pc) try { L.pc.close(); } catch (e) {}
                 L.pc = null;
             })
-            .on('broadcast', { event: 'chat' }, ({ payload }) => addChat(payload.name || 'Someone', String(payload.text || '').slice(0, 200)))
-            .on('broadcast', { event: 'heart' }, () => floatHeart())
+            .on('broadcast', { event: 'chat' }, ({ payload }) => addChat(payload.name || 'Someone', String(payload.text || '').slice(0, 200), '', { id: String(payload.from || '').split(':')[0], name: payload.name, av: payload.av }))
+            .on('broadcast', { event: 'heart' }, ({ payload }) => {
+                floatHeart();
+                // "sent ❤️" once in a while per person, so the chat isn't flooded
+                const uid = String((payload && payload.from) || '').split(':')[0];
+                const now = Date.now();
+                L.lovedAt = L.lovedAt || new Map();
+                if (payload && payload.name && now - (L.lovedAt.get(uid) || 0) > 20000) {
+                    L.lovedAt.set(uid, now);
+                    addChat(String(payload.name).split(' ')[0], 'sent ❤️', 'lv-love', { id: uid, name: payload.name, av: payload.av });
+                }
+            })
             .on('presence', { event: 'sync' }, () => {
                 const keys = Object.keys(channel.presenceState());
                 L.viewers = keys.filter(k => !k.endsWith(':host')).length;
@@ -415,18 +455,19 @@ document.addEventListener('DOMContentLoaded', () => {
                     [...L.peers.keys()].forEach(id => { if (!keys.includes(id)) closePeer(id); });
                 }
             })
-            .on('presence', { event: 'join' }, ({ key }) => {
-                if (isHost && !key.endsWith(':host')) {
-                    const name = (key.split(':')[0] === me()) ? 'You' : ((s.friends.find(f => f.id === key.split(':')[0]) || {}).display_name || 'A friend');
-                    addChat(name, 'joined 👋', 'lv-join');
-                }
+            .on('presence', { event: 'join' }, ({ key, newPresences }) => {
+                if (key.endsWith(':host') || key === L.selfId) return;
+                const meta = (newPresences && newPresences[0]) || {};
+                const uid = key.split(':')[0];
+                const name = uid === me() ? 'You' : meta.name || ((s.friends.find(f => f.id === uid) || {}).display_name) || 'Someone';
+                addChat(String(name).split(' ')[0], 'joined 👋', 'lv-join', { id: uid, name, av: meta.av });
             })
             .subscribe(async state => {
                 if (state !== 'SUBSCRIBED') {
                     if (state === 'CHANNEL_ERROR' && !isHost) status('<span>You can’t watch this live video.</span>');
                     return;
                 }
-                await channel.track({ at: Date.now() });
+                await channel.track({ at: Date.now(), name: s.profile.display_name, av: s.profile.avatar_path || null });
                 if (isHost) send('hello', {});
                 else send('join', {});
             });
@@ -438,7 +479,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Leaving ----------
-    function cleanup() {
+    function cleanup(keepOpen = false) {
         clearInterval(L.beat);
         clearInterval(L.clock);
         if (L.mode === 'watch') send('leave', {});
@@ -453,8 +494,63 @@ document.addEventListener('DOMContentLoaded', () => {
         L.mode = null;
         video.srcObject = null;
         dialog.classList.remove('hosting');
-        if (dialog.open) dialog.close();
+        $('lv-title-line').hidden = true;
+        $('lv-hop').hidden = true;
+        if (dialog.open && !keepOpen) dialog.close();
     }
+
+    // ---------- Many lives at once: hop between them ----------
+    function others() { return (L.list || []).filter(x => x.host !== me()); }
+    function paintHop() {
+        const list = others();
+        const i = list.findIndex(x => L.stream && x.id === L.stream.id);
+        $('lv-hop').hidden = !(L.mode === 'watch' && list.length > 1);
+        $('lv-hop-n').textContent = list.length > 1 ? `${Math.max(1, i + 1)}/${list.length}` : '';
+    }
+    async function hop(step) {
+        if (L.mode !== 'watch' && L.mode !== 'ended') return;
+        await loadLive();
+        const list = others();
+        if (list.length < 2) return app.showToast('No other lives right now');
+        const i = list.findIndex(x => L.stream && x.id === L.stream.id);
+        const next = list[(i + step + list.length) % list.length];
+        if (next) watch(next.id);
+    }
+    // Swipe up / down on the video to change live (phones)
+    let touchY = null;
+    dialog.addEventListener('touchstart', e => { if (L.mode === 'watch' || L.mode === 'ended') touchY = e.touches[0].clientY; }, { passive: true });
+    dialog.addEventListener('touchend', e => {
+        if (touchY === null) return;
+        const dy = e.changedTouches[0].clientY - touchY;
+        touchY = null;
+        if (Math.abs(dy) > 90 && !e.target.closest('.lv-bar, .lv-chat')) hop(dy < 0 ? 1 : -1);
+    }, { passive: true });
+
+    async function shareLive() {
+        if (!L.stream) return;
+        const link = `${location.origin}${location.pathname}?live=${encodeURIComponent(L.stream.id)}`;
+        const title = L.stream.title || 'Live on Cordial';
+        if (navigator.share) {
+            try { await navigator.share({ title, text: `Watch “${title}” live on Cordial`, url: link }); return; }
+            catch (e) { if (e && e.name === 'AbortError') return; }
+        }
+        try { await navigator.clipboard.writeText(link); app.showToast('Live link copied'); }
+        catch (e) { app.ask({ title: 'Live link', text: 'Copy this link to share the live:', value: link, ok: 'Done' }); }
+    }
+
+    // A shared link: ?live=<id>
+    (() => {
+        const id = new URLSearchParams(location.search).get('live');
+        if (!id || !/^[0-9a-f-]{36}$/i.test(id)) return;
+        const url = new URL(location.href);
+        url.searchParams.delete('live');
+        history.replaceState(history.state, '', url.pathname + url.search + url.hash);
+        let tries = 0;
+        const wait = setInterval(() => {
+            if (me()) { clearInterval(wait); watch(id); }
+            else if (++tries > 40) clearInterval(wait);
+        }, 500);
+    })();
 
     async function leave() {
         if (L.mode === 'live') {
@@ -467,6 +563,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Controls ----------
     $('lv-go').addEventListener('click', startBroadcast);
+    document.querySelectorAll('.lv-aud [data-aud]').forEach(b => b.addEventListener('click', () => setAudience(b.dataset.aud)));
+    $('lv-share').addEventListener('click', shareLive);
+    $('lv-hop').addEventListener('click', e => { const b = e.target.closest('[data-hop]'); if (b) hop(Number(b.dataset.hop)); });
     $('lv-title').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); startBroadcast(); } });
     $('lv-close').addEventListener('click', leave);
     $('lv-end').addEventListener('click', leave);
@@ -474,7 +573,7 @@ document.addEventListener('DOMContentLoaded', () => {
     $('lv-mute').addEventListener('click', toggleMute);
     $('lv-heart').addEventListener('click', () => {
         floatHeart();
-        send('heart', {});
+        send('heart', { name: s.profile.display_name, av: s.profile.avatar_path || null });
         if (navigator.vibrate) navigator.vibrate(8);
     });
     $('lv-say').addEventListener('submit', e => {
@@ -483,8 +582,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const text = input.value.trim().slice(0, 200);
         if (!text || !L.channel) return;
         input.value = '';
-        addChat('You', text, 'mine');
-        send('chat', { name: s.profile.display_name.split(' ')[0], text });
+        addChat('You', text, 'mine', { id: me(), name: s.profile.display_name, av: s.profile.avatar_path });
+        send('chat', { name: s.profile.display_name.split(' ')[0], text, av: s.profile.avatar_path || null });
     });
     $('lv-host').addEventListener('click', e => {
         const b = e.target.closest('[data-action="follow"]');
