@@ -554,6 +554,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (L.mode) return app.showToast('You’re already in a live video');
         if (!navigator.mediaDevices || !window.RTCPeerConnection) return app.showToast('Live video isn’t supported in this browser');
         try {
+            audioMode('play-and-record');
             L.media = await navigator.mediaDevices.getUserMedia({
                 video: cameraFor(L.facing),
                 audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
@@ -709,20 +710,20 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------- Watching ----------
     // The tap that opens a live is the user's permission to play sound. Using it right away (before anything
     // async) unlocks audio on phones that otherwise only allow muted playback.
-    let audioUnlock = null;
+    // iPhones (iOS 16.4+) let a page say what kind of sound it makes: "playback" plays even with the silent
+    // switch on, "play-and-record" suits hosting. Other browsers don't need this.
+    function audioMode(type) {
+        try { if (navigator.audioSession) navigator.audioSession.type = type; } catch (e) { /* not supported */ }
+    }
     function unlockSound() {
+        audioMode('playback');
+        // Start the player inside the tap itself: browsers then allow it to play with sound later, when the
+        // host's stream arrives (no Web Audio trick — on iPhones that made sound obey the silent switch)
         try {
-            const Ctx = window.AudioContext || window.webkitAudioContext;
-            if (Ctx) {
-                audioUnlock = audioUnlock || new Ctx();
-                if (audioUnlock.state === 'suspended') audioUnlock.resume().catch(() => {});
-                const b = audioUnlock.createBuffer(1, 1, 22050);
-                const n = audioUnlock.createBufferSource();
-                n.buffer = b;
-                n.connect(audioUnlock.destination);
-                n.start(0);
-            }
-        } catch (e) { /* not needed on this browser */ }
+            video.muted = false;
+            const p = video.play();
+            if (p && p.catch) p.catch(() => {});
+        } catch (e) { /* nothing to play yet */ }
         L.wantSound = true;
     }
     // Play the live with sound; only if the browser refuses, play muted and offer "Tap for sound"
@@ -787,6 +788,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (video.srcObject !== stream) {
                 video.srcObject = stream;
                 playWithSound();
+                clearTimeout(L.soundCheck);
+                L.soundCheck = setTimeout(() => {
+                    if (L.mode !== 'watch' || video.srcObject !== stream) return;
+                    const a = stream.getAudioTracks();
+                    if (!a.length || a.every(t => t.readyState === 'ended')) app.showToast('No sound from the host yet — their microphone may be off');
+                }, 4000);
             } else if (e.track.kind === 'audio' && video.muted && L.wantSound) {
                 playWithSound(); // the sound arrived after the picture
             }
@@ -946,6 +953,8 @@ document.addEventListener('DOMContentLoaded', () => {
         L.channel = null;
         L.stream = null;
         L.mode = null;
+        clearTimeout(L.soundCheck);
+        audioMode('auto');
         video.srcObject = null;
         video.style.transform = '';
         dialog.classList.remove('hosting');
