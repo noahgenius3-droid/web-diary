@@ -67,6 +67,36 @@ document.addEventListener('DOMContentLoaded', () => {
         S.tts = { key, bytes: await res.arrayBuffer() };
         return S.tts.bytes;
     }
+    // ---------- The device's own voices (preview narration when the server voice isn't set up) ----------
+    const FEMALE = /female|samantha|victoria|karen|moira|tessa|zira|fiona|serena|allison|ava\b|susan|joanna|kate|catherine|libby|sonia|natasha|aria|jenny|google us english|google uk english female/i;
+    const MALE = /\bmale\b|daniel|alex\b|fred|oliver|david|mark\b|arthur|aaron|tom\b|ryan|guy\b|george|james|thomas|google uk english male/i;
+    function deviceVoice(gender) {
+        if (!('speechSynthesis' in window)) return null;
+        const all = speechSynthesis.getVoices();
+        const en = all.filter(v => /^en/i.test(v.lang));
+        const want = gender === 'male' ? MALE : FEMALE, avoid = gender === 'male' ? FEMALE : MALE;
+        return en.find(v => want.test(v.name) && !avoid.test(v.name)) || all.find(v => want.test(v.name) && !avoid.test(v.name)) || en[0] || all[0] || null;
+    }
+    if ('speechSynthesis' in window) { speechSynthesis.getVoices(); speechSynthesis.addEventListener?.('voiceschanged', () => speechSynthesis.getVoices()); }
+    // Speak the slides one after another; tell the caller when each starts, and while it's speaking
+    function speakSlides(slides, gender, onSlide, onSpeaking) {
+        speechSynthesis.cancel();
+        const voice = deviceVoice(gender);
+        const isFemaleVoice = voice && FEMALE.test(voice.name);
+        slides.forEach((sl, k) => {
+            if (sl.kind === 'end') return;
+            const u = new SpeechSynthesisUtterance(sl.text);
+            if (voice) { u.voice = voice; u.lang = voice.lang; }
+            u.rate = 0.98;
+            // When the device has no voice of the chosen kind, shape the one it has
+            u.pitch = gender === 'female' ? (isFemaleVoice ? 1 : 1.25) : (voice && MALE.test(voice.name) ? 1 : 0.8);
+            u.onstart = () => { onSlide(k); onSpeaking(true); };
+            u.onend = () => onSpeaking(false);
+            u.onerror = () => onSpeaking(false);
+            speechSynthesis.speak(u);
+        });
+    }
+
     // Each slide lasts about as long as it takes to read it aloud
     function narratedTimes(slides, seconds) {
         const words = slides.map(s => (s.kind === 'end' ? 0 : String(s.text).split(/\s+/).length + (s.kind === 'title' ? 2 : 0)));
@@ -799,6 +829,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     function stopSound() {
         if (!S) return;
+        if ('speechSynthesis' in window) speechSynthesis.cancel();
+        S.deviceSync = null;
         if (S.engine) { S.engine.stop(); S.engine = null; }
         if (S.musicEl) { S.musicEl.pause(); S.musicEl = null; }
         if (S.clean) { S.clean.stop(); S.clean = null; }
@@ -878,7 +910,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="nm-seg" role="radiogroup" aria-label="Narrator voice">
                             ${[['off', '🔇 None'], ['female', '👩🏾 Female'], ['male', '👨🏾 Male']].map(([k, l]) => `<button type="button" role="radio" aria-checked="${S.narrate === k}" data-nm="narrate" data-voice="${k}">${l}</button>`).join('')}
                         </div>
-                        ${S.narrate !== 'off' && ttsReady === false ? '<p class="nm-hint">Real narrator voices aren’t switched on for Cordial yet. The presenter still moves with the words — or switch on “Add my voice” below and read it yourself.</p>'
+                        ${S.narrate !== 'off' && ttsReady === false ? `<p class="nm-hint">Tap “Preview with sound” to hear the presenter read your note in ${S.narrate === 'male' ? 'a male' : 'a female'} voice from this device. Saving that voice inside the video needs Cordial’s voice service (coming soon) — until then the video shows the presenter speaking the words, or switch on “Add my voice” and read it yourself.</p>`
                             : S.narrate !== 'off' ? '<p class="nm-hint">A natural voice reads your note, and each slide lasts as long as it’s being read. Tap “Preview with sound” to hear it.</p>' : ''}
                     </div>
                     ${musicPicker('Music')}
@@ -989,6 +1021,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     app.showToast(e.message || 'Couldn’t get the narrator’s voice');
                 }
                 refreshPlay();
+            } else if (S.narrate !== 'off' && 'speechSynthesis' in window) {
+                // Rough timing up front; each slide re-syncs the moment its sentence starts being spoken
+                per = slides.map(sl => (sl.kind === 'end' ? 3 : Math.max(2, String(sl.text).split(/\s+/).length / 2.4 + 0.8)));
+                let speaking = false;
+                S.deviceSync = null;
+                speakSlides(slides, S.narrate, k => { S.deviceSync = k; }, on => { speaking = on; });
+                level = () => (speaking ? 0.3 + 0.6 * Math.abs(Math.sin(performance.now() / 1000 * 13)) * (0.6 + 0.4 * Math.sin(performance.now() / 190)) : 0);
             }
             if (S.ac !== ac) return;
             startMusic(ac, ac.destination);
@@ -996,8 +1035,15 @@ document.addEventListener('DOMContentLoaded', () => {
         cancelAnimationFrame(S.raf);
         const total = totalOf(slides, per);
         const t0 = performance.now();
+        let start = t0;
         const loop = now => {
-            const t = reduce && !withSound ? timesOf(slides, per)[0] * 0.8 : ((now - t0) / 1000) % total;
+            // Device narration: jump to the slide whose sentence just started
+            if (S.deviceSync !== null && S.deviceSync !== undefined) {
+                const k = S.deviceSync;
+                S.deviceSync = null;
+                start = now - timesOf(slides, per).slice(0, k).reduce((x, y) => x + y, 0) * 1000;
+            }
+            const t = reduce && !withSound ? timesOf(slides, per)[0] * 0.8 : ((now - start) / 1000) % total;
             const lv = level ? level() : null;
             if (S.musicGain && level && S.ac) S.musicGain.gain.setTargetAtTime(lv > 0.05 ? M().volume * 0.35 : M().volume, S.ac.currentTime, 0.1);
             draw(ctx, slides, t, per, pal, S.character, lv);
@@ -1308,7 +1354,7 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (what === 'char') {
             S.character = el.dataset.char;
             // A presenter reads in their own voice (when voices are available)
-            if (PRESENTER_VOICE[S.character] && await checkTTS()) S.narrate = PRESENTER_VOICE[S.character];
+            if (PRESENTER_VOICE[S.character]) { await checkTTS(); S.narrate = PRESENTER_VOICE[S.character]; }
             paint();
         } else if (what === 'narrate') { S.narrate = el.dataset.voice; await checkTTS(); paint(); }
         else if (what === 'music') {
