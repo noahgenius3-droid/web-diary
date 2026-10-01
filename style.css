@@ -14135,3 +14135,9 @@ dialog.nsv::backdrop { background: rgba(0, 0, 0, 0.7); }
 .ns-rules li { display: flex; gap: 10px; align-items: flex-start; color: var(--text-muted); font-size: 0.84rem; line-height: 1.45; }
 .ns-rules strong { color: var(--text); }
 @media (prefers-reduced-motion: reduce) { .nsc-dot, .nsv[open] { animation: none; } }
+
+/* Streak chips: sized to their content (the chat header stacks its name column, which stretched the chip) */
+.ns-chip.head { align-self: flex-start; width: fit-content; max-width: 100%; }
+.convo-top .ns-chip.row { flex: none; margin: 0 6px 0 4px; }
+.convo-top strong { min-width: 0; }
+.convo-bottom .ns-chip.row { flex: none; margin: 0 0 0 6px; }
