@@ -3600,6 +3600,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${guestCardHTML()}
                     ${window.diaryStories ? window.diaryStories.strip() : ''}
                     ${window.diaryLive ? window.diaryLive.strip() : ''}
+                    ${window.diarySpaces && window.diarySpaces.feedStrip ? window.diarySpaces.feedStrip() : ''}
                     <button class="new-posts" data-action="feed-refresh"${s.feedStale ? '' : ' hidden'}><svg class="i"><use href="#i-refresh"/></svg>New posts</button>
                     <div class="feed-bar">
                         <div class="feed-tabs" role="tablist" aria-label="Show">
@@ -3610,6 +3611,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
                         <button class="icon-btn feed-search-btn" data-action="feed-search-toggle" aria-label="Search posts" aria-expanded="${!!s.feedSearchOpen}"><svg class="i"><use href="#i-search"/></svg></button>
                         <button class="chip reels-chip" data-action="go-reels"><svg class="i"><use href="#i-reel"/></svg><span>Reels</span></button>
+                        <button type="button" class="feed-create" data-action="feed-create" aria-haspopup="menu" aria-label="Create: post, story, reel, live or audio room"><svg class="i"><use href="#i-plus"/></svg></button>
+                    </div>
+                    <div class="feed-types" role="group" aria-label="Show only">
+                        ${FEED_KINDS.map(([k, l, icon]) => `<button type="button" class="feed-type" aria-pressed="${(s.feedType || 'all') === k}" data-action="feed-type" data-type="${k}">${icon ? `<svg class="i"><use href="#${icon}"/></svg>` : ''}${l}</button>`).join('')}
                     </div>
                     <label class="search feed-search"${s.feedSearchOpen ? '' : ' hidden'}>
                         <svg class="i"><use href="#i-search"/></svg>
@@ -3645,7 +3650,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${filterLabel && s.feedFilter !== 'saved' ? `<button class="chip filter-chip" data-action="feed-all"><svg class="i"><use href="#i-close"/></svg>${esc(filterLabel)} · show everything</button>` : ''}
                     <div class="feed-list">
                         ${feedItems(list).join('') || `<div class="empty">
-                            <p class="empty-title">${filterLabel ? 'Nothing here yet' : 'No posts yet'}</p>
+                            <p class="empty-title">${(s.feedType || 'all') !== 'all' ? `No ${(FEED_KINDS.find(t => t[0] === s.feedType) || [])[1].toLowerCase()} posts yet` : filterLabel ? 'Nothing here yet' : 'No posts yet'}</p>
                             <p>${s.feedFilter === 'saved' ? 'Tap the bookmark on any post to save it here — only you can see what you save.' : 'Turn on <strong>Share with friends</strong> in an entry, or add friends to see theirs here.'}</p>
                         </div>`}
                     </div>
@@ -3812,6 +3817,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Posts and reels in one timeline (reels come from stories.js)
+    const FEED_KINDS = [['all', 'All', ''], ['photo', 'Photos', 'i-image'], ['video', 'Videos', 'i-reel'], ['audio', 'Audio', 'i-music'], ['text', 'Text', 'i-notes']];
+
     function feedItems(list) {
         const reels = window.diaryStories
             ? window.diaryStories.feedReels({
@@ -3825,6 +3832,15 @@ document.addEventListener('DOMContentLoaded', () => {
             ...list.map(p => ({ at: p.sortAt || Date.parse(p.shared_at), post: p, html: () => postCard(p) })),
             ...reels.map(r => ({ at: Date.parse(r.created_at), post: { ...r, sortAt: Date.parse(r.created_at), reposts: [] }, html: () => window.diaryStories.feedCard(r) }))
         ];
+        const type = s.feedType || 'all';
+        const isReel = i => !!i.post.video_path;
+        const keep = i => type === 'all' ? true
+            : type === 'video' ? isReel(i)
+            : isReel(i) ? false
+            : type === 'photo' ? (i.post.photos || []).length > 0
+            : type === 'audio' ? !!i.post.audio
+            : type === 'text' ? !(i.post.photos || []).length && !i.post.audio : true;
+        for (let k = items.length - 1; k >= 0; k--) if (!keep(items[k])) items.splice(k, 1);
         const ranked = s.feedFilter === 'all' && !s.feedAuthor;
         if (ranked && s.feedSort === 'popular') {
             items.forEach(i => { i.score = popularScore(i.post); });
@@ -3837,7 +3853,7 @@ document.addEventListener('DOMContentLoaded', () => {
             items.sort((a, b) => b.at - a.at);
         }
         const html = items.map(item => item.html());
-        if (ranked && s.feedSort === 'foryou' && html.length > 2) html.splice(3, 0, pymkStripHTML());
+        if (ranked && type === 'all' && s.feedSort === 'foryou' && html.length > 2) html.splice(3, 0, pymkStripHTML());
         return html;
     }
 
@@ -5352,6 +5368,19 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         'refresh-feed': () => { s.feed = null; app.render(); },
         'feed-all': () => { s.feedAuthor = null; s.feedFilter = 'all'; app.render(); },
+        'feed-type': el => { s.feedType = el.dataset.type; app.render(); },
+        'feed-create': el => {
+            const run = name => () => { const fn = app.actions[name]; if (fn) fn(el); };
+            app.openPopover(el, [
+                { label: 'Post', icon: 'i-pencil', tile: true, onClick: () => { const t = $('feed-text'); if (t) { t.focus(); t.scrollIntoView({ block: 'center', behavior: 'smooth' }); } } },
+                { label: 'Photo', icon: 'i-image', tile: true, onClick: run('feed-add-photos') },
+                { label: 'Story', icon: 'i-plus', tile: true, onClick: () => window.diaryStories && window.diaryStories.addStory() },
+                { label: 'Reel', icon: 'i-reel', tile: true, onClick: () => window.diaryStories && window.diaryStories.addReel() },
+                { label: 'Live', icon: 'i-live', tile: true, onClick: run('live-start') },
+                { label: 'Audio room', icon: 'i-headphones', tile: true, onClick: run('space-new') },
+                { label: 'Note → video', icon: 'i-sparkle', tile: true, onClick: run('note-media') }
+            ]);
+        },
         'feed-filter': el => { s.feedAuthor = null; s.feedFilter = el.dataset.filter; app.render(); },
         'feed-tag': el => {
             s.feedAuthor = null;

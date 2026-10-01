@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const content = document.getElementById('content');
     const FEED_BUCKET = 'diary-feed';
     const TABS = [['all', 'For you'], ['news', 'News'], ['posts', 'Posts'], ['reels', 'Reels'], ['live', 'Live'], ['spaces', 'Spaces'], ['library', 'Library'], ['groups', 'Communities'], ['people', 'People']];
+    const TAB_ICONS = { all: 'i-sparkle', news: 'i-globe', posts: 'i-feed', reels: 'i-reel', live: 'i-live', spaces: 'i-headphones', library: 'i-book', groups: 'i-users', people: 'i-user-plus' };
 
     // ---------- News ----------
     // Headlines come from publishers' feeds through our diary-news function; each story opens on the publisher's site
@@ -308,7 +309,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return `
                 <div class="explore">
                     <nav class="ex-tabs" role="tablist" aria-label="Show">
-                        ${TABS.map(([k, l]) => `<button type="button" class="cm-filter" role="tab" aria-selected="${tab === k}" data-action="ex-tab" data-tab="${k}">${l}</button>`).join('')}
+                        ${TABS.map(([k, l]) => `<button type="button" class="cm-filter" role="tab" aria-selected="${tab === k}" data-action="ex-tab" data-tab="${k}"><svg class="i"><use href="#${TAB_ICONS[k]}"/></svg>${l}</button>`).join('')}
                     </nav>
                     ${newsTab()}
                 </div>`;
@@ -371,7 +372,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${tags.length ? `<div class="ex-hero-tags" aria-label="Hot right now">${tags.slice(0, 6).map(([t]) => `<button type="button" class="ex-hero-tag" data-action="ex-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('')}</div>` : ''}
                 </section>
                 <nav class="ex-tabs" role="tablist" aria-label="Show">
-                    ${TABS.map(([k, l]) => `<button type="button" class="cm-filter" role="tab" aria-selected="${tab === k}" data-action="ex-tab" data-tab="${k}">${l}</button>`).join('')}
+                    ${TABS.map(([k, l]) => `<button type="button" class="cm-filter" role="tab" aria-selected="${tab === k}" data-action="ex-tab" data-tab="${k}"><svg class="i"><use href="#${TAB_ICONS[k]}"/></svg>${l}</button>`).join('')}
                 </nav>
                 <div id="ex-body">${q ? searchResults(q) : sections.join('')}</div>
             </div>`;

@@ -33,9 +33,9 @@ document.addEventListener('DOMContentLoaded', () => {
         L.upcoming = data.upcoming || [];
         L.mine = data.mine || [];
         L.loaded = true;
-        if (['spaces', 'explore'].includes(app.state.view)) app.render();
+        if (['spaces', 'explore', 'feed'].includes(app.state.view)) app.render();
     }
-    setInterval(() => { if (!document.hidden && ['spaces', 'explore'].includes(app.state.view)) load(); }, 30000);
+    setInterval(() => { if (!document.hidden && ['spaces', 'explore', 'feed'].includes(app.state.view)) load(); }, 30000);
 
     function whenText(iso) {
         const d = new Date(iso);
@@ -113,6 +113,29 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="cl-list">
                     ${[...list, ...soon].map(x => card(x)).join('')}
                     <button type="button" class="cl-host inline" data-action="space-new">${ic('i-plus')}host a room</button>
+                </div>
+            </section>`;
+    }
+
+    // ---------- The Feed: live audio rooms as a row of bubbles (only when some are live) ----------
+    function feedStrip() {
+        if (!me()) return '';
+        if (!L.loaded) { load(); return ''; }
+        const live = hereFirst(L.live).slice(0, 12);
+        if (!live.length) return '';
+        return `
+            <section class="sp-feed" aria-label="Live audio rooms">
+                <p class="sp-feed-h"><span class="sp-live"><i aria-hidden="true"></i>LIVE</span>Join a live audio room</p>
+                <div class="sp-feed-row">
+                    ${live.map(x => {
+                        const p = { id: x.host, ...(x.host_profile || {}) };
+                        const n = Math.max(Number(x.listening || 0), 1);
+                        return `
+                        <button type="button" class="sp-bubble theme-${esc(x.theme || 'violet')}${R && R.id === x.id ? ' here' : ''}" data-action="space-open" data-id="${esc(x.id)}" aria-label="${esc(x.title)} — ${n} listening">
+                            <span class="sp-bubble-ring">${avatar(p, 'lg')}<span class="sp-bubble-n">${n > 999 ? `${(n / 1000).toFixed(1)}K` : n}</span></span>
+                            <span class="sp-bubble-t">${esc(x.title)}</span>
+                        </button>`;
+                    }).join('')}
                 </div>
             </section>`;
     }
@@ -311,7 +334,7 @@ document.addEventListener('DOMContentLoaded', () => {
         heartbeat();
         R.meterTimer = setInterval(measure, 250);
         expand();
-        if (['spaces', 'explore'].includes(app.state.view)) app.render();
+        if (['spaces', 'explore', 'feed'].includes(app.state.view)) app.render();
         if (roleOf(me()) === 'host') app.showToast('You’re live — tap the mic to talk');
         load();
     }
@@ -936,5 +959,5 @@ document.addEventListener('DOMContentLoaded', () => {
         return [{ label: 'Back to your space', icon: 'i-headphones', onClick: expand }, ...before];
     };
 
-    window.diarySpaces = { exploreSection, open: enter, refresh: load, current: () => (R ? R.id : null) };
+    window.diarySpaces = { exploreSection, feedStrip, open: enter, refresh: load, current: () => (R ? R.id : null) };
 });
