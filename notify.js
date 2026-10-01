@@ -17,7 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (['entry_like', 'post_like', 'reel_like', 'library_like', 'entry_reaction', 'story_reaction', 'entry_repost'].includes(t)) return 'reactions';
         if (['entry_comment', 'post_comment', 'reel_comment', 'post_activity'].includes(t)) return 'comments';
         if (['mention', 'reply'].includes(t)) return 'mentions';
-        if (['new_follower', 'friend_request', 'friend_accepted'].includes(t)) return 'people';
+        if (['new_follower', 'friend_request', 'friend_accepted', 'new_post'].includes(t)) return 'people';
         if (['community_post', 'community_join', 'call_started'].includes(t)) return 'groups';
         return 'other';
     }
@@ -114,7 +114,7 @@ document.addEventListener('DOMContentLoaded', () => {
         community_post: ['group', 'i-users'], community_join: ['group', 'i-users'],
         call_started: ['call', 'i-phone'], missed_call: ['missed', 'i-phone-off'],
         entry_repost: ['group', 'i-repost'], reel_like: ['like', 'i-heart-fill'], reel_comment: ['comment', 'i-chat'], library_like: ['like', 'i-heart-fill'],
-        live_started: ['call', 'i-live'], space_live: ['call', 'i-headphones'], new_follower: ['group', 'i-user-plus'],
+        live_started: ['call', 'i-live'], new_post: ['friend', 'i-feed'], space_live: ['call', 'i-headphones'], new_follower: ['group', 'i-user-plus'],
         entry_reaction: ['like', 'i-smile'], story_reaction: ['like', 'i-smile'],
         mention: ['comment', 'i-chat'], reply: ['comment', 'i-reply'], new_login: ['missed', 'i-shield'],
         book_request: ['group', 'i-store'], book_request_update: ['group', 'i-store'], book_message: ['comment', 'i-store']
@@ -160,6 +160,7 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'missed_call': return `Missed voice call from ${who}`;
             case 'entry_repost': return `${who} reposted your post${quote}`;
             case 'reel_like': return `${who} liked your reel${quote}`;
+            case 'new_post': return `${who} posted on the Feed${quote || (d.photos ? ` — ${d.photos === 1 ? 'a photo' : `${d.photos} photos`}` : '')}`;
             case 'reel_comment': return `${who} commented on your reel:${quote}`;
             case 'library_like': return `${who} loved your writing${quote}`;
             case 'live_started': return `${who} is live now${quote}`;
@@ -239,6 +240,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 app.setView('reels', { reelId: d.reel_id });
                 if (x.type === 'reel_comment' && window.diaryStories) window.diaryStories.openReelComments(d.reel_id);
                 break;
+            case 'new_post':
             case 'entry_like':
             case 'entry_repost':
             case 'entry_comment':

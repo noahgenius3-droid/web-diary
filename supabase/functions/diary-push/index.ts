@@ -49,6 +49,22 @@ function message(type: string, name: string, d: any = {}, actor = "") {
       return { title: `${name} replied to your comment`, body: String(d.snippet || "").slice(0, 180), url: d.entry_id ? `/#/post/${d.entry_id}` : d.post_id ? `/#/post/g-${d.post_id}` : "/#/reels", tag: `creply-${d.entry_id || d.post_id || d.reel_id}` };
     case "tagged":
       return { title: `${name} tagged you in ${d.kind === "comment" ? "a comment" : "a post"}`, body: String(d.snippet || "").slice(0, 180), url: d.entry_id ? `/#/post/${d.entry_id}` : d.post_id ? `/#/post/g-${d.post_id}` : "/#/reels", tag: `tag-${d.comment_id || d.entry_id || d.post_id}` };
+    case "entry_like":
+    case "entry_reaction": {
+      const entry = d.entry_id || d.entry;
+      return { title: `${name} reacted ${d.emoji || "👍"} to your post`, body: d.snippet ? `“${String(d.snippet).slice(0, 140)}”` : "Tap to see your post", url: entry ? `/#/post/${entry}` : "/#/feed", tag: `like-${entry || "post"}` };
+    }
+    case "post_like":
+      return { title: `${name} reacted ${d.emoji || "👍"} to your post`, body: d.community_name ? `In ${d.community_name}` : "Tap to see your post", url: d.post_id ? `/#/post/g-${d.post_id}` : "/#/feed", tag: `like-g-${d.post_id || "post"}` };
+    case "reel_like":
+      return { title: `${name} liked your reel ❤️`, body: d.snippet ? `“${String(d.snippet).slice(0, 140)}”` : "Tap to watch it", url: "/#/reels", tag: `like-reel-${d.reel_id || ""}` };
+    case "new_post":
+      return {
+        title: `${name} posted on the Feed`,
+        body: d.snippet ? String(d.snippet).slice(0, 180) : d.photos ? `Shared ${d.photos === 1 ? "a photo" : `${d.photos} photos`}` : "Tap to see it",
+        url: d.entry_id ? `/#/post/${d.entry_id}` : "/#/feed",
+        tag: `new-post-${actor}`,
+      };
     case "referral_joined":
       return { title: `🎉 ${name} joined Cordial`, body: "They signed up with your invite — you're now friends. Say hi!", url: profile, tag: `ref-${d.referred}` };
     case "announcement":
@@ -108,7 +124,7 @@ Deno.serve(async (req) => {
   let sent = 0;
   await Promise.all((subs || []).map(async (sub) => {
     try {
-      await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, { TTL: n.type === "call_started" ? 120 : n.type === "space_live" ? 3600 : 86400, urgency: "high" });
+      await webpush.sendNotification({ endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } }, payload, { TTL: n.type === "call_started" ? 120 : n.type === "space_live" ? 3600 : 86400, urgency: n.type === "new_post" || n.type.endsWith("_like") || n.type === "entry_reaction" ? "normal" : "high" });
       sent++;
     } catch (e: any) {
       // The browser dropped this subscription (uninstalled, cleared, turned off): forget it

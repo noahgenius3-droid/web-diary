@@ -96,6 +96,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ['people', 'i-user-plus', 'Friends & followers', 'Friend requests, accepted requests, new followers'],
         ['groups', 'i-users', 'Group activity', 'New posts, people joining, group calls'],
         ['live', 'i-live', 'Live videos', 'When someone you follow goes live'],
+        ['posts', 'i-feed', 'New posts', 'When a friend, or someone you follow, posts on the Feed'],
         ['scheduled', 'i-clock', 'Scheduled posts', 'When your scheduled posts go out, or can’t'],
         ['market', 'i-store', 'Marketplace', 'Requests and messages about books'],
         ['calls', 'i-phone', 'Missed calls', 'Calls you didn’t answer'],
