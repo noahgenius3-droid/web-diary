@@ -3151,9 +3151,31 @@ if (window.HTMLFormElement && !HTMLFormElement.prototype.requestSubmit) {
             const res = await fetch(`/index.html?check=${Date.now()}`, { cache: 'no-store' });
             if (!res.ok) return;
             const live = ((await res.text()).match(/script\.js\?v=(\d+)/) || [])[1];
-            if (live && Number(live) > Number(current)) offer();
+            if (live && Number(live) > Number(current)) {
+                newer = true;
+                // Coming back to the app with nothing in progress: just update, so everyone stays current
+                if (Date.now() - backAt < 5000 && idle()) return location.reload();
+                offer();
+            }
         } catch (e) { /* offline or blocked: try again later */ }
     }
+    let newer = false, backAt = 0;
+    // Safe to reload: no open dialog (editor, sheets), not typing, not on a call or in a Space, not recording
+    function idle() {
+        if (document.querySelector('dialog[open]')) return false;
+        const a = document.activeElement;
+        if (a && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) return false;
+        if (document.querySelector('.call-panel:not([hidden]), #call-panel:not([hidden])')) return false;
+        if (window.diarySpaces && window.diarySpaces.current && window.diarySpaces.current()) return false;
+        if (document.querySelector('.composer.recording')) return false;
+        return true;
+    }
+    // A newer version found while you were away gets applied the moment you come back, if it's safe
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible') return;
+        backAt = Date.now();
+        if (newer && idle()) location.reload();
+    });
     function offer() {
         shown = true;
         const bar = document.createElement('div');

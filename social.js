@@ -4886,13 +4886,18 @@ document.addEventListener('DOMContentLoaded', () => {
             const list = sortedFriends().filter(f => s.inboxTab === 'archived' ? archived(f)
                 : s.inboxTab === 'unread' ? (s.unread[f.id] || prefOf('dm', f.id).marked_unread)
                 : !archived(f));
-            rows = list.map(convoRow).join('') ||
+            const pinned = s.inboxTab === 'all' ? list.filter(f => prefOf('dm', f.id).pinned_at) : [];
+            const rest = pinned.length ? list.filter(f => !prefOf('dm', f.id).pinned_at) : list;
+            rows = (pinned.length
+                ? `<p class="convo-sec">Pinned<span>(${pinned.length})</span></p>${pinned.map(convoRow).join('')}<p class="convo-sec">All chats<span>(${rest.length})</span></p>${rest.map(convoRow).join('')}`
+                : list.map(convoRow).join('')) ||
                 `<p class="inbox-empty">${s.inboxTab === 'unread' ? 'You’re all caught up.' : s.inboxTab === 'archived' ? 'No archived chats. Archive one from its menu (⋯) to tidy your inbox.' : 'No friends yet. Tap + to add someone by username.'}</p>`;
         }
 
         return `
             <div class="inbox${friend ? ' has-active' : ''}${s.showInfo && friend ? ' show-info' : ''}">
                 <aside class="inbox-list">
+                    ${inboxHero()}
                     <div class="inbox-head">
                         <div class="inbox-titles">
                             <h2>Messages</h2>
@@ -4901,6 +4906,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <button class="compose-btn refresh-btn" data-action="chat-refresh" aria-label="Refresh chats" title="Refresh chats"><svg class="i"><use href="#i-refresh"/></svg></button>
                         <button class="compose-btn" data-action="toggle-add" aria-pressed="${s.addOpen}" aria-label="Add a friend by username" title="Add a friend"><svg class="i"><use href="#i-user-plus"/></svg></button>
                     </div>
+                    <div class="inbox-sheet">
                     <form class="add-friend" data-form="add-friend"${s.addOpen ? '' : ' hidden'}>
                         <input id="add-friend-input" placeholder="Friend’s username" autocomplete="off" aria-label="Friend's username">
                         <button class="primary-btn">Add</button>
@@ -4914,7 +4920,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         ${tab('all', 'All', 0)}${tab('unread', 'Unread', unreadCount)}${tab('requests', 'Requests', s.incoming.length)}${[...s.prefs.values()].some(r => r.kind === 'dm' && r.archived) ? tab('archived', 'Archived', 0) : ''}${window.diaryCalls && window.diaryCalls.historyHTML ? tab('calls', 'Calls', 0) : ''}
                     </div>
                     <div class="convo-list">${rows}</div>
+                    <button type="button" class="inbox-fab" data-action="toggle-add" aria-label="Add a friend by username"><svg class="i"><use href="#i-plus"/></svg></button>
                     <p class="muted small inbox-foot">You’re <strong>@${esc(s.profile.username)}</strong> — share it so friends can add you.</p>
+                    </div>
                 </aside>
                 <section class="chat-pane${friend && incognitoOf(friend.id) ? ' incognito' : ''}">
                     ${friend ? chatPane(friend) : `<div class="chat-placeholder"><svg class="i"><use href="#i-chat"/></svg>
@@ -4923,6 +4931,31 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${friend ? infoPane(friend) : ''}
             </div>`;
     };
+
+    function inboxHero() {
+        const firstName = esc(String(s.profile.display_name || s.profile.username || '').split(' ')[0]);
+        const newCount = Object.values(s.unread).reduce((n, v) => n + (typeof v === 'number' ? v : v ? 1 : 0), 0);
+        const people = sortedFriends().sort((a, b) => (s.online.has(b.id) ? 1 : 0) - (s.online.has(a.id) ? 1 : 0)).slice(0, 20);
+        return `
+            <section class="inbox-hero" aria-label="Overview">
+                <div class="hero-top">
+                    <div class="hero-text">
+                        <p class="hero-hi">Hi, ${firstName}!</p>
+                        <p class="hero-got">${newCount ? 'You received' : 'You’re all caught up'}</p>
+                        <p class="hero-count">${newCount ? `<u>${newCount} ${newCount === 1 ? 'Message' : 'Messages'}</u>` : '<u>No new messages</u>'}</p>
+                    </div>
+                    <div class="hero-btns">
+                        <button type="button" class="hero-btn" data-action="chat-refresh" aria-label="Refresh chats"><svg class="i"><use href="#i-refresh"/></svg></button>
+                        <button type="button" class="hero-btn" data-action="toggle-add" aria-pressed="${s.addOpen}" aria-label="Add a friend by username"><svg class="i"><use href="#i-user-plus"/></svg></button>
+                    </div>
+                </div>
+                ${people.length ? `
+                    <p class="hero-label"><b>Contact</b> List</p>
+                    <div class="hero-contacts">
+                        ${people.map(f => `<button type="button" class="hero-contact" data-action="open-chat" data-id="${esc(f.id)}" aria-label="Chat with ${esc(f.display_name)}">${avatar(f, 'lg')}<span>${esc(f.display_name.split(' ')[0])}</span></button>`).join('')}
+                    </div>` : ''}
+            </section>`;
+    }
 
     function inboxSummary() {
         const unread = Object.values(s.unread).filter(Boolean).length;
@@ -4993,13 +5026,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 <button class="convo${f.id === s.activeFriend ? ' active' : ''}${unread ? ' unread' : ''}" data-action="open-chat" data-id="${esc(f.id)}">
                     ${avatar(f, 'md')}
                     <span class="convo-main">
-                        <span class="convo-top"><strong>${esc(f.display_name)}${pref.pinned_at ? '<svg class="i convo-flag" aria-label="Pinned"><use href="#i-pin-note"/></svg>' : ''}${muted ? '<svg class="i convo-flag" aria-label="Muted"><use href="#i-bell-off"/></svg>' : ''}${incognitoOf(f.id) ? '<svg class="i convo-incognito" aria-label="Incognito on"><use href="#i-incognito"/></svg>' : ''}</strong>${m ? `<time>${shortTime(m.created_at)}</time>` : ''}</span>
+                        <span class="convo-top"><strong>${nameHTML(f.display_name)}${pref.pinned_at ? '<svg class="i convo-flag" aria-label="Pinned"><use href="#i-pin-note"/></svg>' : ''}${muted ? '<svg class="i convo-flag" aria-label="Muted"><use href="#i-bell-off"/></svg>' : ''}${incognitoOf(f.id) ? '<svg class="i convo-incognito" aria-label="Incognito on"><use href="#i-incognito"/></svg>' : ''}</strong>${m ? `<time>${shortTime(m.created_at)}</time>` : ''}</span>
                         <span class="convo-bottom">${mine && !m.deleted_at && !m.vanish ? ticksHTML(m).replace('class="ticks', 'class="convo-ticks ticks') : ''}<span class="convo-preview">${esc(preview)}</span>${window.diaryNoteShare ? window.diaryNoteShare.chip(f.id, 'row') : ''}${unread ? `<span class="badge${muted ? ' muted' : ''}">${unread}</span>` : ''}</span>
                     </span>
                 </button>
                 <button type="button" class="convo-more" data-action="convo-menu" data-id="${esc(f.id)}" aria-label="Chat options for ${esc(f.display_name)}" aria-haspopup="menu"><svg class="i"><use href="#i-more"/></svg></button>
                 ${window.diaryCalls ? `<button type="button" class="convo-call" data-action="call-friend" data-id="${esc(f.id)}" aria-label="Voice call ${esc(f.display_name)}" title="Voice call"><svg class="i"><use href="#i-phone"/></svg></button>` : ''}
             </div>`;
+    }
+
+    function nameHTML(name) {
+        const [firstName, ...rest] = String(name || '').split(' ');
+        return `<b>${esc(firstName)}</b>${rest.length ? ` <span class="name-rest">${esc(rest.join(' '))}</span>` : ''}`;
     }
 
     function previewOf(m) {
@@ -5032,7 +5070,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <header class="chat-head">
                 <button class="icon-btn back-chat" data-action="close-chat" aria-label="Back to inbox" title="Back to inbox"><svg class="i"><use href="#i-chevron-left"/></svg></button>
                 <button type="button" class="chat-who" data-profile="${esc(friend.id)}" aria-label="View ${esc(friend.display_name)}’s profile">${avatar(friend, 'sm')}</button>
-                <div class="friend-name"><button type="button" class="chat-who-name" data-profile="${esc(friend.id)}">${esc(friend.display_name)}</button>${window.diaryNoteShare ? window.diaryNoteShare.chip(friend.id, 'head') : ''}<small data-status="${esc(friend.id)}" data-with-status data-away="@${esc(friend.username)}">${esc([statusOf(friend.id) ? statusOf(friend.id).label : '', presenceText(friend.id)].filter(Boolean).join(' · ') || `@${friend.username}`)}</small></div>
+                <div class="friend-name"><button type="button" class="chat-who-name" data-profile="${esc(friend.id)}">${nameHTML(friend.display_name)}</button>${window.diaryNoteShare ? window.diaryNoteShare.chip(friend.id, 'head') : ''}<small data-status="${esc(friend.id)}" data-with-status data-away="@${esc(friend.username)}">${esc([statusOf(friend.id) ? statusOf(friend.id).label : '', presenceText(friend.id)].filter(Boolean).join(' · ') || `@${friend.username}`)}</small></div>
                 ${window.diaryCalls && s.allowCalls.get(friend.id) !== 'nobody' && !(window.diarySafety && window.diarySafety.isBlocked(friend.id)) ? `<button class="icon-btn accent" data-action="call-friend" data-id="${esc(friend.id)}" aria-label="Voice call ${esc(friend.display_name)}" title="Voice call"><svg class="i"><use href="#i-phone"/></svg></button><button class="icon-btn accent" data-action="call-friend" data-video="1" data-id="${esc(friend.id)}" aria-label="Video call ${esc(friend.display_name)}" title="Video call"><svg class="i"><use href="#i-video"/></svg></button>` : ''}
                 <button class="icon-btn head-wide" data-action="chat-search" aria-label="Search this chat" title="Search"><svg class="i"><use href="#i-search"/></svg></button>
                 <button class="icon-btn head-wide" data-action="toggle-info" aria-pressed="${s.showInfo}" aria-label="Contact details" title="Contact details"><svg class="i"><use href="#i-info"/></svg></button>

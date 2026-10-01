@@ -14141,3 +14141,121 @@ dialog.nsv::backdrop { background: rgba(0, 0, 0, 0.7); }
 .convo-top .ns-chip.row { flex: none; margin: 0 6px 0 4px; }
 .convo-top strong { min-width: 0; }
 .convo-bottom .ns-chip.row { flex: none; margin: 0 0 0 6px; }
+
+/* =====================================================================
+   Chats on phones: purple header + rounded sheet (inbox, chat, voice note)
+   Desktop keeps its layout; the extras below are hidden there.
+   ===================================================================== */
+.inbox-hero, .inbox-fab, .convo-sec { display: none; }
+.inbox-sheet { display: contents; }
+.convo-top b, .chat-who-name b { font-weight: 800; }
+.name-rest { font-weight: 500; }
+
+@media (max-width: 760px) {
+    body[data-view="messages"] { --cp: #6c5ce7; --cp-deep: #5443d6; --cp-ink: #fff; --sheet: var(--surface); }
+
+    /* ---------- Inbox ---------- */
+    .inbox-list { position: relative; padding: 0; border: 0; background: linear-gradient(165deg, #7c6df0, var(--cp-deep)); border-radius: 26px; overflow: hidden; }
+    .inbox-hero { display: block; padding: 18px 18px 26px; color: var(--cp-ink); }
+    .hero-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .hero-text { min-width: 0; }
+    .hero-hi { margin: 0; font-size: 0.82rem; opacity: 0.8; }
+    .hero-got { margin: 6px 0 0; font-size: 1rem; font-weight: 500; }
+    .hero-count { margin: 2px 0 0; font-size: 1.6rem; font-weight: 800; letter-spacing: -0.01em; }
+    .hero-count u { text-decoration-thickness: 2px; text-underline-offset: 5px; }
+    .hero-btns { display: flex; gap: 8px; flex: none; }
+    .hero-btn { display: grid; place-items: center; width: 42px; height: 42px; border: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.16); color: #fff; cursor: pointer; touch-action: manipulation; }
+    .hero-btn[aria-pressed="true"] { background: #fff; color: var(--cp-deep); }
+    .hero-btn .i { width: 20px; height: 20px; }
+    .hero-btn:active { transform: scale(0.94); }
+    .hero-label { margin: 18px 0 10px; font-size: 0.92rem; }
+    .hero-label b { font-weight: 800; }
+    .hero-contacts { display: flex; gap: 14px; overflow-x: auto; margin: 0 -18px; padding: 2px 18px 4px; scrollbar-width: none; overscroll-behavior-x: contain; }
+    .hero-contacts::-webkit-scrollbar { display: none; }
+    .hero-contact { display: grid; justify-items: center; gap: 6px; flex: none; width: 60px; padding: 0; border: 0; background: none; color: #fff; font: inherit; font-size: 0.8rem; cursor: pointer; touch-action: manipulation; }
+    .hero-contact span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .hero-contact .avatar.lg { width: 54px; height: 54px; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85); }
+    .hero-contact:active { transform: scale(0.95); }
+
+    .inbox-list .inbox-head { display: none; }
+    .inbox-list .active-now { display: none; }
+    .inbox-sheet { display: flex; flex-direction: column; flex: 1; min-height: 0; margin-top: -12px; padding: 16px 0 0; border-radius: 26px 26px 0 0; background: var(--sheet); }
+    .inbox-sheet .add-friend { margin: 0 16px 10px; }
+    .inbox-sheet .inbox-search { margin: 0 16px 10px; }
+    .inbox-sheet .inbox-tabs { padding: 0 16px; gap: 8px; }
+    .inbox-sheet .inbox-tab { min-height: 40px; padding: 0 16px; border-radius: 999px; }
+    .inbox-sheet .inbox-tab[aria-selected="true"] { background: #fde047; color: #1f2937; }
+    .inbox-sheet .inbox-tab[aria-selected="true"] .badge { background: #1f2937; color: #fff; }
+    .convo-sec { display: block; margin: 14px 18px 4px; font-size: 0.95rem; font-weight: 800; color: var(--text); }
+    .convo-sec span { margin-left: 2px; font-weight: 600; color: var(--text-muted); }
+    .inbox-sheet .convo-list { flex: 1; min-height: 0; padding: 4px 8px 84px; }
+    .inbox-sheet .convo { border-radius: 16px; }
+    .inbox-sheet .convo .avatar.md { width: 52px; height: 52px; }
+    .inbox-sheet .convo-top time { font-size: 0.74rem; }
+    .inbox-sheet .badge { background: #f43f5e; color: #fff; }
+    .inbox-sheet .inbox-foot { display: none; }
+    .inbox-fab { display: grid; place-items: center; position: absolute; right: 18px; bottom: 18px; width: 58px; height: 58px; border: 0; border-radius: 50%; background: var(--cp); color: #fff; cursor: pointer; box-shadow: 0 14px 28px -10px rgba(84, 67, 214, 0.8); touch-action: manipulation; z-index: 2; }
+    .inbox-fab .i { width: 26px; height: 26px; }
+    .inbox-fab:active { transform: scale(0.94); }
+    body.chat-open .inbox-fab { display: none; }
+
+    /* ---------- A chat ---------- */
+    body.chat-open .inbox .chat-pane { background: linear-gradient(165deg, #7c6df0, var(--cp-deep)); }
+    .chat-pane .chat-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; align-items: center; gap: 4px; padding: max(12px, env(safe-area-inset-top)) 8px 26px; border: 0; background: none; color: #fff; }
+    .chat-pane .chat-head .chat-who { display: none; }
+    .chat-pane .chat-head .friend-name { display: flex; flex-direction: column; align-items: center; min-width: 0; text-align: center; }
+    .chat-pane .chat-head .chat-who-name { max-width: 100%; color: #fff; font-size: 1.05rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chat-pane .chat-head .friend-name small { color: rgba(255, 255, 255, 0.85); font-size: 0.78rem; }
+    .chat-pane .chat-head .ns-chip.head { align-self: center; background: rgba(255, 255, 255, 0.18); color: #fff; }
+    .chat-pane .chat-head .icon-btn, .chat-pane .chat-head .icon-btn:not(.back-chat) { width: 40px; height: 40px; background: transparent; color: #fff; box-shadow: none; }
+    .chat-pane .chat-head .icon-btn.accent { background: rgba(255, 255, 255, 0.16); color: #fff; }
+    .chat-pane .chat-head .head-wide { display: none; }
+    .chat-pane .chat-thread { margin-top: -18px; border-radius: 26px 26px 0 0; position: relative; z-index: 1; padding: 18px 14px 12px; }
+    .chat-pane .chat-placeholder { border-radius: 26px 26px 0 0; }
+
+    /* Bubbles: purple for you, white for them, times underneath */
+    .chat-pane .msg.out .msg-card { background: var(--cp); color: #fff; border-radius: 20px 20px 6px 20px; box-shadow: 0 8px 18px -12px rgba(84, 67, 214, 0.9); }
+    .chat-pane .msg.in .msg-card { background: var(--surface); color: var(--text); border-radius: 20px 20px 20px 6px; box-shadow: 0 6px 16px -12px rgba(0, 0, 0, 0.45); }
+    .chat-pane .msg.out .msg-meta { color: rgba(255, 255, 255, 0.8); }
+    .chat-pane .msg .avatar.xs { width: 34px; height: 34px; }
+
+    /* Composer: + · pill with emoji · round purple mic/send */
+    .chat-pane .composer { position: relative; z-index: 1; background: var(--chat-canvas, var(--surface)); border-top: 0; }
+    .chat-pane .composer-plus { background: transparent; color: var(--text); box-shadow: none; }
+    .chat-pane .composer-box { border-radius: 999px; background: var(--input); border-color: transparent; }
+    .chat-pane .send-btn, .chat-pane .send-btn.dark { width: 50px; height: 50px; border-radius: 50%; background: var(--cp); color: #fff; box-shadow: 0 10px 22px -10px rgba(84, 67, 214, 0.9); }
+
+    /* Voice note: the composer becomes a bottom card — title, big waveform, timer, then cancel · mic */
+    .chat-pane .composer.recording { margin: 0 8px 8px; padding: 18px 18px max(16px, env(safe-area-inset-bottom)); border-radius: 26px; background: var(--surface); box-shadow: 0 -12px 40px -16px rgba(0, 0, 0, 0.5); }
+    .chat-pane .composer.recording::before { content: "Voice note"; display: block; margin-bottom: 8px; text-align: center; font-weight: 800; color: var(--text); }
+    .chat-pane .composer.recording .quick-replies, .chat-pane .composer.recording .composer-plus { display: none; }
+    .chat-pane .composer.recording .composer-row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; row-gap: 10px; }
+    .chat-pane .composer.recording .rec-bar { display: grid; grid-column: 1 / -1; grid-template-columns: 1fr; justify-items: center; gap: 8px; }
+    .chat-pane .composer.recording .rec-wave { width: 100%; height: 56px; }
+    .chat-pane .composer.recording .rec-time { order: 2; font-size: 1rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .chat-pane .composer.recording .rec-dot { display: none; }
+    .chat-pane .composer.recording .rec-hint { order: 3; font-size: 0.78rem; color: var(--text-muted); }
+    .chat-pane .composer.recording .rec-trash { order: 4; justify-self: start; }
+    .chat-pane .composer.recording #chat-action { grid-column: 2; width: 62px; height: 62px; }
+}
+@media (max-width: 760px) {
+    .chat-pane .chat-head { position: relative; z-index: 0; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; padding-bottom: 32px; }
+    .chat-pane .chat-head .icon-btn .i, .chat-pane .chat-head .icon-btn.accent .i { color: #fff; }
+    .chat-pane .chat-thread { margin-top: -22px; box-shadow: 0 -8px 24px -12px rgba(0, 0, 0, 0.35); }
+}
+@media (max-width: 760px) {
+    .chat-pane .chat-head { height: auto; min-height: 0; padding-bottom: 46px; align-items: start; }
+    .chat-pane .chat-head .friend-name { padding-top: 2px; }
+    .chat-pane .chat-thread { margin-top: -26px; }
+}
+@media (max-width: 760px) {
+    body.chat-open .inbox .chat-pane .chat-head, .inbox .chat-pane .chat-head { flex: none; padding: max(12px, env(safe-area-inset-top)) 8px 46px; }
+}
+
+/* Alignment: single-column page grids never grow past the screen (Playnote and Settings overflowed at 320px) */
+.pl, .settings { grid-template-columns: minmax(0, 1fr); }
+.pl > *, .settings > *, .pl-mast > *, .pl-level { min-width: 0; }
+.pl-mast h2, .pl-lede { overflow-wrap: anywhere; }
+.pl-section, .wpm-list { grid-template-columns: minmax(0, 1fr); }
+.pl-section > * { min-width: 0; }
+@media (max-width: 420px) { .lb-controls { flex-wrap: wrap; } .lb-controls .pl-seg { flex: 1 1 100%; } .lb-controls .pl-seg button { flex: 1; padding: 0 8px; } }

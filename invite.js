@@ -100,7 +100,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <section class="inv-sec">
                     <h3>Joined with your invite ${mine && mine.count ? `<span>${mine.count}</span>` : ''}</h3>
                     ${mine === null ? '<p class="muted small">Loading…</p>'
-                        : mine.people.length ? `<div class="inv-people">${mine.people.map(p => `
+                        : (mine.people || []).length ? `<div class="inv-people">${mine.people.map(p => `
                             <button type="button" class="inv-person" data-profile="${esc(p.id)}">
                                 ${avatar(p, 'lg')}<span>${esc(String(p.display_name || '').split(' ')[0])}</span>
                             </button>`).join('')}</div>`
