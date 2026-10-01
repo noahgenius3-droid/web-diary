@@ -42,9 +42,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const me = () => s.profile && s.profile.id;
     const cameraFor = facing => {
         const upright = window.innerHeight > window.innerWidth && window.matchMedia('(pointer: coarse)').matches;
+        // 720p in the camera's own shape: asking phones for more made many of them crop into the sensor (a zoomed
+        // picture). resizeMode 'none' tells the browser not to crop or rescale to fit the request.
         return upright
-            ? { facingMode: facing, width: { ideal: 1080 }, height: { ideal: 1920 }, frameRate: { ideal: 30, max: 30 } }
-            : { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 30 } };
+            ? { facingMode: facing, width: { ideal: 720 }, height: { ideal: 1280 }, frameRate: { ideal: 30, max: 30 }, resizeMode: 'none' }
+            : { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 }, resizeMode: 'none' };
     };
 
     // ---------- Picture quality ----------
@@ -234,6 +236,7 @@ document.addEventListener('DOMContentLoaded', () => {
         $('lv-badge').hidden = !(mode === 'live' || mode === 'watch');
         $('lv-viewers').hidden = !(mode === 'live' || mode === 'watch');
         $('lv-bar').hidden = mode === 'setup' || mode === 'ended';
+        if (typeof adapt === 'function') adapt();
     }
 
     function status(html) {
@@ -655,13 +658,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!vw || !vh) return;
         const wideVideo = vw > vh * 1.1;
         dialog.dataset.video = wideVideo ? 'wide' : 'tall';
-        const screenTall = window.innerHeight >= window.innerWidth;
         const desk = window.matchMedia('(min-width: 900px) and (min-height: 600px) and (hover: hover)').matches;
-        const mismatch = !desk && wideVideo === screenTall;
-        const fit = L.fit || (mismatch && L.mode === 'watch' ? 'contain' : 'cover');
+        // Filling the screen crops whatever doesn't match its shape. A small trim is fine; anything more looks
+        // zoomed in, so then the whole picture is shown (for the host and viewers alike) unless they choose fill.
+        const box = video.getBoundingClientRect();
+        const crop = box.width && box.height ? 1 - Math.min(vw / vh, box.width / box.height) / Math.max(vw / vh, box.width / box.height) : 0;
+        const fit = L.fit || (!desk && crop > 0.12 ? 'contain' : 'cover');
         video.style.objectFit = fit;
         const btn = $('lv-fit');
-        btn.hidden = !(L.mode === 'watch') || desk;
+        btn.hidden = !(L.mode === 'watch' || L.mode === 'live') || desk || crop <= 0.12;
         btn.setAttribute('aria-pressed', String(fit === 'contain'));
         btn.setAttribute('aria-label', fit === 'contain' ? 'Fill the screen' : 'Show the whole picture');
     }

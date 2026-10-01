@@ -15093,3 +15093,4 @@ body.chat-open #content.repaint .inbox .chat-pane { animation: none !important; 
     .lv-bar #lv-fx { position: absolute; right: 10px; width: 42px; height: 42px; bottom: calc(100% + 102px); }
 }
 @media (max-width: 760px) { .lv-fx-strip { right: 58px; padding-right: 8px; border-radius: 0 16px 16px 0; } }
+@media (max-width: 760px) { dialog.live.hosting .lv-bar #lv-fit { bottom: calc(100% + 150px); } }
