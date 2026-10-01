@@ -299,7 +299,10 @@ document.addEventListener('DOMContentLoaded', () => {
             old.stop();
             L.media.addTrack(track);
             L.facing = next;
-            video.srcObject = L.media;
+            // A fresh stream object makes the phone re-measure the picture — reusing the old one kept the
+            // previous camera's size, so the back camera showed shrunk instead of filling the screen
+            video.srcObject = new MediaStream(L.media.getTracks());
+            video.play().catch(() => {});
             video.classList.toggle('mirror', next === 'user');
         } catch (e) {
             app.showToast('This device has only one camera');
