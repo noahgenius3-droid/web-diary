@@ -269,7 +269,7 @@ document.addEventListener('DOMContentLoaded', () => {
         L.peers.forEach(p => { if (p.vs && out) p.vs.replaceTrack(out).catch(() => {}); });
         if (L.media) {
             video.srcObject = new MediaStream(L.media.getTracks());
-            video.classList.toggle('mirror', L.facing === 'user');
+            video.classList.remove('mirror'); // natural orientation, as viewers see it
             video.style.filter = fxCss(L.filter || 'none');
             video.play().catch(() => {});
         }
@@ -477,7 +477,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         video.srcObject = L.media;
         video.muted = true;
-        video.classList.toggle('mirror', L.facing === 'user');
+        video.classList.remove('mirror'); // natural orientation, as viewers see it
         video.play().catch(() => {});
         $('lv-chat').innerHTML = '';
         $('lv-title').value = '';
@@ -584,7 +584,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // previous camera's size, so the back camera showed shrunk instead of filling the screen
             video.srcObject = new MediaStream(L.media.getTracks());
             video.play().catch(() => {});
-            video.classList.toggle('mirror', next === 'user');
+            video.classList.remove('mirror');
         } catch (e) {
             app.showToast('This device has only one camera');
         }
@@ -612,7 +612,42 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Watching ----------
+    // The tap that opens a live is the user's permission to play sound. Using it right away (before anything
+    // async) unlocks audio on phones that otherwise only allow muted playback.
+    let audioUnlock = null;
+    function unlockSound() {
+        try {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            if (Ctx) {
+                audioUnlock = audioUnlock || new Ctx();
+                if (audioUnlock.state === 'suspended') audioUnlock.resume().catch(() => {});
+                const b = audioUnlock.createBuffer(1, 1, 22050);
+                const n = audioUnlock.createBufferSource();
+                n.buffer = b;
+                n.connect(audioUnlock.destination);
+                n.start(0);
+            }
+        } catch (e) { /* not needed on this browser */ }
+        L.wantSound = true;
+    }
+    // Play the live with sound; only if the browser refuses, play muted and offer "Tap for sound"
+    function playWithSound() {
+        video.volume = 1;
+        video.muted = !L.wantSound;
+        return video.play().then(() => {
+            status(video.muted ? '<button type="button" class="lv-unmute" id="lv-unmute"><svg class="i"><use href="#i-volume-off"/></svg>Tap for sound</button>' : '');
+        }).catch(() => {
+            if (!video.muted) {
+                video.muted = true;
+                return video.play().then(() => status('<button type="button" class="lv-unmute" id="lv-unmute"><svg class="i"><use href="#i-volume-off"/></svg>Tap for sound</button>'))
+                    .catch(() => status('<button type="button" class="lv-unmute" id="lv-unmute"><svg class="i"><use href="#i-play"/></svg>Tap to watch</button>'));
+            }
+            status('<button type="button" class="lv-unmute" id="lv-unmute"><svg class="i"><use href="#i-play"/></svg>Tap to watch</button>');
+        });
+    }
+
     async function watch(id) {
+        unlockSound();
         if (!social.requireSignIn('Sign in to watch your friends live.')) return;
         if (L.mode === 'live') return app.showToast('End your own live video first');
         if (L.mode) cleanup(true);
@@ -653,11 +688,12 @@ document.addEventListener('DOMContentLoaded', () => {
         L.queue = [];
         L.remoteSet = false;
         pc.ontrack = e => {
-            if (video.srcObject !== e.streams[0]) {
-                video.srcObject = e.streams[0];
-                video.play().then(() => {
-                    status(video.muted ? '<button type="button" class="lv-unmute" id="lv-unmute"><svg class="i"><use href="#i-volume-off"/></svg>Tap for sound</button>' : '');
-                }).catch(() => status('<button type="button" class="lv-unmute" id="lv-unmute"><svg class="i"><use href="#i-play"/></svg>Tap to watch</button>'));
+            const stream = e.streams[0] || new MediaStream([e.track]);
+            if (video.srcObject !== stream) {
+                video.srcObject = stream;
+                playWithSound();
+            } else if (e.track.kind === 'audio' && video.muted && L.wantSound) {
+                playWithSound(); // the sound arrived after the picture
             }
         };
         pc.onicecandidate = e => { if (e.candidate) send('ice', { to: `${L.stream.host}:host`, candidate: e.candidate.toJSON() }); };
@@ -810,6 +846,7 @@ document.addEventListener('DOMContentLoaded', () => {
         L.stream = null;
         L.mode = null;
         video.srcObject = null;
+        video.style.transform = '';
         dialog.classList.remove('hosting');
         $('lv-title-line').hidden = true;
         $('lv-hop').hidden = true;
@@ -830,7 +867,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const box = video.getBoundingClientRect();
         const crop = box.width && box.height ? 1 - Math.min(vw / vh, box.width / box.height) / Math.max(vw / vh, box.width / box.height) : 0;
         const fit = L.fit || (dialog.dataset.screen === '1' || (!desk && crop > 0.12) ? 'contain' : 'cover');
-        video.style.objectFit = fit;
+        // "Fill" shows the whole picture enlarged by at most 15%: more immersive, but the subject and the space
+        // around it stay in frame on any screen. A small natural trim (shapes already close) still fills.
+        const enlarge = fit === 'cover' && crop > 0.12 && dialog.dataset.screen !== '1' ? Math.min(1 / (1 - crop), 1.15) : 1;
+        L.fitNow = fit;
+        video.style.objectFit = enlarge > 1 ? 'contain' : fit;
+        video.style.transform = enlarge > 1 ? `scale(${enlarge.toFixed(3)})` : '';
         const btn = $('lv-fit');
         btn.hidden = !(L.mode === 'watch' || L.mode === 'live') || desk || crop <= 0.12;
         btn.setAttribute('aria-pressed', String(fit === 'contain'));
@@ -840,7 +882,7 @@ document.addEventListener('DOMContentLoaded', () => {
     video.addEventListener('resize', adapt);
     window.addEventListener('resize', () => { if (L.mode) adapt(); });
     $('lv-fit').addEventListener('click', () => {
-        L.fit = video.style.objectFit === 'contain' ? 'cover' : 'contain';
+        L.fit = L.fitNow === 'contain' ? 'cover' : 'contain';
         adapt();
     });
 
@@ -972,9 +1014,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     $('lv-status').addEventListener('click', e => {
         if (e.target.closest('#lv-unmute')) {
+            unlockSound();
             video.muted = false;
-            video.play().catch(() => {});
-            status('');
+            video.volume = 1;
+            video.play().then(() => status('')).catch(() => {});
         }
         if (e.target.closest('#lv-retry') && L.stream) {
             status('<span class="lv-spinner" aria-hidden="true"></span><span>Reconnecting…</span>');
