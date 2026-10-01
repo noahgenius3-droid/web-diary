@@ -15109,3 +15109,17 @@ body.chat-open #content.repaint .inbox .chat-pane { animation: none !important; 
 }
 .lv-screen-pill[hidden] { display: none; }
 dialog.live[data-screen="1"] .lv-title-line { display: none; }
+
+/* ---------- Feed: Go live, right where you'd look for it ---------- */
+.story-ring.go-live { display: grid; place-items: center; background: linear-gradient(135deg, #ef4444, #f97316); }
+.go-live-ic { display: grid; place-items: center; width: 100%; height: 100%; border-radius: 50%; border: 3px solid var(--bg, #000); background: #ef4444; color: #fff; }
+.go-live-ic .i { width: 26px; height: 26px; }
+.story-live:active .story-ring { transform: scale(0.94); }
+.post-composer .pc-quick.pc-live { color: #ef4444; }
+@media (hover: hover) and (pointer: fine) { .post-composer .pc-quick.pc-live:hover { background: color-mix(in srgb, #ef4444 12%, transparent); } }
+/* Collapsed composer: Live, Photo and "+" are one tap away; once it opens, the full tools row takes over */
+.feed-v2 .post-composer:not(.open):not(:focus-within) .pc-quick { display: grid; }
+.feed-v2 .post-composer .pc-quick.pc-live { background: color-mix(in srgb, #ef4444 12%, transparent); }
+.feed-v2 .post-composer .pc-quick.pc-more { color: var(--accent); background: var(--accent-soft); }
+@media (max-width: 380px) { .feed-v2 .post-composer .pc-quick { width: 40px; height: 40px; } }
+@media (max-width: 360px) { .feed-v2 .post-composer:not(.open):not(:focus-within) .pc-quick[data-action="feed-add-photos"] { display: none; } }

@@ -136,6 +136,10 @@ document.addEventListener('DOMContentLoaded', () => {
                         <span class="story-ring add-own">${avatar(s.profile, 'lg')}<span class="story-plus"><svg class="i"><use href="#i-plus"/></svg></span></span>
                         <span>${st.busy ? 'Posting…' : 'Add story'}</span>
                     </button>
+                    ${window.diaryLive ? `<button class="story story-live" data-action="live-start" aria-label="Go live — start a live video">
+                        <span class="story-ring go-live"><span class="go-live-ic"><svg class="i"><use href="#i-live"/></svg></span></span>
+                        <span>Go live</span>
+                    </button>` : ''}
                     ${list.map(g => `
                         <button class="story" data-action="story-open" data-id="${esc(g.author)}">
                             <span class="story-ring${g.items.every(x => s.seenStories.has(x.id)) ? ' seen' : ''}">${avatar(g.person, 'lg')}</span>

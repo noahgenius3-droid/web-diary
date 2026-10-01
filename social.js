@@ -3697,6 +3697,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="pc-row">
                             ${avatar(s.profile, 'md')}
                             <textarea id="feed-text" rows="1" maxlength="5000" placeholder="What would you like to share?" aria-label="Write a post"></textarea>
+                            ${window.diaryLive ? '<button type="button" class="pc-quick pc-live" data-action="live-start" aria-label="Go live" title="Go live"><svg class="i"><use href="#i-live"/></svg></button>' : ''}
                             <button type="button" class="pc-quick" data-action="feed-add-photos" aria-label="Add photos"><svg class="i"><use href="#i-image"/></svg></button>
                             <button type="button" class="pc-quick pc-more" data-action="feed-create" aria-haspopup="menu" aria-label="More ways to share: note, Playnote, story, reel, live, audio room"><svg class="i"><use href="#i-plus"/></svg></button>
                         </div>
