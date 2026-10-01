@@ -18,11 +18,11 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,400..600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=121">
-    <link rel="stylesheet" href="photoedit.css?v=121">
-    <link rel="stylesheet" href="speak.css?v=121">
-    <link rel="stylesheet" href="zoom.css?v=121">
-    <link rel="stylesheet" href="location.css?v=121">
+    <link rel="stylesheet" href="style.css?v=122">
+    <link rel="stylesheet" href="photoedit.css?v=122">
+    <link rel="stylesheet" href="speak.css?v=122">
+    <link rel="stylesheet" href="zoom.css?v=122">
+    <link rel="stylesheet" href="location.css?v=122">
     <script>
         // Apply saved theme before paint to avoid a flash
         try {
@@ -674,6 +674,7 @@
             </div>
             <div class="lv-status" id="lv-status" hidden></div>
             <div class="lv-hearts" id="lv-hearts" aria-hidden="true"></div>
+            <p class="lv-screen-pill" id="lv-screen-pill" role="status" hidden>You’re sharing your screen</p>
             <div class="lv-pin" id="lv-pin" role="status" hidden></div>
             <div class="lv-chat" id="lv-chat" aria-live="polite"></div>
             <div class="lv-fx-strip" id="lv-fx-strip" role="group" aria-label="Filters" hidden></div>
@@ -684,6 +685,7 @@
                     <button type="button" role="radio" aria-checked="true" data-aud="public"><svg class="i"><use href="#i-globe"/></svg>Everyone</button>
                     <button type="button" role="radio" aria-checked="false" data-aud="circle"><svg class="i"><use href="#i-users"/></svg>Friends &amp; followers</button>
                 </div>
+                <div class="lv-setup-fx" id="lv-setup-fx" role="group" aria-label="Filter"></div>
                 <button type="button" class="lv-go" id="lv-go"><span class="lv-go-dot" aria-hidden="true"></span>Go live</button>
                 <p class="lv-note" id="lv-reach">Your friends and followers get a notification and can watch, chat and send hearts. Best with up to 15 people watching.</p>
             </div>
@@ -692,6 +694,7 @@
                 <button type="button" class="lv-btn" id="lv-fit" aria-label="Show the whole picture" aria-pressed="false" hidden><svg class="i"><use href="#i-expand"/></svg></button>
                 <button type="button" class="lv-btn" id="lv-share" aria-label="Share this live"><svg class="i"><use href="#i-share"/></svg></button>
                 <button type="button" class="lv-btn lv-heart-btn" id="lv-heart" aria-label="Send a heart"><svg class="i"><use href="#i-heart-fill"/></svg></button>
+                <button type="button" class="lv-btn host-only" id="lv-screen" aria-label="Share your screen" aria-pressed="false"><svg class="i"><use href="#i-screen"/></svg></button>
                 <button type="button" class="lv-btn host-only" id="lv-fx" aria-label="Filters" aria-expanded="false"><svg class="i"><use href="#i-sparkle"/></svg></button>
                 <button type="button" class="lv-btn host-only" id="lv-flip" aria-label="Switch camera"><svg class="i"><use href="#i-refresh"/></svg></button>
                 <button type="button" class="lv-btn host-only" id="lv-mute" aria-pressed="false" aria-label="Mute microphone"><svg class="i"><use href="#i-mic"/></svg></button>
@@ -815,42 +818,42 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
-    <script src="config.js?v=121"></script>
-    <script src="rich.js?v=121"></script>
-    <script src="media.js?v=121"></script>
-    <script src="wallpaper.js?v=121"></script>
-    <script src="dilute.js?v=121"></script>
-    <script src="script.js?v=121"></script>
-    <script src="social.js?v=121"></script>
-    <script src="sync.js?v=121"></script>
-    <script src="stories.js?v=121"></script>
-    <script src="library.js?v=121"></script>
-    <script src="market.js?v=121"></script>
-    <script src="community.js?v=121"></script>
-    <script src="groupchat.js?v=121"></script>
-    <script src="live.js?v=121"></script>
-    <script src="explore.js?v=121"></script>
-    <script src="call.js?v=121"></script>
-    <script src="profile.js?v=121"></script>
-    <script src="invite.js?v=121"></script>
-    <script src="mention.js?v=121"></script>
-    <script src="spaces.js?v=121"></script>
-    <script src="notemedia.js?v=121"></script>
-    <script src="noteshare.js?v=121"></script>
-    <script src="noteslides.js?v=121"></script>
-    <script src="schedule.js?v=121"></script>
-    <script src="play.js?v=121"></script>
-    <script src="games.js?v=121"></script>
-    <script src="chattools.js?v=121"></script>
-    <script src="safety.js?v=121"></script>
-    <script src="notify.js?v=121"></script>
-    <script src="settings.js?v=121"></script>
-    <script src="transcribe.js?v=121"></script>
-    <script src="ai.js?v=121"></script>
-    <script src="photoedit.js?v=121"></script>
-    <script src="speak.js?v=121"></script>
-    <script src="zoom.js?v=121"></script>
-    <script src="location.js?v=121"></script>
+    <script src="config.js?v=122"></script>
+    <script src="rich.js?v=122"></script>
+    <script src="media.js?v=122"></script>
+    <script src="wallpaper.js?v=122"></script>
+    <script src="dilute.js?v=122"></script>
+    <script src="script.js?v=122"></script>
+    <script src="social.js?v=122"></script>
+    <script src="sync.js?v=122"></script>
+    <script src="stories.js?v=122"></script>
+    <script src="library.js?v=122"></script>
+    <script src="market.js?v=122"></script>
+    <script src="community.js?v=122"></script>
+    <script src="groupchat.js?v=122"></script>
+    <script src="live.js?v=122"></script>
+    <script src="explore.js?v=122"></script>
+    <script src="call.js?v=122"></script>
+    <script src="profile.js?v=122"></script>
+    <script src="invite.js?v=122"></script>
+    <script src="mention.js?v=122"></script>
+    <script src="spaces.js?v=122"></script>
+    <script src="notemedia.js?v=122"></script>
+    <script src="noteshare.js?v=122"></script>
+    <script src="noteslides.js?v=122"></script>
+    <script src="schedule.js?v=122"></script>
+    <script src="play.js?v=122"></script>
+    <script src="games.js?v=122"></script>
+    <script src="chattools.js?v=122"></script>
+    <script src="safety.js?v=122"></script>
+    <script src="notify.js?v=122"></script>
+    <script src="settings.js?v=122"></script>
+    <script src="transcribe.js?v=122"></script>
+    <script src="ai.js?v=122"></script>
+    <script src="photoedit.js?v=122"></script>
+    <script src="speak.js?v=122"></script>
+    <script src="zoom.js?v=122"></script>
+    <script src="location.js?v=122"></script>
     <script>
         // Lift the splash once the first screen is drawn — after its intro has had time to play, never longer than 4s
         (function () {

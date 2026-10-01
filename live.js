@@ -72,16 +72,97 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Filters ----------
-    // The host's picture is drawn through a canvas with the filter, and that's what viewers receive.
-    const FX = [['none', 'Normal', ''], ['warm', 'Warm', 'sepia(0.22) saturate(1.25) brightness(1.04)'], ['cool', 'Cool', 'hue-rotate(-10deg) saturate(1.12) brightness(1.04)'],
-        ['vivid', 'Vivid', 'saturate(1.5) contrast(1.08)'], ['glow', 'Glow', 'brightness(1.1) contrast(0.92) saturate(1.12)'], ['bright', 'Bright', 'brightness(1.16) contrast(1.04)'],
-        ['vintage', 'Vintage', 'sepia(0.5) contrast(0.95) brightness(1.05) saturate(0.9)'], ['mono', 'Mono', 'grayscale(1) contrast(1.12)']];
-    const canvasFilters = (() => { try { return 'filter' in document.createElement('canvas').getContext('2d'); } catch (e) { return false; } })();
-    const fxCss = key => (FX.find(f => f[0] === key) || FX[0])[2];
-    const outgoingVideo = () => (L.fx && L.fx.track) || (L.media && L.media.getVideoTracks()[0]) || null;
+    // The host's picture is redrawn with the filter and that redrawn picture is what viewers receive. Each look
+    // is a short list of colour steps (the same ones CSS uses), turned into one colour matrix and applied on the
+    // graphics chip with WebGL — fast, and it works on phones whose browsers can't filter a canvas (older iPhones).
+    // Without WebGL, a 2D canvas filter does the same job; with neither, the Filters button isn't shown.
+    const FX = [
+        ['none', 'Normal', []],
+        ['warm', 'Warm', [['sepia', 0.22], ['saturate', 1.25], ['brightness', 1.04]]],
+        ['cool', 'Cool', [['hue', -10], ['saturate', 1.12], ['brightness', 1.04]]],
+        ['vivid', 'Vivid', [['saturate', 1.5], ['contrast', 1.08]]],
+        ['glow', 'Glow', [['brightness', 1.1], ['contrast', 0.92], ['saturate', 1.12]]],
+        ['bright', 'Bright', [['brightness', 1.16], ['contrast', 1.04]]],
+        ['rosy', 'Rosy', [['sepia', 0.15], ['hue', -12], ['saturate', 1.2], ['brightness', 1.05]]],
+        ['vintage', 'Vintage', [['sepia', 0.5], ['contrast', 0.95], ['brightness', 1.05], ['saturate', 0.9]]],
+        ['mono', 'Mono', [['grayscale', 1], ['contrast', 1.12]]],
+        ['noir', 'Noir', [['grayscale', 1], ['contrast', 1.35], ['brightness', 0.95]]]
+    ];
+    const stepsOf = key => (FX.find(f => f[0] === key) || FX[0])[2];
+    const cssOf = steps => steps.map(([k, v]) => (k === 'hue' ? `hue-rotate(${v}deg)` : `${k}(${v})`)).join(' ');
+    const fxCss = key => cssOf(stepsOf(key));
+    const fxEngine = (() => {
+        try {
+            if (!('captureStream' in HTMLCanvasElement.prototype)) return null;
+            const probe = document.createElement('canvas');
+            const gl = probe.getContext('webgl');
+            if (gl) { const lose = gl.getExtension('WEBGL_lose_context'); if (lose) lose.loseContext(); return 'gl'; }
+            return 'filter' in document.createElement('canvas').getContext('2d') ? '2d' : null;
+        } catch (e) { return null; }
+    })();
+    const outgoingVideo = () => L.screen || (L.fx && L.fx.track) || (L.media && L.media.getVideoTracks()[0]) || null;
+
+    // One colour step as a matrix: rows for red, green and blue, each [r, g, b, offset] (Filter Effects spec)
+    function stepMatrix([k, v]) {
+        const i = 1 - v;
+        switch (k) {
+            case 'brightness': return [[v, 0, 0, 0], [0, v, 0, 0], [0, 0, v, 0]];
+            case 'contrast': return [[v, 0, 0, 0.5 * (1 - v)], [0, v, 0, 0.5 * (1 - v)], [0, 0, v, 0.5 * (1 - v)]];
+            case 'saturate': return [[0.213 + 0.787 * v, 0.715 - 0.715 * v, 0.072 - 0.072 * v, 0], [0.213 - 0.213 * v, 0.715 + 0.285 * v, 0.072 - 0.072 * v, 0], [0.213 - 0.213 * v, 0.715 - 0.715 * v, 0.072 + 0.928 * v, 0]];
+            case 'grayscale': return [[0.2126 + 0.7874 * i, 0.7152 - 0.7152 * i, 0.0722 - 0.0722 * i, 0], [0.2126 - 0.2126 * i, 0.7152 + 0.2848 * i, 0.0722 - 0.0722 * i, 0], [0.2126 - 0.2126 * i, 0.7152 - 0.7152 * i, 0.0722 + 0.9278 * i, 0]];
+            case 'sepia': return [[0.393 + 0.607 * i, 0.769 - 0.769 * i, 0.189 - 0.189 * i, 0], [0.349 - 0.349 * i, 0.686 + 0.314 * i, 0.168 - 0.168 * i, 0], [0.272 - 0.272 * i, 0.534 - 0.534 * i, 0.131 + 0.869 * i, 0]];
+            case 'hue': {
+                const a = v * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+                return [[0.213 + c * 0.787 - s * 0.213, 0.715 - c * 0.715 - s * 0.715, 0.072 - c * 0.072 + s * 0.928, 0],
+                    [0.213 - c * 0.213 + s * 0.143, 0.715 + c * 0.285 + s * 0.140, 0.072 - c * 0.072 - s * 0.283, 0],
+                    [0.213 - c * 0.213 - s * 0.787, 0.715 - c * 0.715 + s * 0.715, 0.072 + c * 0.928 + s * 0.072, 0]];
+            }
+            default: return [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]];
+        }
+    }
+    // Steps run in order, so later ones are applied to the result of earlier ones
+    const fxMatrices = new Map();
+    function matrixOf(key) {
+        if (fxMatrices.has(key)) return fxMatrices.get(key);
+        let m = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]];
+        stepsOf(key).forEach(step => {
+            const b = stepMatrix(step);
+            m = b.map(row => [0, 1, 2].map(col => row[0] * m[0][col] + row[1] * m[1][col] + row[2] * m[2][col]).concat(row[0] * m[0][3] + row[1] * m[1][3] + row[2] * m[2][3] + row[3]));
+        });
+        // WebGL wants the 3×3 part column by column, plus the offsets
+        const out = { mat: [m[0][0], m[1][0], m[2][0], m[0][1], m[1][1], m[2][1], m[0][2], m[1][2], m[2][2]], off: [m[0][3], m[1][3], m[2][3]] };
+        fxMatrices.set(key, out);
+        return out;
+    }
+
+    function makeGL(canvas) {
+        const gl = canvas.getContext('webgl', { antialias: false, alpha: false, premultipliedAlpha: false });
+        if (!gl) return null;
+        const shader = (type, src) => { const sh = gl.createShader(type); gl.shaderSource(sh, src); gl.compileShader(sh); return gl.getShaderParameter(sh, gl.COMPILE_STATUS) ? sh : null; };
+        const vs = shader(gl.VERTEX_SHADER, 'attribute vec2 p; varying vec2 v; void main() { v = (p + 1.0) * 0.5; gl_Position = vec4(p, 0.0, 1.0); }');
+        const fs = shader(gl.FRAGMENT_SHADER, 'precision mediump float; varying vec2 v; uniform sampler2D t; uniform mat3 m; uniform vec3 o; void main() { vec3 c = texture2D(t, v).rgb; gl_FragColor = vec4(clamp(m * c + o, 0.0, 1.0), 1.0); }');
+        if (!vs || !fs) return null;
+        const prog = gl.createProgram();
+        gl.attachShader(prog, vs);
+        gl.attachShader(prog, fs);
+        gl.linkProgram(prog);
+        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
+        gl.useProgram(prog);
+        const buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]), gl.STATIC_DRAW);
+        const p = gl.getAttribLocation(prog, 'p');
+        gl.enableVertexAttribArray(p);
+        gl.vertexAttribPointer(p, 2, gl.FLOAT, false, 0, 0);
+        const tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        [[gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE], [gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR]].forEach(([k, v]) => gl.texParameteri(gl.TEXTURE_2D, k, v));
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+        return { gl, uM: gl.getUniformLocation(prog, 'm'), uO: gl.getUniformLocation(prog, 'o') };
+    }
 
     function startFx() {
-        if (!canvasFilters || !L.media || L.fx) return;
+        if (!fxEngine || !L.media || L.fx) return;
         const src = document.createElement('video');
         src.muted = true;
         src.setAttribute('playsinline', '');
@@ -90,8 +171,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const canvas = document.createElement('canvas');
         canvas.width = 720;
         canvas.height = 1280;
-        const ctx = canvas.getContext('2d');
-        L.fx = { src, canvas, ctx, raf: 0, track: canvas.captureStream(30).getVideoTracks()[0] };
+        const g = fxEngine === 'gl' ? makeGL(canvas) : null;
+        const ctx = g ? null : canvas.getContext('2d');
+        if (!g && !(ctx && 'filter' in ctx)) { src.remove(); return; }
+        L.fx = { src, canvas, g, ctx, raf: 0, track: canvas.captureStream(30).getVideoTracks()[0] };
         if (L.fx.track && 'contentHint' in L.fx.track) L.fx.track.contentHint = 'motion';
         src.srcObject = new MediaStream(L.media.getVideoTracks());
         src.play().catch(() => {});
@@ -99,12 +182,22 @@ document.addEventListener('DOMContentLoaded', () => {
             const f = L.fx;
             if (!f) return;
             const w = f.src.videoWidth, h = f.src.videoHeight;
-            if (w && h) {
+            if (w && h && f.src.readyState >= 2) {
                 const k = Math.min(1, 1280 / Math.max(w, h));
                 const cw = Math.round(w * k), ch = Math.round(h * k);
                 if (f.canvas.width !== cw || f.canvas.height !== ch) { f.canvas.width = cw; f.canvas.height = ch; }
-                f.ctx.filter = fxCss(L.filter) || 'none';
-                f.ctx.drawImage(f.src, 0, 0, cw, ch);
+                if (f.g) {
+                    const { gl, uM, uO } = f.g;
+                    const m = matrixOf(L.filter);
+                    gl.viewport(0, 0, cw, ch);
+                    try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, f.src); } catch (e) { /* a frame not ready yet */ }
+                    gl.uniformMatrix3fv(uM, false, m.mat);
+                    gl.uniform3fv(uO, m.off);
+                    gl.drawArrays(gl.TRIANGLES, 0, 6);
+                } else {
+                    f.ctx.filter = fxCss(L.filter) || 'none';
+                    f.ctx.drawImage(f.src, 0, 0, cw, ch);
+                }
             }
             f.raf = requestAnimationFrame(draw);
         };
@@ -116,22 +209,84 @@ document.addEventListener('DOMContentLoaded', () => {
         L.fx = null;
         cancelAnimationFrame(f.raf);
         if (f.track) f.track.stop();
+        if (f.g) { const lose = f.g.gl.getExtension('WEBGL_lose_context'); if (lose) lose.loseContext(); }
         f.src.srcObject = null;
         f.src.remove();
     }
     function setFilter(key) {
         L.filter = key;
         const css = fxCss(key);
-        video.style.filter = css; // your own preview, instantly
+        if (!L.screen) video.style.filter = css; // your own preview, instantly
         if (css) startFx(); else stopFx();
         const track = outgoingVideo();
         L.peers.forEach(p => { if (p.vs && track) p.vs.replaceTrack(track).catch(() => {}); });
         paintFx();
     }
+    // The filter choices (in the live bar's strip and on the setup screen), each with a tiny live preview of you
     function paintFx() {
-        const strip = $('lv-fx-strip');
-        if (!strip) return;
-        strip.innerHTML = FX.map(([k, l, css]) => `<button type="button" class="lv-fx-opt" data-fx="${k}" aria-pressed="${(L.filter || 'none') === k}"><span class="lv-fx-sw" style="filter:${css || 'none'}" aria-hidden="true"></span>${l}</button>`).join('');
+        const opts = FX.map(([k, l, steps]) => `<button type="button" class="lv-fx-opt" data-fx="${k}" aria-pressed="${(L.filter || 'none') === k}"><canvas class="lv-fx-sw" width="96" height="96" style="filter:${cssOf(steps) || 'none'}" aria-hidden="true"></canvas>${l}</button>`).join('');
+        ['lv-fx-strip', 'lv-setup-fx'].forEach(id => { const el = $(id); if (el) el.innerHTML = opts; });
+        const w = video.videoWidth, h = video.videoHeight;
+        if (!w || !h) return;
+        const side = Math.min(w, h);
+        document.querySelectorAll('#live .lv-fx-sw').forEach(c => {
+            try { c.getContext('2d').drawImage(video, (w - side) / 2, (h - side) / 2, side, side, 0, 0, 96, 96); } catch (e) { /* not ready */ }
+        });
+    }
+
+    // ---------- Sharing your screen ----------
+    // Computers only (phone browsers can't share their screen). Viewers get the screen instead of the camera;
+    // stopping — here or with the browser's own "Stop sharing" — brings the camera (and its filter) back.
+    const canShareScreen = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) && !window.matchMedia('(pointer: coarse)').matches;
+    async function toggleScreen() {
+        if (L.screen) return stopScreen();
+        if (L.mode !== 'live') return;
+        let stream;
+        try {
+            stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 } }, audio: false });
+        } catch (e) {
+            return app.showToast(e && e.name === 'NotAllowedError' ? 'Screen sharing was cancelled' : 'Couldn’t share your screen — try again');
+        }
+        const track = stream.getVideoTracks()[0];
+        if (!track || L.mode !== 'live') { stream.getTracks().forEach(t => t.stop()); return; }
+        if ('contentHint' in track) track.contentHint = 'detail'; // keep text sharp
+        L.screen = track;
+        track.addEventListener('ended', stopScreen);
+        L.peers.forEach(p => { if (p.vs) p.vs.replaceTrack(track).catch(() => {}); });
+        video.srcObject = new MediaStream([track]);
+        video.classList.remove('mirror');
+        video.style.filter = '';
+        video.play().catch(() => {});
+        send('screen', { on: true });
+        paintScreen();
+    }
+    function stopScreen() {
+        const t = L.screen;
+        if (!t) return;
+        L.screen = null;
+        t.stop();
+        const out = outgoingVideo();
+        L.peers.forEach(p => { if (p.vs && out) p.vs.replaceTrack(out).catch(() => {}); });
+        if (L.media) {
+            video.srcObject = new MediaStream(L.media.getTracks());
+            video.classList.toggle('mirror', L.facing === 'user');
+            video.style.filter = fxCss(L.filter || 'none');
+            video.play().catch(() => {});
+        }
+        if (L.mode === 'live') send('screen', { on: false });
+        paintScreen();
+    }
+    function paintScreen() {
+        const on = !!L.screen;
+        dialog.dataset.screen = on ? '1' : '';
+        const btn = $('lv-screen');
+        if (btn) {
+            btn.setAttribute('aria-pressed', String(on));
+            btn.setAttribute('aria-label', on ? 'Stop sharing your screen' : 'Share your screen');
+        }
+        const pill = $('lv-screen-pill');
+        if (pill) pill.hidden = !on;
+        if (typeof adapt === 'function') adapt();
     }
 
     // ---------- Pinned comment ----------
@@ -420,7 +575,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const old = L.media.getVideoTracks()[0];
             if ('contentHint' in track) track.contentHint = 'motion';
             if (L.fx) L.fx.src.srcObject = new MediaStream([track]);
-            else L.peers.forEach(p => { if (p.vs) p.vs.replaceTrack(track).catch(() => {}); });
+            else if (!L.screen) L.peers.forEach(p => { if (p.vs) p.vs.replaceTrack(track).catch(() => {}); });
             L.media.removeTrack(old);
             old.stop();
             L.media.addTrack(track);
@@ -532,7 +687,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (isHost && payload.from) {
                     hostOffer(payload.from);
                     if (L.pin) send('pin', { pin: L.pin });
+                    if (L.screen) send('screen', { on: true });
                 }
+            })
+            .on('broadcast', { event: 'screen' }, ({ payload }) => {
+                if (isHost) return;
+                dialog.dataset.screen = payload && payload.on ? '1' : '';
+                const pill = $('lv-screen-pill');
+                if (pill) { pill.hidden = !(payload && payload.on); pill.textContent = 'Sharing their screen'; }
+                adapt();
             })
             .on('broadcast', { event: 'pin' }, ({ payload }) => {
                 if (isHost) return;
@@ -629,6 +792,9 @@ document.addEventListener('DOMContentLoaded', () => {
         L.peers.forEach((_, id) => closePeer(id));
         if (L.pc) try { L.pc.close(); } catch (e) {}
         L.pc = null;
+        if (L.screen) { L.screen.stop(); L.screen = null; }
+        dialog.dataset.screen = '';
+        if ($('lv-screen-pill')) $('lv-screen-pill').hidden = true;
         stopFx();
         L.filter = 'none';
         video.style.filter = '';
@@ -663,7 +829,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // zoomed in, so then the whole picture is shown (for the host and viewers alike) unless they choose fill.
         const box = video.getBoundingClientRect();
         const crop = box.width && box.height ? 1 - Math.min(vw / vh, box.width / box.height) / Math.max(vw / vh, box.width / box.height) : 0;
-        const fit = L.fit || (!desk && crop > 0.12 ? 'contain' : 'cover');
+        const fit = L.fit || (dialog.dataset.screen === '1' || (!desk && crop > 0.12) ? 'contain' : 'cover');
         video.style.objectFit = fit;
         const btn = $('lv-fit');
         btn.hidden = !(L.mode === 'watch' || L.mode === 'live') || desk || crop <= 0.12;
@@ -749,17 +915,23 @@ document.addEventListener('DOMContentLoaded', () => {
     $('lv-close').addEventListener('click', leave);
     $('lv-end').addEventListener('click', leave);
     $('lv-flip').addEventListener('click', flipCamera);
-    if (!canvasFilters) $('lv-fx').remove(); // this browser can't draw filters into the stream
+    if (!canShareScreen) $('lv-screen').remove();
+    else $('lv-screen').addEventListener('click', toggleScreen);
+    if (!fxEngine) { $('lv-fx').remove(); $('lv-setup-fx').remove(); } // this browser can't draw filters into the stream
     else $('lv-fx').addEventListener('click', () => {
         const strip = $('lv-fx-strip');
         strip.hidden = !strip.hidden;
         $('lv-fx').setAttribute('aria-expanded', String(!strip.hidden));
         if (!strip.hidden) paintFx();
     });
-    $('lv-fx-strip').addEventListener('click', e => {
+    const pickFx = e => {
         const b = e.target.closest('[data-fx]');
         if (b) setFilter(b.dataset.fx);
-    });
+    };
+    $('lv-fx-strip').addEventListener('click', pickFx);
+    if ($('lv-setup-fx')) $('lv-setup-fx').addEventListener('click', pickFx);
+    // Choose a look before going live: the setup screen shows the choices once the camera is on
+    video.addEventListener('loadeddata', () => { if (L.mode === 'setup' && fxEngine) paintFx(); });
     const pinMenu = row => {
         if (!row || !L.mode) return;
         const c = { name: row.dataset.name, text: row.dataset.text };

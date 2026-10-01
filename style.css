@@ -15094,3 +15094,18 @@ body.chat-open #content.repaint .inbox .chat-pane { animation: none !important; 
 }
 @media (max-width: 760px) { .lv-fx-strip { right: 58px; padding-right: 8px; border-radius: 0 16px 16px 0; } }
 @media (max-width: 760px) { dialog.live.hosting .lv-bar #lv-fit { bottom: calc(100% + 150px); } }
+
+/* ---------- Live: filters on the setup screen, live swatches, screen sharing ---------- */
+.lv-setup-fx { display: flex; gap: 10px; overflow-x: auto; margin: 4px -4px 2px; padding: 4px; scrollbar-width: none; overscroll-behavior-x: contain; }
+.lv-setup-fx::-webkit-scrollbar { display: none; }
+.lv-setup-fx:empty { display: none; }
+.lv-setup-fx .lv-fx-opt { width: 58px; font-size: 0.72rem; }
+.lv-fx-opt canvas.lv-fx-sw { display: block; width: 52px; height: 52px; border-radius: 50%; background: #222; object-fit: cover; }
+.lv-setup-fx .lv-fx-opt canvas.lv-fx-sw { width: 48px; height: 48px; }
+#lv-screen[aria-pressed="true"] { background: #ef4444; color: #fff; }
+.lv-screen-pill {
+    position: absolute; z-index: 3; left: 50%; top: calc(64px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); margin: 0;
+    padding: 6px 12px; border-radius: 999px; background: rgba(239, 68, 68, 0.9); color: #fff; font-size: 0.78rem; font-weight: 700; white-space: nowrap;
+}
+.lv-screen-pill[hidden] { display: none; }
+dialog.live[data-screen="1"] .lv-title-line { display: none; }
