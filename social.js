@@ -294,6 +294,13 @@ document.addEventListener('DOMContentLoaded', () => {
         if (view === 'messages' && s.activeFriend && window.ChatWallpaper) window.ChatWallpaper.apply(content.querySelector('.chat-pane'), 'dm:' + s.activeFriend);
         if (view === 'home') paintPresence();
         if (view === 'feed') {
+            const more = content.querySelector('.feed-more');
+            if (more && 'IntersectionObserver' in window) {
+                const io = new IntersectionObserver(entries => {
+                    if (entries.some(en => en.isIntersecting)) { io.disconnect(); if (document.contains(more)) more.click(); }
+                }, { rootMargin: '600px 0px' });
+                io.observe(more);
+            }
             hydrateStorage(content);
             const text = $('feed-text');
             if (text) {
@@ -2690,6 +2697,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ]);
         s.hidden = new Set((hiddenRes.data || []).map(r => `${r.kind}:${r.item_id}`));
         s.watching = new Set((watchRes.data || []).map(r => `${r.kind}:${r.item_id}`));
+        s.feedError = !!feedRes.error;
         let feed = feedRes.error ? [] : feedRes.data;
         // Older posts that friends reposted recently
         const have = new Set(feed.map(p => p.id));
@@ -3589,7 +3597,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (blocked) return blocked;
         if (s.feed === null) {
             loadFeed();
-            return `<div class="social"><section class="social-main">${'<div class="post-skel"><span class="sk-row"><i class="sk-av"></i><i class="sk-line w40"></i></span><i class="sk-line"></i><i class="sk-line w70"></i><i class="sk-media"></i></div>'.repeat(3)}</section></div>`;
+            return `<div class="social feed-v2"><section class="social-main" aria-busy="true" aria-label="Loading posts">${'<div class="post-skel"><span class="sk-row"><i class="sk-av"></i><i class="sk-line w40"></i></span><i class="sk-line"></i><i class="sk-line w70"></i><i class="sk-media"></i><span class="sk-row sk-acts"><i></i><i></i><i></i><i class="sk-save"></i></span></div>'.repeat(3)}</section></div>`;
         }
 
         const me = s.profile.id;
@@ -3669,14 +3677,16 @@ document.addEventListener('DOMContentLoaded', () => {
                     <button class="new-posts" data-action="feed-refresh"${s.feedStale ? '' : ' hidden'}><svg class="i"><use href="#i-refresh"/></svg>New posts</button>
                     <div class="feed-bar">
                         <div class="feed-tabs" role="tablist" aria-label="Show">
-                            ${[['foryou', 'For you'], ['following', 'Following'], ['latest', 'Latest'], ['popular', 'Popular'], ['saved', 'Saved']].map(([k, l]) => {
+                            ${[['foryou', 'For you'], ['following', 'Following'], ['latest', 'Latest']].map(([k, l]) => {
                                 const on = k === 'saved' ? s.feedFilter === 'saved' : (s.feedFilter === 'all' && !s.feedAuthor && s.feedSort === k);
                                 return `<button class="feed-tab" role="tab" aria-selected="${on}" data-action="feed-tab" data-tab="${k}">${l}</button>`;
                             }).join('')}
                         </div>
                         <button class="icon-btn feed-search-btn" data-action="feed-search-toggle" aria-label="Search posts" aria-expanded="${!!s.feedSearchOpen}"><svg class="i"><use href="#i-search"/></svg></button>
-                        <button type="button" class="icon-btn feed-filter-btn${(s.feedType || 'all') !== 'all' ? ' on' : ''}" data-action="feed-kind-menu" aria-haspopup="menu" aria-label="Show only: ${esc((FEED_KINDS.find(t => t[0] === (s.feedType || 'all')) || ['', 'All'])[1])}"><svg class="i"><use href="#i-filter"/></svg></button>
+                        <button type="button" class="icon-btn feed-filter-btn${(s.feedType || 'all') !== 'all' || s.feedFilter === 'saved' || (s.feedFilter === 'all' && s.feedSort === 'popular') ? ' on' : ''}" data-action="feed-kind-menu" aria-haspopup="menu" aria-label="Sort and filter the Feed"><svg class="i"><use href="#i-filter"/></svg></button>
                     </div>
+                    ${s.feedFilter === 'all' && !s.feedAuthor && s.feedSort === 'popular' ? '<button type="button" class="chip filter-chip" data-action="feed-tab" data-tab="foryou"><svg class="i"><use href="#i-close"/></svg>Popular this week · back to For you</button>' : ''}
+                    ${s.feedFilter === 'saved' ? '<button type="button" class="chip filter-chip" data-action="feed-all"><svg class="i"><use href="#i-close"/></svg>Saved · show everything</button>' : ''}
                     ${(s.feedType || 'all') !== 'all' ? `<button type="button" class="chip filter-chip" data-action="feed-type" data-type="all"><svg class="i"><use href="#i-close"/></svg>${esc((FEED_KINDS.find(t => t[0] === s.feedType) || ['', ''])[1])} only · show everything</button>` : ''}
                     <label class="search feed-search"${s.feedSearchOpen ? '' : ' hidden'}>
                         <svg class="i"><use href="#i-search"/></svg>
@@ -3710,10 +3720,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     ${window.diaryPlay && s.feedFilter === 'all' && !s.feedAuthor && s.feedSort === 'foryou' ? window.diaryPlay.feedCard() : ''}
                     ${filterLabel && s.feedFilter !== 'saved' ? `<button class="chip filter-chip" data-action="feed-all"><svg class="i"><use href="#i-close"/></svg>${esc(filterLabel)} · show everything</button>` : ''}
-                    <div class="feed-list">
-                        ${feedItems(list).join('') || feedEmptyHTML(filterLabel)}
-                    </div>
-                    ${list.length > 2 ? `
+                    ${(() => {
+                        const fkey = [s.feedSort, s.feedFilter, s.feedType, s.feedAuthor].join('|');
+                        if (s.feedKey !== fkey) { s.feedKey = fkey; s.feedShown = FEED_PAGE; }
+                        const all = feedItems(list);
+                        const shown = all.slice(0, s.feedShown || FEED_PAGE);
+                        s.feedMore = all.length > shown.length;
+                        return `<div class="feed-list" role="feed" aria-label="Posts" aria-busy="false">
+                            ${shown.join('') || (s.feedError ? feedErrorHTML() : feedEmptyHTML(filterLabel))}
+                        </div>
+                        ${s.feedMore ? '<div class="feed-more-row"><button type="button" class="feed-more" data-action="feed-more">Show more posts</button></div>' : ''}`;
+                    })()}
+                    ${list.length > 2 && !s.feedMore ? `
                         <div class="feed-end">
                             <span class="fe-check" aria-hidden="true"><svg class="i"><use href="#i-check"/></svg></span>
                             <strong>You’re all caught up</strong>
@@ -4010,6 +4028,7 @@ document.addEventListener('DOMContentLoaded', () => {
             html: p.html,
             mood: p.mood,
             color: p.color,
+            localId: p.local_id,
             photos: p.photos,
             audio: p.audio,
             bucket: FEED_BUCKET,
@@ -4165,16 +4184,27 @@ document.addEventListener('DOMContentLoaded', () => {
                 <span class="pn-kind"><svg class="i"><use href="#i-note"/></svg>Note<span class="pn-meta">${mins} min read</span></span>
                 <strong class="pn-title">${esc(o.title)}</strong>
                 <div class="pn-preview">${linkTags(esc(body.slice(0, 420)))}</div>
-                <button type="button" class="pn-open" data-action="post-open" data-key="${esc(key)}">Read note<svg class="i"><use href="#i-forward"/></svg></button>
+                ${o.mine && o.localId && app.getNotes().some(n => n.id === o.localId)
+                    ? `<button type="button" class="pn-open" data-action="note-source" data-id="${esc(o.localId)}">Open in Notes<svg class="i"><use href="#i-forward"/></svg></button>`
+                    : `<button type="button" class="pn-open" data-action="post-open" data-key="${esc(key)}">Read note<svg class="i"><use href="#i-forward"/></svg></button>`}
             </div>`;
     }
+    const PLAYNOTE_TITLES = [['Daily Trivia', 'Daily trivia'], ['Weekly Challenge', 'Weekly challenge'], ['Bible Challenge', 'Bible challenge'], ['Brain Challenge', 'Brain challenge'], ['Question of the Day', 'Question of the day'], ['Word of the day', 'Word of the day'], ['practice round', 'Practice round']];
     function playnoteCardHTML(o) {
+        const body = String(o.body || '');
+        const title = (PLAYNOTE_TITLES.find(([k]) => body.includes(k)) || ['', /^💭/.test(body) ? 'Thought for today' : 'Playnote'])[1];
+        const score = body.match(/(\d+)\/(\d+)/);
         return `
             <div class="post-playnote">
                 <span class="pn-kind"><svg class="i"><use href="#i-trophy"/></svg>Playnote</span>
+                <span class="pp-head"><strong class="pp-title">${esc(title)}</strong>${score ? `<span class="pp-score" aria-label="Score ${score[1]} out of ${score[2]}">${score[1]}/${score[2]}</span>` : ''}</span>
                 <div class="pp-text">${linkTags(esc(String(o.body || '')))}</div>
                 <button type="button" class="pp-play" data-action="go-play">${o.mine ? 'Play again' : 'Play today’s challenge'}<svg class="i"><use href="#i-forward"/></svg></button>
             </div>`;
+    }
+    const FEED_PAGE = 15;
+    function feedErrorHTML() {
+        return `<div class="empty feed-empty" role="alert"><p class="empty-title">${navigator.onLine ? 'Couldn’t load the Feed' : 'You’re offline'}</p><p>${navigator.onLine ? 'Something went wrong on our side. Your posts are safe.' : 'Posts will load when you’re back online.'}</p><div class="feed-empty-actions"><button type="button" class="chip accent" data-action="feed-retry"><svg class="i"><use href="#i-refresh"/></svg>Try again</button></div></div>`;
     }
     function feedEmptyHTML(filterLabel) {
         const type = (s.feedType || 'all') !== 'all' ? (FEED_KINDS.find(t => t[0] === s.feedType) || ['', 'such'])[1].toLowerCase() : '';
@@ -4348,6 +4378,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <p class="cp-line"><strong>${who(c)}</strong> ${c.body ? linkTags(esc(c.body)) : ''}${c.audio_path ? `<span class="cp-voice"><svg class="i"><use href="#i-mic"/></svg>Voice comment · ${Media.formatDuration(c.audio_duration || 0)}</span>` : ''}</p>
                     </div>`).join('')}</div>` : ''}
                 ${total > recent.length ? `<button type="button" class="link-btn muted-link cp-all" data-action="post-open" data-key="${key}">${recent.length ? `View all ${total} comments` : total === 1 ? 'View 1 comment' : `View ${total} comments`}</button>` : ''}
+                ${canComment ? `<button type="button" class="cp-reply" data-action="post-open" data-key="${key}" data-focus="input">${avatar(s.profile, 'xs')}<span>${total ? 'Add to the conversation…' : 'Be the first to comment…'}</span></button>` : ''}
                 ${canComment ? `
                     <form class="comment-form" data-form="comment" data-key="${key}">
                         <span class="cf-av" aria-hidden="true">${avatar(s.profile, 'xs')}</span>
@@ -5595,9 +5626,16 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         'repost': el => toggleRepost(el.dataset.id),
         'post-share': el => openPostShare(el, el.dataset.id),
+        'feed-more': () => { s.feedShown = (s.feedShown || FEED_PAGE) + FEED_PAGE; app.render(); },
+        'feed-retry': () => { s.feed = null; s.feedError = false; app.render(); },
+        'note-source': el => { closePost(); app.openNote(el.dataset.id); },
         'feed-kind-menu': el => {
             const cur = s.feedType || 'all';
+            const popular = s.feedFilter === 'all' && !s.feedAuthor && s.feedSort === 'popular';
             app.openPopover(el, [
+                { heading: 'Sort' },
+                { label: 'Popular this week', icon: popular ? 'i-check' : 'i-trend', onClick: () => { s.feedAuthor = null; s.feedFilter = 'all'; s.feedSort = popular ? 'foryou' : 'popular'; app.render(); } },
+                { label: 'Saved posts', icon: s.feedFilter === 'saved' ? 'i-check' : 'i-bookmark', onClick: () => { s.feedAuthor = null; s.feedFilter = s.feedFilter === 'saved' ? 'all' : 'saved'; app.render(); } },
                 { heading: 'Show only' },
                 ...FEED_KINDS.map(([k, l, icon]) => ({ label: l, icon: cur === k ? 'i-check' : (icon || 'i-feed'), onClick: () => { s.feedType = k; app.render(); } })),
                 { label: 'Open Reels', icon: 'i-reel', onClick: () => app.setView('reels') }

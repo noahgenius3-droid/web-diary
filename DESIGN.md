@@ -31,16 +31,21 @@ Cordial is a warm, personal place: a diary first, a social app second. Pages sho
 
 ## Feed
 
-- **Controls:** one row of underline tabs (For you, Following, Latest, Popular, Saved), with search and a filter menu (post type, Reels).
+This follows the Feed PRD and Feed design spec (content first, identity second, actions third).
+
+- **Modes:** three underline tabs (For you, Following, Latest), with search and a filter menu. The filter menu holds Popular this week, Saved posts, post type and Reels. An active sort or filter shows as a removable chip.
+- **Width and targets:** the Feed column is `--feed-content-max` (620px). Touch targets are `--feed-touch-target` (44px).
+- **Loading:** posts load 15 at a time and the next 15 load as you near the end. A "Show more posts" button stays for keyboards.
+- **States:** the loading skeleton mirrors a post, including its action row. A failed load shows "Couldn't load the Feed" with Try again, never an empty Feed.
 - **Stories:** a row of avatars above it.
 - **Composer:** one line, "What would you like to share?", with a photo button and a "+" for every other way to create. Its tools appear once you start writing.
 - **Posts:**
   - Each post has four actions: Like (hold for other reactions), Comment, Share and Save.
   - The Share sheet holds repost or reshare, add to story, send to a friend, message the author, copy link, and the device's share menu.
   - The "…" menu holds tertiary actions such as report, copy text and audience.
-- **A shared note** (title, no media) is shown as a note: note-colour top edge, "Note · n min read", a serif title, a four-line preview and "Read note".
-- **A Playnote result** is shown as a Playnote card with one "Play today's challenge" button.
-- **Comments:** under each post, a short preview and "View all"; writing a comment happens in the post view.
+- **A shared note** (title, no media) is shown as a note: note-colour top edge, "Note · n min read", a serif title, a four-line preview and "Read note". The author sees "Open in Notes" instead, which opens the original note: Notes stay the source of truth.
+- **A Playnote result** is shown as a Playnote card: its title (for example "Daily trivia"), the score, the text, and one "Play today's challenge" button.
+- **Comments:** under each post, a short preview, "View all", and a quiet "Add to the conversation…" line. Writing a comment happens in the post view.
 - **Desktop layout:** the Feed column (max about 640px) and a right column with you (posts, saved, scheduled, stats), trending tags and people. Boxes with nothing to show are not drawn.
 - **Phones:** posts run edge to edge, separated by a hairline.
 
