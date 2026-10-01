@@ -14447,3 +14447,4 @@ body[data-view="explore"] .fab { display: none; } /* it covered "Open" / "See al
 dialog.live[data-mode="watch"] .lv-host small, dialog.live[data-mode="live"] .lv-host small { display: none; }
 .lv-host strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lv-host > span { min-width: 0; }
+.post-actions .act .act-count:empty { display: none; }

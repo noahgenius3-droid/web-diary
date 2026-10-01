@@ -983,8 +983,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         <svg class="i"><use href="#${liked ? 'i-heart-fill' : 'i-heart'}"/></svg><span class="act-count" data-count="likes">${r.likes.length || ''}</span>
                     </button>
                     <button class="act" data-action="reel-comments" data-id="${esc(r.id)}" aria-label="Comments"><svg class="i"><use href="#i-chat"/></svg><span class="act-count" data-count="comments">${count(r) || ''}</span></button>
-                    <button class="act reshare-btn" data-action="reel-reshare" data-id="${esc(r.id)}" aria-pressed="${reshared}" aria-label="${reshared ? 'Undo reshare' : 'Reshare to your friends'}" title="Reshare"><svg class="i"><use href="#i-repost"/></svg><span class="act-count">${reshares.length ? compact(reshares.length) : 'Reshare'}</span></button>
-                    <button class="act" data-action="reel-story" data-id="${esc(r.id)}" aria-label="Add to your story" title="Add to your story"><svg class="i"><use href="#i-plus"/></svg><span class="act-count">Story</span></button>
+                    <button class="act reshare-btn" data-action="reel-reshare" data-id="${esc(r.id)}" aria-pressed="${reshared}" aria-label="${reshared ? 'Undo reshare' : 'Reshare to your friends'}" title="Reshare"><svg class="i"><use href="#i-repost"/></svg><span class="act-count">${reshares.length ? compact(reshares.length) : ''}</span></button>
+                    <button class="act story-btn" data-action="reel-story" data-id="${esc(r.id)}" aria-label="Add to your story" title="Add to your story"><svg class="i"><use href="#i-story-add"/></svg></button>
                     <button class="act save-btn" data-action="reel-save" data-id="${esc(r.id)}" aria-pressed="${saved}" aria-label="${saved ? 'Remove from Saved' : 'Save reel'}">
                         <svg class="i"><use href="#${saved ? 'i-bookmark-fill' : 'i-bookmark'}"/></svg><span class="sr-only">${saved ? 'Saved' : 'Save'}</span>
                     </button>
@@ -1381,7 +1381,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const mine = r.reshares.some(x => x.user_id === s.profile.id);
             btn.setAttribute('aria-pressed', String(mine));
             btn.setAttribute('aria-label', mine ? 'Undo reshare' : 'Reshare to your friends');
-            btn.querySelector('span').textContent = r.reshares.length ? compact(r.reshares.length) : 'Reshare';
+            // Feed cards show just the count; the full-screen Reels page shows a label when there's none
+            btn.querySelector('span').textContent = r.reshares.length ? compact(r.reshares.length) : (btn.classList.contains('act') ? '' : 'Reshare');
         };
         paint();
         const { error } = on
