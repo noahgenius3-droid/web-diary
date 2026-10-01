@@ -14900,3 +14900,42 @@ body[data-view="feed"] .feed-v2 .post.ig { border: 1px solid var(--border); box-
 @media (max-width: 1100px) { .feed-v2 { grid-template-columns: minmax(0, var(--feed-content-max)) 270px; } }
 @media (max-width: 900px) { .feed-v2 { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 380px) { .topbar-dock .feed-tab { padding: 0 8px; font-size: 0.85rem; } .topbar-dock .feed-tab[aria-selected="true"]::after { left: 8px; right: 8px; } }
+
+/* ---------- Feed: Instagram-like post rhythm ----------
+   Posts sit on the page (no card), with generous space between them and a tight rhythm inside:
+   header → content → actions right under it → likes → comments. */
+body[data-view="feed"] .feed-v2 .feed-list { gap: 0; }
+body[data-view="feed"] .feed-v2 .feed-list .post.ig {
+    margin: 0; padding: 0 0 20px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0;
+    background: transparent; box-shadow: none;
+}
+body[data-view="feed"] .feed-v2 .feed-list .post.ig + .post.ig,
+body[data-view="feed"] .feed-v2 .feed-list > * + .post.ig { margin-top: 20px; }
+@media (hover: hover) and (pointer: fine) { body[data-view="feed"] .feed-v2 .feed-list .post.ig:hover { box-shadow: none; border-color: var(--border); } }
+body[data-view="feed"] .feed-v2 .post.ig .post-head { padding: 0 4px 12px; }
+body[data-view="feed"] .feed-v2 .post.ig .post-media { margin: 0; border-radius: 12px; }
+body[data-view="feed"] .feed-v2 .post.ig .post-caption.text-only { padding: 0 4px 4px; }
+body[data-view="feed"] .feed-v2 .post.ig :is(.post-note, .post-playnote) { margin: 0 0 4px; }
+body[data-view="feed"] .feed-v2 .post-actions { padding: 6px 0 0; margin-left: -10px; margin-right: -10px; }
+body[data-view="feed"] .feed-v2 .react-sum-row { padding: 0 4px; margin-top: -2px; }
+body[data-view="feed"] .feed-v2 .post.ig .comments { gap: 6px; padding: 6px 4px 0; }
+body[data-view="feed"] .feed-v2 .post.ig .post-caption:not(.text-only) { padding: 4px 4px 0; }
+body[data-view="feed"] .feed-v2 .post.ig .repost-line { padding: 0 4px 8px; margin: 0; }
+/* Things that live between posts (suggestions, reels) get the same breathing room */
+body[data-view="feed"] .feed-v2 .feed-list > :not(.post) { margin: 20px 0 0; }
+body[data-view="feed"] .feed-v2 .feed-list > :first-child { margin-top: 0; }
+.feed-v2 .post-composer + * { margin-top: 0; }
+
+@media (max-width: 760px) {
+    /* Phone: posts run edge to edge; space, not lines, separates them */
+    body[data-view="feed"] .feed-v2 .feed-list .post.ig { padding: 0 0 16px; border-bottom: 0; }
+    body[data-view="feed"] .feed-v2 .feed-list .post.ig + .post.ig,
+    body[data-view="feed"] .feed-v2 .feed-list > * + .post.ig { margin-top: 24px; }
+    body[data-view="feed"] .feed-v2 .post.ig .post-head { padding: 0 2px 10px; }
+    body[data-view="feed"] .feed-v2 .post.ig .post-media { margin: 0 -12px; border-radius: 0; }
+    body[data-view="feed"] .feed-v2 .post-actions { margin-left: -8px; margin-right: -8px; }
+}
+.feed-v2 .post-composer { margin-bottom: 12px; }
+body[data-view="feed"] .feed-v2 .feed-list { margin-top: 20px; }
+@media (max-width: 760px) { body[data-view="feed"] .feed-v2 .feed-list { margin-top: 16px; } }
+@media (max-width: 760px) { body[data-view="feed"] .feed-v2 .feed-list { margin-top: 24px; } }
