@@ -238,7 +238,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const { data, error } = await client.from('diary_live_streams').insert({ title, audience: L.audience }).select('id, host, title, audience, started_at').single();
         $('lv-go').disabled = false;
         if (error) {
-            app.showToast(/duplicate|unique/i.test(error.message) ? 'You already have a live video going — end it first' : 'Couldn’t start your live video');
+            app.showToast(/duplicate|unique/i.test(error.message) ? 'You already have a live video going on another device — end it there first, or try again in 2 minutes'
+                : /permission|policy|42501/i.test(`${error.message} ${error.code}`) ? 'Couldn’t start your live video — your account isn’t allowed to go live right now'
+                : !navigator.onLine ? 'You’re offline — connect to go live' : `Couldn’t start your live video — ${error.message || 'try again'}`);
             return;
         }
         L.stream = data;

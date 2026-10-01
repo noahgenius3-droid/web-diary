@@ -66,3 +66,6 @@ exception when others then
     return false;
 end;
 $function$;
+
+-- Hosts set the audience when they go live (inserts are column-granted on this table)
+grant insert (audience) on public.diary_live_streams to authenticated;
