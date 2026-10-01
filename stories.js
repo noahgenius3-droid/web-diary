@@ -1099,7 +1099,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <svg class="i"><use href="#${st.muted ? 'i-volume-off' : 'i-volume'}"/></svg>
                     </button>
                     ${r.author === me && /\.mov$/i.test(r.video_path) ? `<button class="reel-act" data-action="reel-convert" data-id="${esc(r.id)}" aria-label="Convert so every device can play it"><svg class="i"><use href="#i-refresh"/></svg><span>Fix</span></button>` : ''}
-                    ${r.author === me ? '' : `<button class="reel-act" data-action="reel-reshare" data-id="${esc(r.id)}" aria-pressed="${reshared}" aria-label="${reshared ? 'Undo reshare' : 'Reshare to your friends'}"><svg class="i"><use href="#i-repost"/></svg><span>${reshares.length ? compact(reshares.length) : 'Reshare'}</span></button>`}
+                    ${`<button class="reel-act" data-action="reel-reshare" data-id="${esc(r.id)}" aria-pressed="${reshared}" aria-label="${reshared ? 'Undo reshare' : 'Reshare to your friends'}"><svg class="i"><use href="#i-repost"/></svg><span>${reshares.length ? compact(reshares.length) : 'Reshare'}</span></button>`}
                     <button class="reel-act" data-action="reel-story" data-id="${esc(r.id)}" aria-label="Add to your story"><svg class="i"><use href="#i-plus"/></svg><span>Story</span></button>
                     ${r.author === me ? `<button class="reel-act" data-action="reel-delete" data-id="${esc(r.id)}" aria-label="Delete reel"><svg class="i"><use href="#i-trash"/></svg></button>` : ''}
                 </div>
@@ -1364,7 +1364,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Reshare: your friends see the reel too (and who reshared it). Tap again to undo.
     async function reshareReel(id, btn) {
         const r = (st.reels || []).find(x => x.id === id);
-        if (!r || r.author === s.profile.id) return;
+        if (!r) return;
         if (I.isGuest && I.isGuest()) return I.openUpgrade && I.openUpgrade();
         r.reshares = r.reshares || [];
         const on = !r.reshares.some(x => x.user_id === s.profile.id);

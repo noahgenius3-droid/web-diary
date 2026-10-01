@@ -1555,7 +1555,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const local = thread && thread.find(x => x.id === m.id);
         if (local) {
             const changed = local.deleted_at !== m.deleted_at || local.body !== m.body || local.edited_at !== m.edited_at || local.restored_at !== m.restored_at
-                || JSON.stringify(local.reactions || {}) !== JSON.stringify(m.reactions || {});
+                || JSON.stringify(local.reactions || {}) !== JSON.stringify(m.reactions || {})
+                || JSON.stringify(local.attachments || []) !== JSON.stringify(m.attachments || []);
             Object.assign(local, { read_at: m.read_at, delivered_at: m.delivered_at, reactions: m.reactions || {}, deleted_at: m.deleted_at, body: m.body, attachments: m.attachments, expires_at: m.expires_at, vanish: m.vanish, edited_at: m.edited_at, restored_at: m.restored_at });
             if (changed) repaintMessage(m.id);
             else {
@@ -4818,7 +4819,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.diarySocial.internals = {
         client, state: s, esc, avatar, avatarUrl, timeAgo, gate, extFor, randomId, uploadImage, hydrateStorage,
         renderPost, commentCount, openComments, repaintComments, MOOD_EMOJI: () => MOOD_EMOJI,
-        respond, loadFriends, openChat, focusPost, commentsBlock, addComment, deleteComment, toggleSaved, postsFor,
+        respond, loadFriends, loadThread, openChat, focusPost, commentsBlock, addComment, deleteComment, toggleSaved, postsFor,
         changeAvatar, removeAvatar, signOut, openAuth, hashtags, commentCount, followButton, toggleFollow, loadFollows,
         pickAudio, uploadAudio, voiceHTML, POST_AUDIO, linkTags, emojiPicker, POST_REACTIONS, peopleResults,
         presenceText, refreshPresence, paintPresence, heartbeat, isGuest, openUpgrade, guestCardHTML,
@@ -4992,7 +4993,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <button class="convo${f.id === s.activeFriend ? ' active' : ''}${unread ? ' unread' : ''}" data-action="open-chat" data-id="${esc(f.id)}">
                     ${avatar(f, 'md')}
                     <span class="convo-main">
-                        <span class="convo-top"><strong>${esc(f.display_name)}${pref.pinned_at ? '<svg class="i convo-flag" aria-label="Pinned"><use href="#i-pin-note"/></svg>' : ''}${muted ? '<svg class="i convo-flag" aria-label="Muted"><use href="#i-bell-off"/></svg>' : ''}${incognitoOf(f.id) ? '<svg class="i convo-incognito" aria-label="Incognito on"><use href="#i-incognito"/></svg>' : ''}</strong>${m ? `<time>${shortTime(m.created_at)}</time>` : ''}</span>
+                        <span class="convo-top"><strong>${esc(f.display_name)}${window.diaryNoteShare ? window.diaryNoteShare.chip(f.id, 'row') : ''}${pref.pinned_at ? '<svg class="i convo-flag" aria-label="Pinned"><use href="#i-pin-note"/></svg>' : ''}${muted ? '<svg class="i convo-flag" aria-label="Muted"><use href="#i-bell-off"/></svg>' : ''}${incognitoOf(f.id) ? '<svg class="i convo-incognito" aria-label="Incognito on"><use href="#i-incognito"/></svg>' : ''}</strong>${m ? `<time>${shortTime(m.created_at)}</time>` : ''}</span>
                         <span class="convo-bottom">${mine && !m.deleted_at && !m.vanish ? ticksHTML(m).replace('class="ticks', 'class="convo-ticks ticks') : ''}<span class="convo-preview">${esc(preview)}</span>${unread ? `<span class="badge${muted ? ' muted' : ''}">${unread}</span>` : ''}</span>
                     </span>
                 </button>
@@ -5011,7 +5012,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (a.kind === 'audio') return '🎤 Voice note';
         if (a.kind === 'location') return '📍 Live location';
         if (a.kind === 'contact') return `👤 ${a.name || 'Contact'}`;
-        if (a.kind === 'note') return `📝 ${a.title || 'A note'}`;
+        if (a.kind === 'note') return a.once && !a.saved ? (a.opened_at ? '📝 Note · opened' : '📝 New note') : `📝 ${a.title || 'A note'}`;
         if (a.kind === 'image' || a.kind === 'drawing') return '📷 Photo';
         return `📎 ${a.name}`;
     }
@@ -5031,7 +5032,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <header class="chat-head">
                 <button class="icon-btn back-chat" data-action="close-chat" aria-label="Back to inbox" title="Back to inbox"><svg class="i"><use href="#i-chevron-left"/></svg></button>
                 <button type="button" class="chat-who" data-profile="${esc(friend.id)}" aria-label="View ${esc(friend.display_name)}’s profile">${avatar(friend, 'sm')}</button>
-                <div class="friend-name"><button type="button" class="chat-who-name" data-profile="${esc(friend.id)}">${esc(friend.display_name)}</button><small data-status="${esc(friend.id)}" data-with-status data-away="@${esc(friend.username)}">${esc([statusOf(friend.id) ? statusOf(friend.id).label : '', presenceText(friend.id)].filter(Boolean).join(' · ') || `@${friend.username}`)}</small></div>
+                <div class="friend-name"><button type="button" class="chat-who-name" data-profile="${esc(friend.id)}">${esc(friend.display_name)}</button>${window.diaryNoteShare ? window.diaryNoteShare.chip(friend.id, 'head') : ''}<small data-status="${esc(friend.id)}" data-with-status data-away="@${esc(friend.username)}">${esc([statusOf(friend.id) ? statusOf(friend.id).label : '', presenceText(friend.id)].filter(Boolean).join(' · ') || `@${friend.username}`)}</small></div>
                 ${window.diaryCalls && s.allowCalls.get(friend.id) !== 'nobody' && !(window.diarySafety && window.diarySafety.isBlocked(friend.id)) ? `<button class="icon-btn accent" data-action="call-friend" data-id="${esc(friend.id)}" aria-label="Voice call ${esc(friend.display_name)}" title="Voice call"><svg class="i"><use href="#i-phone"/></svg></button><button class="icon-btn accent" data-action="call-friend" data-video="1" data-id="${esc(friend.id)}" aria-label="Video call ${esc(friend.display_name)}" title="Video call"><svg class="i"><use href="#i-video"/></svg></button>` : ''}
                 <button class="icon-btn head-wide" data-action="chat-search" aria-label="Search this chat" title="Search"><svg class="i"><use href="#i-search"/></svg></button>
                 <button class="icon-btn head-wide" data-action="toggle-info" aria-pressed="${s.showInfo}" aria-label="Contact details" title="Contact details"><svg class="i"><use href="#i-info"/></svg></button>
@@ -5116,7 +5117,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const body = m.body ? `<div class="msg-body rich-content">${Rich.sanitize(m.body)}</div>` : '';
         const atts = (m.attachments || []).map(a => (a && a.kind === 'location'
             ? (window.LiveLocation ? window.LiveLocation.cardHTML(a, { mine, person: mine ? s.profile : friend }) : '<p>📍 Live location</p>')
-            : attachmentHTML(a))).join('');
+            : attachmentHTML(a, mine, m.id))).join('');
         const onlyEmoji = !atts && /^\p{Extended_Pictographic}(\u200d?\p{Extended_Pictographic}|\ufe0f|\s){0,6}$/u.test(Rich.toText(m.body || '').trim());
         const reactions = Object.entries(m.reactions || {}).filter(([, users]) => Array.isArray(users) && users.length);
         return `${sep}
@@ -5137,9 +5138,9 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>`;
     }
 
-    function attachmentHTML(a) {
+    function attachmentHTML(a, mine = false, msgId = null) {
         if (a && a.kind === 'contact') return contactCardHTML(a);
-        if (a && a.kind === 'note') return window.diaryNoteShare ? window.diaryNoteShare.cardHTML(a) : `<p>📝 ${esc(a.title || 'A note')}</p>`;
+        if (a && a.kind === 'note') return window.diaryNoteShare ? window.diaryNoteShare.cardHTML(a, { mine, msgId }) : `<p>📝 ${esc(a.title || 'A note')}</p>`;
         if (!a || typeof a.path !== 'string') return '';
         const path = esc(a.path);
         const name = esc(a.name || 'attachment');
