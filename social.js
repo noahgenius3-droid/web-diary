@@ -43,7 +43,7 @@ document.addEventListener('DOMContentLoaded', () => {
         pending: {},       // friend id -> attachments waiting to send
         chatFocused: false,
         showFormat: false,
-        showInfo: window.innerWidth > 1280,
+        showInfo: (() => { try { const v = localStorage.getItem('diaryChatInfo'); if (v !== null) return v === '1'; } catch (e) {} return window.innerWidth > 1600; })(),
         inboxTab: 'all',
         addOpen: false,
         sending: false,
@@ -5216,9 +5216,8 @@ document.addEventListener('DOMContentLoaded', () => {
             <section class="inbox-hero" aria-label="Overview">
                 <div class="hero-top">
                     <div class="hero-text">
-                        <p class="hero-hi">Hi, ${firstName}!</p>
-                        <p class="hero-got">${newCount ? 'You received' : 'You’re all caught up'}</p>
-                        <p class="hero-count">${newCount ? `<u>${newCount} ${newCount === 1 ? 'Message' : 'Messages'}</u>` : '<u>No new messages</u>'}</p>
+                        <p class="hero-hi">Hi, ${firstName}</p>
+                        <p class="hero-count">${newCount ? `${newCount} new ${newCount === 1 ? 'message' : 'messages'}` : 'You’re all caught up'}</p>
                     </div>
                     <div class="hero-btns">
                         <button type="button" class="hero-btn" data-action="chat-refresh" aria-label="Refresh chats"><svg class="i"><use href="#i-refresh"/></svg></button>
@@ -5226,8 +5225,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                 </div>
                 ${people.length ? `
-                    <p class="hero-label"><b>Contact</b> List</p>
-                    <div class="hero-contacts">
+                    <div class="hero-contacts" aria-label="Start a chat">
                         ${people.map(f => `<button type="button" class="hero-contact" data-action="open-chat" data-id="${esc(f.id)}" aria-label="Chat with ${esc(f.display_name)}">${avatar(f, 'lg')}<span>${esc(f.display_name.split(' ')[0])}</span></button>`).join('')}
                     </div>` : ''}
             </section>`;
@@ -5335,7 +5333,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const thread = s.threads[friend.id];
         const inc = incognitoOf(friend.id);
         let body;
-        if (!thread) body = '<p class="chat-empty">Loading…</p>';
+        if (!thread) body = '<div class="chat-skel" aria-busy="true" aria-label="Loading messages"><i class="in w60"></i><i class="in w40"></i><i class="out w55"></i><i class="in w70"></i><i class="out w35"></i></div>';
         else if (!thread.length) body = `<p class="chat-empty">This is the start of your chat with ${esc(friend.display_name)}. Say hi 👋</p>`;
         else {
             const firstUnread = unreadDividerBefore(thread);
@@ -5347,7 +5345,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <button class="icon-btn back-chat" data-action="close-chat" aria-label="Back to inbox" title="Back to inbox"><svg class="i"><use href="#i-chevron-left"/></svg></button>
                 <button type="button" class="chat-who" data-profile="${esc(friend.id)}" aria-label="View ${esc(friend.display_name)}’s profile">${avatar(friend, 'sm')}</button>
                 <div class="friend-name"><button type="button" class="chat-who-name" data-profile="${esc(friend.id)}">${nameHTML(friend.display_name)}</button>${window.diaryNoteShare ? window.diaryNoteShare.chip(friend.id, 'head') : ''}<small data-status="${esc(friend.id)}" data-with-status data-away="@${esc(friend.username)}">${esc([statusOf(friend.id) ? statusOf(friend.id).label : '', presenceText(friend.id)].filter(Boolean).join(' · ') || `@${friend.username}`)}</small></div>
-                ${window.diaryCalls && s.allowCalls.get(friend.id) !== 'nobody' && !(window.diarySafety && window.diarySafety.isBlocked(friend.id)) ? `<button class="icon-btn accent" data-action="call-friend" data-id="${esc(friend.id)}" aria-label="Voice call ${esc(friend.display_name)}" title="Voice call"><svg class="i"><use href="#i-phone"/></svg></button><button class="icon-btn accent" data-action="call-friend" data-video="1" data-id="${esc(friend.id)}" aria-label="Video call ${esc(friend.display_name)}" title="Video call"><svg class="i"><use href="#i-video"/></svg></button>` : ''}
+                ${window.diaryCalls && s.allowCalls.get(friend.id) !== 'nobody' && !(window.diarySafety && window.diarySafety.isBlocked(friend.id)) ? `<button class="icon-btn head-call" data-action="call-friend" data-id="${esc(friend.id)}" aria-label="Voice call ${esc(friend.display_name)}" title="Voice call"><svg class="i"><use href="#i-phone"/></svg></button><button class="icon-btn head-call" data-action="call-friend" data-video="1" data-id="${esc(friend.id)}" aria-label="Video call ${esc(friend.display_name)}" title="Video call"><svg class="i"><use href="#i-video"/></svg></button>` : ''}
                 <button class="icon-btn head-wide" data-action="chat-search" aria-label="Search this chat" title="Search"><svg class="i"><use href="#i-search"/></svg></button>
                 <button class="icon-btn head-wide" data-action="toggle-info" aria-pressed="${s.showInfo}" aria-label="Contact details" title="Contact details"><svg class="i"><use href="#i-info"/></svg></button>
                 <button class="icon-btn head-more" data-action="chat-more" aria-label="More options" title="More" aria-haspopup="menu"><svg class="i"><use href="#i-more"/></svg></button>
@@ -5416,6 +5414,31 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // noSep: repainting one message in place (its day separator is already on the page)
+    // Send one of your notes (never a private one) as a note card
+    function pickNoteForChat(anchor) {
+        const friendId = s.activeFriend;
+        const notes = (app.getNotes() || []).filter(n => !n.trashedAt && !n.archived && !n.private && n.origin !== 'post' && (String(n.text || '').trim() || String(n.title || '').trim()))
+            .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)).slice(0, 12);
+        if (!notes.length) return app.showToast('Write a note first — then you can send it here');
+        app.openPopover(anchor, [{ heading: 'Send a note' }, ...notes.map(n => ({
+            label: (n.title || String(n.text || '').slice(0, 40) || 'Untitled').slice(0, 48),
+            icon: 'i-note',
+            onClick: () => window.diaryNoteShare.sendTo([friendId], { title: n.title || '', text: String(n.text || ''), color: n.color })
+        }))]);
+    }
+    // Challenge a friend: today's trivia (a Playnote card in the chat) or a Wordplay match
+    function challengeInChat(anchor) {
+        const items = [{ heading: 'Challenge them' }];
+        items.push({ label: 'Today’s Daily Trivia', icon: 'i-g-question', onClick: () => {
+            const input = $('chat-input');
+            if (!input) return;
+            input.innerHTML = esc('🧠 Can you beat me at today’s Daily Trivia on Cordial? Ten questions, same for everyone. #trivia');
+            sendMessage();
+        } });
+        if (window.diaryGames && window.diaryGames.newMatch) items.push({ label: 'A Wordplay match', icon: 'i-g-tiles', onClick: () => window.diaryGames.newMatch() });
+        app.openPopover(anchor, items);
+    }
+
     function messageHTML(m, prev, noSep = false) {
         const me = s.profile.id;
         const mine = m.sender === me;
@@ -5441,7 +5464,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 <strong>${quoted ? (quoted.sender === me ? 'You' : esc(friend ? friend.display_name : 'Friend')) : 'Earlier message'}</strong>
                 <span>${quoted ? esc(previewOf(quoted)) : 'Tap to find it'}</span>
             </button>` : '';
-        const body = m.body ? `<div class="msg-body rich-content">${Rich.sanitize(m.body)}</div>` : '';
+        const plain = m.body ? Rich.toText(m.body) : '';
+        const body = !m.body ? ''
+            : /#trivia\b/i.test(plain) ? `<div class="msg-playnote"><span class="mp-kind"><svg class="i"><use href="#i-trophy"/></svg>Playnote</span><div class="msg-body rich-content">${Rich.sanitize(m.body)}</div><button type="button" class="mp-play" data-action="go-play">Play today’s challenge<svg class="i"><use href="#i-forward"/></svg></button></div>`
+            : `<div class="msg-body rich-content">${Rich.sanitize(m.body)}</div>`;
         const atts = (m.attachments || []).map(a => (a && a.kind === 'location'
             ? (window.LiveLocation ? window.LiveLocation.cardHTML(a, { mine, person: mine ? s.profile : friend }) : '<p>📍 Live location</p>')
             : attachmentHTML(a, mine, m.id))).join('');
@@ -5954,7 +5980,7 @@ document.addEventListener('DOMContentLoaded', () => {
             input.innerHTML = esc(el.dataset.text);
             sendMessage();
         },
-        'toggle-info': () => { s.showInfo = !s.showInfo; app.render(); },
+        'toggle-info': () => { s.showInfo = !s.showInfo; try { localStorage.setItem('diaryChatInfo', s.showInfo ? '1' : '0'); } catch (e) {} app.render(); },
         'toggle-mute': () => {
             const id = s.activeFriend;
             const on = isMuted('dm', id);
@@ -5997,6 +6023,8 @@ document.addEventListener('DOMContentLoaded', () => {
             { label: 'Photo', icon: 'i-image', onClick: async () => addPending(await Media.pickFiles('image/png,image/jpeg,image/gif,image/webp')) },
             { label: 'Document', icon: 'i-file', onClick: async () => addPending(await Media.pickFiles(DOC_ACCEPT)) },
             { label: 'Voice note', icon: 'i-mic', onClick: () => startVoice(0, true) },
+            ...(window.diaryNoteShare ? [{ label: 'Note', icon: 'i-note', onClick: () => pickNoteForChat(el) }] : []),
+            ...(window.diaryPlay || window.diaryGames ? [{ label: 'Playnote challenge', icon: 'i-trophy', onClick: () => challengeInChat(el) }] : []),
             { label: 'Drawing', icon: 'i-draw', onClick: drawForChat },
             ...(window.LiveLocation && window.LiveLocation.supported ? [{ label: 'Live location', icon: 'i-pin', onClick: shareLocationInChat }] : []),
             { label: 'Contact card', icon: 'i-contact', onClick: () => pickContact(el, card => sendAttachmentOnly(s.activeFriend, [card])) },

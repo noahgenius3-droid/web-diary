@@ -60,6 +60,32 @@ This follows the Feed PRD and Feed design spec (content first, identity second, 
   - The other daily challenges sit in one row.
   - Games and topics are compact tiles; topics show four, then "Show all".
 
+### Explore search
+
+Tapping the search box enters search mode: the tabs and sections step aside.
+
+- **Before typing:** shows Recent searches (kept on this device, each removable, plus "Clear all"), Topics and People.
+- **Results:**
+  - The list updates as you type, after a short pause.
+  - Results are grouped into vertical lists: Tags, People, Notes ("Read"), Playnote ("Play"), Posts, Library and Communities.
+- **Leaving:** Cancel or Esc leaves search mode.
+- **For you:** includes a "Notes worth reading" rail.
+
+## Chat
+
+Chat is for talking, so the conversation is the hero.
+
+- **Header:** back, avatar and name (both open the profile), voice and video call, search, details, and more. All icons share one quiet treatment.
+- **Details panel:** opens by itself only on very wide screens, and remembers your choice.
+- **Message runs:** messages from one person sit close together, with the avatar shown only on the last.
+- **Scrolling:** a new message only scrolls you down if you were already near the bottom. Otherwise "Jump to latest" appears.
+- **Loading:** a conversation that is loading shows placeholder bubbles.
+- **No flicker:** a re-render never fades the conversation.
+- **Opening a chat (phones):** a short slide of 200ms, with none when reduced motion is on.
+- **"+" menu:** photo, document, voice note, Note (one of your notes, never a private one), Playnote challenge (today's trivia, or a Wordplay match), drawing, live location, contact card, schedule, wording and formatting.
+- **Playnote challenges** show as a card with "Play today's challenge".
+- **Inbox on phones:** one compact line ("Hi, Ada" and "2 new messages") with the contact row, so conversations come first.
+
 ## Motion and accessibility
 
 - **Motion:** short and calm; respect `prefers-reduced-motion`.

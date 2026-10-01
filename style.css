@@ -14939,3 +14939,116 @@ body[data-view="feed"] .feed-v2 .feed-list > :first-child { margin-top: 0; }
 body[data-view="feed"] .feed-v2 .feed-list { margin-top: 20px; }
 @media (max-width: 760px) { body[data-view="feed"] .feed-v2 .feed-list { margin-top: 16px; } }
 @media (max-width: 760px) { body[data-view="feed"] .feed-v2 .feed-list { margin-top: 24px; } }
+
+/* ==========================================================================
+   Explore search mode + Chat steadiness (Explore = discover, Chat = communicate)
+   ========================================================================== */
+
+/* ---------- Explore: focused search ---------- */
+.ex-search-row { display: flex; align-items: center; gap: 10px; }
+.ex-search-row .ex-search { flex: 1; min-width: 0; }
+.ex-clear { flex: none; display: grid; place-items: center; width: 32px; height: 32px; margin-right: -8px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--text-muted); cursor: pointer; }
+.ex-clear .i { width: 16px; height: 16px; }
+.ex-clear[hidden] { display: none; }
+.ex-search input::-webkit-search-cancel-button { display: none; }
+.ex-cancel { display: none; flex: none; min-height: 44px; padding: 0 4px; font-weight: 600; color: var(--accent); }
+.explore.searching .ex-cancel { display: inline-flex; align-items: center; }
+.explore.searching .ex-tabs, .explore.searching .ex-top .ex-topics { display: none; }
+.explore.searching { gap: 20px; }
+
+.ex-topics.wrap { flex-wrap: wrap; overflow: visible; margin: 0; padding: 0; }
+.ex-recent-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.ex-recent-list li { display: flex; align-items: center; border-bottom: 1px solid var(--border); }
+.ex-recent-list li:last-child { border-bottom: 0; }
+.ex-recent-go { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 4px; border: 0; background: none; color: var(--text); font: inherit; font-size: 0.95rem; text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ex-recent-go .i { flex: none; width: 17px; height: 17px; color: var(--text-muted); }
+.ex-recent-x { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border: 0; background: none; color: var(--text-muted); cursor: pointer; }
+.ex-recent-x .i { width: 15px; height: 15px; }
+
+/* Results: one vertical list per kind, each kind recognisable */
+.ex-r-h { margin: 0; font-size: 0.82rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
+.ex-r-h span { margin-left: 4px; font-weight: 600; letter-spacing: 0; }
+.ex-r-list { display: grid; }
+.ex-r {
+    display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 8px 4px; border: 0; border-bottom: 1px solid var(--border);
+    background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; touch-action: manipulation;
+}
+.ex-r-list > .ex-r:last-child { border-bottom: 0; }
+@media (hover: hover) and (pointer: fine) { .ex-r:hover { background: var(--input); } }
+.ex-r:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 10px; }
+.ex-r-ic { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--accent-soft); color: var(--accent); }
+.ex-r-ic .i { width: 20px; height: 20px; }
+.ex-r-ic.note { background: color-mix(in srgb, #22c55e 16%, var(--surface)); color: color-mix(in srgb, #16a34a 80%, var(--text)); }
+.ex-r-thumb { flex: none; width: 44px; height: 44px; overflow: hidden; border-radius: 10px; background: var(--input); }
+.ex-r-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.ex-r-av { flex: none; }
+.ex-r-text { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.ex-r-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.95rem; }
+.ex-r-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 0.82rem; }
+.ex-r-go { flex: none; color: var(--accent); font-size: 0.85rem; font-weight: 700; }
+.ex-r-meta { flex: none; display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); font-size: 0.8rem; font-weight: 600; }
+.ex-r-meta .i { width: 13px; height: 13px; }
+
+/* Notes worth reading: a rail of small note cards */
+.ex-ncard {
+    flex: none; display: grid; align-content: start; gap: 6px; width: 240px; min-height: 172px; padding: 16px; overflow: hidden;
+    border: 1px solid var(--border); border-radius: 14px; background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer; touch-action: manipulation;
+}
+@media (hover: hover) and (pointer: fine) { .ex-ncard:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); } }
+.ex-ncard-kind { display: inline-flex; align-items: center; gap: 5px; font-size: 0.74rem; font-weight: 700; color: color-mix(in srgb, #16a34a 70%, var(--text)); }
+.ex-ncard-kind .i { width: 14px; height: 14px; }
+.ex-ncard strong { font-family: var(--serif); font-size: 1.08rem; font-weight: 600; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ex-ncard-text { color: var(--text-muted); font-size: 0.85rem; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.ex-ncard-who { display: flex; align-items: center; gap: 6px; margin-top: auto; padding-top: 4px; color: var(--text-muted); font-size: 0.78rem; font-weight: 600; }
+
+/* ---------- Chat: anchored, quieter, grouped ---------- */
+/* A re-render while a chat is open must never fade the whole conversation out and back in */
+body.chat-open #content.repaint .inbox .chat-pane { animation: none !important; }
+/* Opening: a short, calm slide (no long push) */
+@media (max-width: 760px) {
+    body.chat-open .inbox .chat-pane:not(.leaving) { animation: chat-open-in 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+}
+@keyframes chat-open-in { from { opacity: 0; transform: translateX(24px); } }
+@media (prefers-reduced-motion: reduce) { body.chat-open .inbox .chat-pane { animation: none !important; } }
+
+/* Runs of messages from one person: tight spacing, the avatar only on the last one */
+.chat-thread .msg.in + .msg.in, .chat-thread .msg.out + .msg.out { margin-top: 2px; }
+.chat-thread .msg.in:has(+ .msg.in) .avatar { visibility: hidden; }
+
+/* Header: call buttons match the other icons */
+.chat-head .head-call { background: none; color: var(--text); }
+@media (hover: hover) and (pointer: fine) { .chat-head .head-call:hover { background: var(--input); } }
+
+/* Loading a conversation */
+.chat-skel { display: grid; gap: 10px; padding: 16px 4px; }
+.chat-skel i { display: block; height: 38px; border-radius: 18px; background: var(--input); animation: shimmer 1.4s ease-in-out infinite; }
+.chat-skel i.in { justify-self: start; }
+.chat-skel i.out { justify-self: end; background: color-mix(in srgb, var(--accent) 22%, var(--input)); }
+.chat-skel .w35 { width: 35%; } .chat-skel .w40 { width: 40%; } .chat-skel .w55 { width: 55%; } .chat-skel .w60 { width: 60%; } .chat-skel .w70 { width: 70%; }
+@media (prefers-reduced-motion: reduce) { .chat-skel i { animation: none; } }
+
+/* Inbox: the read ticks sit inline in the row, not floating below it */
+.convo-ticks.ticks { position: static; display: inline-grid; align-self: center; }
+
+/* A Playnote challenge in a chat */
+.msg-playnote { display: grid; gap: 6px; }
+.mp-kind { display: inline-flex; align-items: center; gap: 5px; font-size: 0.74rem; font-weight: 700; opacity: 0.85; }
+.mp-kind .i { width: 14px; height: 14px; }
+.mp-play { justify-self: start; display: inline-flex; align-items: center; gap: 5px; min-height: 36px; margin-top: 2px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--surface); color: var(--accent); font: inherit; font-size: 0.84rem; font-weight: 700; cursor: pointer; }
+.mp-play .i { width: 14px; height: 14px; }
+
+/* Inbox overview: compact, so conversations come first */
+@media (max-width: 760px) {
+    .inbox-hero { padding: 14px 18px 16px; }
+    .inbox-hero .hero-count { margin-top: 2px; font-size: 1.2rem; font-weight: 700; }
+    .inbox-hero .hero-contacts { margin-top: 12px; }
+    .inbox-hero .hero-contact .avatar.lg { width: 48px; height: 48px; }
+}
+@media (min-width: 761px) { .inbox .chat-pane .chat-head .icon-btn.head-call { background: transparent; color: var(--text); } }
+.explore .ex-search-row .ex-search { width: auto; max-width: none; }
+.explore .ex-r-list, .explore #ex-body .ex-sec { grid-template-columns: minmax(0, 1fr); min-width: 0; }
+.explore { grid-template-columns: minmax(0, 1fr); }
+.explore > * { min-width: 0; }
+.explore .search.ex-search input { color: var(--text); -webkit-text-fill-color: var(--text); width: 100%; }
+.explore .search.ex-search input::placeholder { color: var(--text-faint); -webkit-text-fill-color: var(--text-faint); }
+.explore .ex-search-row .ex-search { flex: 1 1 0; width: 0; min-width: 0; }

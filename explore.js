@@ -260,6 +260,76 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Search across everything ----------
+    // Recent searches stay on this device only
+    const RECENT_KEY = 'diaryExploreRecent';
+    const recent = () => { try { return JSON.parse(localStorage.getItem(RECENT_KEY)) || []; } catch (e) { return []; } };
+    function remember(q) {
+        q = String(q || '').trim();
+        if (q.length < 2) return;
+        const list = [q, ...recent().filter(x => x.toLowerCase() !== q.toLowerCase())].slice(0, 8);
+        try { localStorage.setItem(RECENT_KEY, JSON.stringify(list)); } catch (e) {}
+    }
+    function forget(q) {
+        const list = q ? recent().filter(x => x !== q) : [];
+        try { localStorage.setItem(RECENT_KEY, JSON.stringify(list)); } catch (e) {}
+    }
+
+    // A note is a shared entry with a title and no media; a Playnote result is the #trivia share
+    const isPlaynotePost = p => /#trivia\b/i.test(p.body || '');
+    const isNotePost = p => !!(p.title && (p.body || '').trim() && !(p.photos || []).length && !p.audio && !isPlaynotePost(p) && !/^📊 /.test(p.title));
+    const nameOf = p => p.author === s.profile.id ? 'You' : ((p.author_profile && p.author_profile.display_name) || 'A friend');
+
+    function noteRow(p) {
+        return `
+            <button type="button" class="ex-r ex-r-note" data-action="ex-post" data-id="${esc(p.id)}">
+                <span class="ex-r-ic note" aria-hidden="true"><svg class="i"><use href="#i-note"/></svg></span>
+                <span class="ex-r-text"><strong>${esc(p.title)}</strong><small>${esc(nameOf(p))} · ${esc((p.body || '').replace(/\s+/g, ' ').slice(0, 90))}</small></span>
+                <span class="ex-r-go">Read</span>
+            </button>`;
+    }
+    function postRow(p) {
+        const text = (p.title || p.body || '').replace(/\s+/g, ' ').trim();
+        const photo = (p.photos || []).find(ph => ph && typeof ph.path === 'string');
+        return `
+            <button type="button" class="ex-r" data-action="ex-post" data-id="${esc(p.id)}">
+                ${photo ? `<span class="ex-r-thumb"><img data-path="${esc(photo.path)}" data-bucket="${FEED_BUCKET}" alt="" loading="lazy"></span>` : `<span class="ex-r-av">${avatar({ id: p.author, ...(p.author_profile || {}) }, 'md')}</span>`}
+                <span class="ex-r-text"><strong>${esc(nameOf(p))}</strong><small>${esc(text.slice(0, 110))}</small></span>
+                <span class="ex-r-meta"><svg class="i"><use href="#i-heart-fill"/></svg>${(p.likes || []).length}</span>
+            </button>`;
+    }
+    // Playnote: today's challenges and the puzzles, matched by name
+    function playnoteMatches(q) {
+        const daily = [['Daily trivia', 'Ten questions, the same for everyone'], ['Weekly challenge', 'Twenty questions, new every Monday'], ['Bible challenge', 'Five questions from Scripture'], ['Brain challenge', 'One puzzle — think before you tap'], ['Question of the day', 'Then see how everyone answered']]
+            .filter(([t, d]) => `${t} ${d} trivia quiz playnote`.toLowerCase().includes(q)).map(([t, d]) => ({ title: t, sub: d, attrs: 'data-action="go-play"' }));
+        const games = window.diaryGames && window.diaryGames.GAMES ? Object.entries(window.diaryGames.GAMES)
+            .filter(([k, g]) => `${g.title} ${g.sub || ''} game puzzle playnote`.toLowerCase().includes(q)).map(([k, g]) => ({ title: g.title, sub: g.sub || 'Puzzle', attrs: `data-game="${esc(k)}"` })) : [];
+        return [...daily, ...games].slice(0, 6);
+    }
+    function playRow(x) {
+        return `
+            <button type="button" class="ex-r ex-r-play" ${x.attrs}>
+                <span class="ex-r-ic play" aria-hidden="true"><svg class="i"><use href="#i-trophy"/></svg></span>
+                <span class="ex-r-text"><strong>${esc(x.title)}</strong><small>${esc(x.sub)}</small></span>
+                <span class="ex-r-go">Play</span>
+            </button>`;
+    }
+    const groupHead = (title, n) => `<h3 class="ex-r-h">${title}${n ? ` <span>${n}</span>` : ''}</h3>`;
+
+    // Search mode with nothing typed yet: recent searches, topics, people
+    function searchIdle() {
+        const r = recent();
+        const tags = trendingTags().slice(0, 8);
+        const people = (s.suggestions || []).slice(0, 4);
+        if (!r.length && !tags.length && !people.length) return '<div class="ex-empty small"><strong>Search Cordial</strong><span>Find people, notes, posts, #tags, books, groups and games.</span></div>';
+        return `
+            ${r.length ? `<section class="ex-sec ex-recent" aria-labelledby="ex-recent-h">
+                <header class="ex-head"><h3 id="ex-recent-h">Recent</h3><button type="button" class="link-btn ex-more" data-action="ex-recent-clear">Clear all</button></header>
+                <ul class="ex-recent-list">${r.map(x => `<li><button type="button" class="ex-recent-go" data-action="ex-recent" data-q="${esc(x)}"><svg class="i"><use href="#i-clock"/></svg>${esc(x)}</button><button type="button" class="ex-recent-x" data-action="ex-recent-forget" data-q="${esc(x)}" aria-label="Remove ${esc(x)} from recent searches"><svg class="i"><use href="#i-close"/></svg></button></li>`).join('')}</ul>
+            </section>` : ''}
+            ${tags.length ? `<section class="ex-sec"><header class="ex-head"><h3>Topics</h3></header><div class="ex-topics wrap">${tags.map(([t]) => `<button type="button" class="ex-topic" data-action="ex-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('')}</div></section>` : ''}
+            ${people.length ? `<section class="ex-sec"><header class="ex-head"><h3>People you may know</h3></header><div class="ex-people">${people.map(personRow).join('')}</div></section>` : ''}`;
+    }
+
     function searchResults(q) {
         const has = t => (t || '').toLowerCase().includes(q);
         const posts = (s.feed || []).filter(p => has(p.title) || has(p.body) || has(p.author_profile && p.author_profile.display_name) || I.hashtags(p).some(t => t.includes(q.replace(/^#/, '')))).slice(0, 12);
@@ -268,7 +338,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const people = everyone ? [] : [...s.friends, ...s.suggestions].filter(p => has(p.display_name) || has(p.username)).slice(0, 8);
         const groups = (E.groups || []).filter(g => has(g.name) || has(g.description)).slice(0, 6);
         const books = window.diaryLibrary ? window.diaryLibrary.popular(100).filter(x => has(x.title) || has(x.genre) || has(x.description)).slice(0, 8) : [];
-        const total = posts.length + tags.length + people.length + groups.length + books.length;
+        const notes = posts.filter(isNotePost);
+        const others = posts.filter(p => !isNotePost(p));
+        const plays = playnoteMatches(q);
+        const total = posts.length + tags.length + people.length + groups.length + books.length + plays.length;
         if (!total && !everyone) return `<div class="ex-empty"><svg class="i"><use href="#i-search"/></svg><strong>Nothing found for “${esc(q)}”</strong><span>Try a name, a #tag or a word from a post.</span></div>`;
         return `
             ${tags.length ? `<section class="ex-sec">${head('i-tag', 'Tags')}<div class="ex-tags">${tags.map(([t, v]) => `<button type="button" class="ex-tag" data-action="ex-tag" data-tag="${esc(t)}">#${esc(t)}<small>${v.n}</small></button>`).join('')}</div></section>` : ''}
@@ -276,7 +349,9 @@ document.addEventListener('DOMContentLoaded', () => {
             ${people.length ? `<section class="ex-sec">${head('i-users', 'People')}<div class="ex-people">${people.map(p => s.friends.includes(p)
                 ? `<div class="ex-person">${avatar(p, 'md')}<span class="ex-person-text"><strong>${esc(p.display_name)}</strong><small>@${esc(p.username)} · friend</small></span><button type="button" class="chip" data-action="message-friend" data-id="${esc(p.id)}">Message</button></div>`
                 : personRow(p)).join('')}</div></section>` : ''}
-            ${posts.length ? `<section class="ex-sec">${head('i-feed', 'Posts')}<div class="ex-grid">${posts.map((p, i) => postTile(p, 99 + i)).join('')}</div></section>` : ''}
+            ${notes.length ? `<section class="ex-sec">${groupHead('Notes', notes.length)}<div class="ex-r-list">${notes.map(noteRow).join('')}</div></section>` : ''}
+            ${plays.length ? `<section class="ex-sec">${groupHead('Playnote')}<div class="ex-r-list">${plays.map(playRow).join('')}</div></section>` : ''}
+            ${others.length ? `<section class="ex-sec">${groupHead('Posts', others.length)}<div class="ex-r-list">${others.map(postRow).join('')}</div></section>` : ''}
             ${books.length ? `<section class="ex-sec">${head('i-book', 'Library')}<div class="ex-row">${books.map(bookTile).join('')}</div></section>` : ''}
             ${groups.length ? `<section class="ex-sec">${head('i-users', 'Communities')}<div class="ex-groups">${groups.map(groupCard).join('')}</div></section>` : ''}`;
     }
@@ -344,6 +419,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 </span>
             </div>`);
         // 4. Reels, games, people, news
+        const notes = posts.filter(isNotePost).slice(0, 10);
+        if (notes.length) out.push(`<section class="ex-sec" aria-labelledby="ex-notes-h">${fyHead('Notes worth reading', '', 'ex-notes-h')}<div class="ex-row ex-note-rail">${notes.map(p => `
+            <button type="button" class="ex-ncard" data-action="ex-post" data-id="${esc(p.id)}">
+                <span class="ex-ncard-kind"><svg class="i"><use href="#i-note"/></svg>Note</span>
+                <strong>${esc(p.title)}</strong>
+                <span class="ex-ncard-text">${esc((p.body || '').replace(/\s+/g, ' ').slice(0, 160))}</span>
+                <span class="ex-ncard-who">${avatar({ id: p.author, ...(p.author_profile || {}) }, 'xs')}${esc(nameOf(p))}</span>
+            </button>`).join('')}</div></section>`);
         if (reels.length) out.push(`<section class="ex-sec">${fyHead('Popular reels', seeAll('data-action="go-reels"', 'Open Reels'))}<div class="ex-row">${reels.slice(0, 10).map(reelTile).join('')}</div></section>`);
         if (window.diaryPlay) out.push(window.diaryPlay.exploreSection());
         if (people.length) out.push(`<section class="ex-sec">${fyHead('People you may know', seeAll('data-action="ex-tab" data-tab="people"'))}<div class="ex-row ex-people-rail">${people.slice(0, 12).map(personCard).join('')}</div></section>`);
@@ -429,30 +512,65 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         return `
-            <div class="explore" data-tab="${tab}">
+            <div class="explore${E.searching ? ' searching' : ''}" data-tab="${tab}">
                 <section class="ex-top" aria-label="Search Explore">
-                    <label class="search ex-search">
-                        <svg class="i"><use href="#i-search"/></svg>
-                        <input type="search" id="ex-search" placeholder="Search people, posts, #tags, books and groups" aria-label="Search Explore" value="${esc(E.raw ?? q)}" enterkeyhint="search" autocomplete="off">
-                    </label>
+                    <div class="ex-search-row">
+                        <label class="search ex-search">
+                            <svg class="i"><use href="#i-search"/></svg>
+                            <input type="search" id="ex-search" placeholder="Search people, notes, posts and #tags" aria-label="Search Explore" value="${esc(E.raw ?? q)}" enterkeyhint="search" autocomplete="off">
+                            <button type="button" class="ex-clear" data-action="ex-clear" aria-label="Clear search"${q ? '' : ' hidden'}><svg class="i"><use href="#i-close"/></svg></button>
+                        </label>
+                        <button type="button" class="link-btn ex-cancel" data-action="ex-cancel">Cancel</button>
+                    </div>
                     ${tags.length && tab === 'all' ? `<div class="ex-topics" aria-label="Trending topics">${tags.slice(0, 8).map(([t]) => `<button type="button" class="ex-topic" data-action="ex-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('')}</div>` : ''}
                 </section>
                 ${tabsHTML}
-                <div id="ex-body">${q ? searchResults(q) : body}</div>
+                <div id="ex-body" aria-live="polite">${E.searching ? (q ? searchResults(q) : searchIdle()) : q ? searchResults(q) : body}</div>
             </div>`;
     };
 
     // Search re-draws only the results, so typing keeps its focus
+    let typing = null;
+    function paintSearch() {
+        const body = document.getElementById('ex-body');
+        if (!body) return;
+        body.innerHTML = E.query ? searchResults(E.query) : searchIdle();
+        const clear = document.querySelector('.ex-clear');
+        if (clear) clear.hidden = !E.query;
+        I.hydrateStorage(body);
+    }
+    function enterSearch() {
+        if (E.searching) return;
+        E.searching = true;
+        document.querySelector('.explore')?.classList.add('searching');
+        paintSearch();
+    }
+    function leaveSearch() {
+        E.searching = false;
+        E.query = '';
+        E.raw = '';
+        clearTimeout(typing);
+        app.render();
+    }
+    content.addEventListener('focusin', e => { if (e.target.id === 'ex-search') enterSearch(); });
     content.addEventListener('input', e => {
         if (e.target.id !== 'ex-search') return;
         E.raw = e.target.value;
         E.query = e.target.value.trim().toLowerCase();
-        const body = document.getElementById('ex-body');
-        if (!body) return;
-        if (E.query) body.innerHTML = searchResults(E.query);
-        else app.render();
-        I.hydrateStorage(body);
+        enterSearch();
+        clearTimeout(typing);
+        typing = setTimeout(paintSearch, 140);
     });
+    content.addEventListener('keydown', e => {
+        if (e.target.id !== 'ex-search') return;
+        if (e.key === 'Enter') { remember(E.raw); e.target.blur(); }
+        else if (e.key === 'Escape') leaveSearch();
+    });
+    // Opening something you searched for remembers the search
+    content.addEventListener('click', e => {
+        if (!E.searching || !E.query) return;
+        if (e.target.closest('#ex-body [data-action], #ex-body [data-game], #ex-body [data-profile]')) remember(E.raw);
+    }, true);
 
     content.addEventListener('submit', e => {
         const form = e.target.closest('form[data-form="ex-place"]');
@@ -477,7 +595,26 @@ document.addEventListener('DOMContentLoaded', () => {
             const lines = entry.items.slice(0, 10).map(i => `${i.title}. From ${i.source}.`).join(' ');
             window.Speak.read(`Here are the latest headlines. ${lines}`, { title: `${(NEWS_KINDS.find(k => k[0] === N.kind) || ['', 'News'])[1]} headlines` });
         },
+        'ex-clear': () => {
+            E.query = '';
+            E.raw = '';
+            const input = document.getElementById('ex-search');
+            if (input) { input.value = ''; input.focus(); }
+            paintSearch();
+        },
+        'ex-cancel': () => leaveSearch(),
+        'ex-recent': el => {
+            const input = document.getElementById('ex-search');
+            E.raw = el.dataset.q;
+            E.query = el.dataset.q.trim().toLowerCase();
+            if (input) input.value = el.dataset.q;
+            remember(el.dataset.q);
+            paintSearch();
+        },
+        'ex-recent-forget': el => { forget(el.dataset.q); paintSearch(); },
+        'ex-recent-clear': () => { forget(); paintSearch(); },
         'ex-tab': el => {
+            E.searching = false;
             E.tab = el.dataset.tab;
             E.query = '';
             E.raw = '';
@@ -487,6 +624,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!I.openEntry(el.dataset.id)) app.showToast('That post isn’t available any more');
         },
         'ex-tag': el => {
+            if (E.searching && E.raw) remember(E.raw);
+            E.searching = false;
+            E.query = '';
+            E.raw = '';
             s.feedAuthor = null;
             s.feedFilter = `tag:${el.dataset.tag}`;
             app.setView('feed');
