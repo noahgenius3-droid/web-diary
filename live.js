@@ -258,7 +258,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (L.mode !== 'live') return;
         let stream;
         try {
-            stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 } }, audio: false });
+            // Suggest the entire screen (a shared window or tab can't be captured while it's minimized), keep
+            // Cordial's own tab out of the list, and allow switching what's shared without stopping
+            stream = await navigator.mediaDevices.getDisplayMedia({
+                video: { displaySurface: 'monitor', frameRate: { ideal: 15, max: 30 } }, audio: false,
+                selfBrowserSurface: 'exclude', surfaceSwitching: 'include', monitorTypeSurfaces: 'include'
+            });
         } catch (e) {
             return app.showToast(e && e.name === 'NotAllowedError' ? 'Screen sharing was cancelled' : 'Couldn’t share your screen — try again');
         }
@@ -267,6 +272,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if ('contentHint' in track) track.contentHint = 'detail'; // keep text sharp
         L.screen = track;
         track.addEventListener('ended', stopScreen);
+        // A minimized shared window sends no pictures: say so, instead of looking like it stopped
+        const pill = () => $('lv-screen-pill');
+        track.addEventListener('mute', () => { if (L.screen === track && pill()) pill().textContent = 'Shared window is minimized — viewers see a paused picture'; });
+        track.addEventListener('unmute', () => { if (L.screen === track && pill()) pill().textContent = 'You’re sharing your screen'; });
+        const surface = (track.getSettings && track.getSettings().displaySurface) || '';
+        if (surface === 'window' || surface === 'browser') app.showToast('Tip: keep that window open while you share — or share your entire screen to switch freely');
         L.peers.forEach(p => { if (p.vs) p.vs.replaceTrack(track).catch(() => {}); });
         video.srcObject = new MediaStream([track]);
         video.classList.remove('mirror');
@@ -300,7 +311,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.setAttribute('aria-label', on ? 'Stop sharing your screen' : 'Share your screen');
         }
         const pill = $('lv-screen-pill');
-        if (pill) pill.hidden = !on;
+        if (pill) { pill.hidden = !on; if (on) pill.textContent = 'You’re sharing your screen'; }
         if (typeof adapt === 'function') adapt();
     }
 

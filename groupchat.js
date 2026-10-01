@@ -169,7 +169,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const ch = C.presenceChannel();
         if (!ch || Date.now() - g.lastTypingSent < 2500) return;
         g.lastTypingSent = Date.now();
-        ch.send({ type: 'broadcast', event: 'typing', payload: { id: me(), name: s.profile.display_name.split(' ')[0] } });
+        try { ch.send({ type: 'broadcast', event: 'typing', payload: { id: me(), name: s.profile.display_name.split(' ')[0] } }); } catch (e) { /* a typing hint must never stop a message */ }
     }
 
     // ---------- Screen ----------
@@ -375,9 +375,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!g.cid || g.sending) return false;
         g.sending = true;
         const row = { community_id: g.cid, body: body.slice(0, 4000), attachments, reply_to: g.reply ? g.reply.id : null, client_id: randomId() };
-        const { data, error } = await client.from('diary_community_messages').insert(row)
-            .select(GC_COLS).single();
-        g.sending = false;
+        let data = null, error = null;
+        try {
+            ({ data, error } = await client.from('diary_community_messages').insert(row).select(GC_COLS).single());
+        } catch (e) {
+            error = e; // never leave the chat stuck in "sending"
+        } finally {
+            g.sending = false;
+        }
+        if (!error && !data) error = new Error('no row');
         if (error) {
             const c = cm();
             app.showToast(c && c.chat_mode === 'staff' && !isStaff() ? 'Only admins and moderators can post right now'

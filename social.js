@@ -24,7 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
         '🎉', '✨', '🔥', '❤️', '💙', '💚', '💛', '🌸', '🌞', '🌙', '☕', '📚', '✍️', '🎧', '🏃', '✅'];
 
     const available = !!(window.supabase && cfg);
-    const client = available ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey, { realtime: { worker: true, heartbeatIntervalMs: 25000 } }) : null;
+    const client = available ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey) : null;
 
     const s = {
         session: null,
@@ -2579,7 +2579,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const now = Date.now();
         if (!stop && now - s.typing.sentAt < 2000) return;
         s.typing.sentAt = stop ? 0 : now;
-        s.typing.channel.send({ type: 'broadcast', event: 'typing', payload: { from: s.profile.id, stop } });
+        try { s.typing.channel.send({ type: 'broadcast', event: 'typing', payload: { from: s.profile.id, stop } }); } catch (e) { /* a typing hint must never stop a message */ }
     }
 
     let typingTimer = null;
