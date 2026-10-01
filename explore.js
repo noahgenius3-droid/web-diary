@@ -282,6 +282,88 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Page ----------
+    // "For you" is a calm discovery page: one featured post, a trending rail, what's happening now, then rails
+    // for reels, games, people and news. Everything else (Library, Communities, Marketplace, local news, the full
+    // tag list) lives one tap away in its own tab or under "More to explore".
+    const fyHead = (title, more = '', id = '') => `<header class="ex-head"><h3${id ? ` id="${id}"` : ''}>${title}</h3>${more}</header>`;
+    const seeAll = (attrs, label = 'See all') => `<button type="button" class="link-btn accent ex-more" ${attrs}>${label}</button>`;
+
+    function featureCard(p) {
+        const photo = (p.photos || []).find(ph => ph && typeof ph.path === 'string');
+        const name = p.author === s.profile.id ? 'You' : ((p.author_profile && p.author_profile.display_name) || 'A friend');
+        const body = (p.body || '').trim();
+        const title = (p.title || '').trim() || body.split('\n')[0].slice(0, 90);
+        const rest = p.title ? body : body.split('\n').slice(1).join(' ') || (body.length > 90 ? body : '');
+        return `
+            <button type="button" class="ex-feature${photo ? ' has-photo' : ''}" data-action="ex-post" data-id="${esc(p.id)}" aria-label="${esc(`${name}: ${title}`)}">
+                ${photo ? `<span class="ex-feature-img"><img data-path="${esc(photo.path)}" data-bucket="${FEED_BUCKET}" alt="" loading="lazy"></span>` : ''}
+                <span class="ex-feature-body">
+                    <span class="ex-feature-who">${avatar({ id: p.author, ...(p.author_profile || {}) }, 'xs')}<span>${esc(name)}</span><span class="ex-dot" aria-hidden="true">·</span><span>${esc(timeAgo(p.shared_at))}</span></span>
+                    <strong class="ex-feature-title">${esc(title)}</strong>
+                    ${rest ? `<span class="ex-feature-text">${esc(rest.slice(0, 220))}</span>` : ''}
+                    <span class="ex-feature-foot">
+                        <span class="ex-stats"><svg class="i"><use href="#i-heart-fill"/></svg>${(p.likes || []).length}<svg class="i"><use href="#i-chat"/></svg>${I.commentCount(p)}</span>
+                        <span class="ex-feature-go">Read post<svg class="i"><use href="#i-forward"/></svg></span>
+                    </span>
+                </span>
+            </button>`;
+    }
+
+    function personCard(p) {
+        return `
+            <div class="ex-pcard">
+                <button type="button" class="ex-pcard-who" data-profile="${esc(p.id)}" aria-label="${esc(p.display_name)}’s profile">${avatar(p, 'lg')}</button>
+                <strong>${esc(p.display_name)}</strong>
+                <small>${p.mutual ? `${p.mutual} mutual` : `@${esc(p.username)}`}</small>
+                <button type="button" class="chip accent" data-action="suggest-add" data-username="${esc(p.username)}"><svg class="i"><use href="#i-user-plus"/></svg>Add</button>
+            </div>`;
+    }
+
+    function forYou({ loading, posts, reels, people }) {
+        const out = [];
+        // 1. The single most-loved post, given room to breathe
+        if (loading) out.push('<section class="ex-sec"><span class="ex-feature skel"></span></section>');
+        else if (posts.length) out.push(`<section class="ex-sec" aria-labelledby="ex-top-h">${fyHead('Most loved today', '', 'ex-top-h')}${featureCard(posts[0])}</section>`);
+        else out.push('<section class="ex-sec"><div class="ex-empty small"><strong>No posts yet</strong><span>When friends share entries, the most loved ones show up here.</span></div></section>');
+        // 2. Trending, as a rail instead of a wall of tiles
+        if (posts.length > 1) {
+            out.push(`<section class="ex-sec" aria-labelledby="ex-trend-h">${fyHead('Trending', posts.length > 10 ? seeAll('data-action="ex-tab" data-tab="posts"') : '', 'ex-trend-h')}
+                <div class="ex-row ex-rail">${posts.slice(1, 10).map((p, i) => postTile(p, i + 1)).join('')}</div></section>`);
+        }
+        // 3. Happening now: live videos and audio rooms only when something is on; one quiet row to start your own
+        const lives = window.diaryLive ? window.diaryLive.list() : [];
+        const rooms = window.diarySpaces && window.diarySpaces.liveCount ? window.diarySpaces.liveCount() : 0;
+        if (lives.length) out.push(`<section class="ex-sec">${fyHead('Live now', seeAll('data-action="ex-tab" data-tab="live"'))}<div class="lv-grid">${liveCards()}</div></section>`);
+        if (rooms && window.diarySpaces) out.push(window.diarySpaces.exploreSection());
+        out.push(`
+            <div class="ex-start" role="group" aria-label="Start something">
+                <span class="ex-start-text"><strong>${lives.length || rooms ? 'Start your own' : 'Nothing live right now'}</strong><small>Go live on video, or open an audio room</small></span>
+                <span class="ex-start-btns">
+                    <button type="button" class="chip" data-action="live-start"><svg class="i"><use href="#i-live"/></svg>Go live</button>
+                    <button type="button" class="chip" data-action="space-new"><svg class="i"><use href="#i-headphones"/></svg>Host a room</button>
+                </span>
+            </div>`);
+        // 4. Reels, games, people, news
+        if (reels.length) out.push(`<section class="ex-sec">${fyHead('Popular reels', seeAll('data-action="go-reels"', 'Open Reels'))}<div class="ex-row">${reels.slice(0, 10).map(reelTile).join('')}</div></section>`);
+        if (window.diaryPlay) out.push(window.diaryPlay.exploreSection());
+        if (people.length) out.push(`<section class="ex-sec">${fyHead('People you may know', seeAll('data-action="ex-tab" data-tab="people"'))}<div class="ex-row ex-people-rail">${people.slice(0, 12).map(personCard).join('')}</div></section>`);
+        out.push(newsSection('world', true));
+        // 5. Everything else, one tap away
+        out.push(`
+            <nav class="ex-elsewhere" aria-labelledby="ex-else-h">
+                <h3 id="ex-else-h">More to explore</h3>
+                <div class="ex-else-links">
+                    <button type="button" data-action="ex-news-open" data-kind="local"><svg class="i"><use href="#i-pin"/></svg>News near you</button>
+                    <button type="button" data-action="ex-tab" data-tab="library"><svg class="i"><use href="#i-book"/></svg>Library</button>
+                    <button type="button" data-action="ex-tab" data-tab="groups"><svg class="i"><use href="#i-users"/></svg>Communities</button>
+                    <button type="button" data-action="go-market"><svg class="i"><use href="#i-store"/></svg>Marketplace</button>
+                    <button type="button" data-action="go-spaces"><svg class="i"><use href="#i-headphones"/></svg>Spaces</button>
+                    <button type="button" data-action="ex-tab" data-tab="posts"><svg class="i"><use href="#i-trend"/></svg>All trending tags</button>
+                </div>
+            </nav>`);
+        return out.join('');
+    }
+
     app.views.explore = () => {
         app.setTitle('Explore');
         const blocked = I.gate('See what’s trending with your friends — posts, reels, live videos, stories from the Library and communities.');
@@ -292,87 +374,71 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const loading = s.feed === null;
         const tab = E.tab;
-        const show = k => tab === 'all' || tab === k;
+        const show = k => tab === k;
         const posts = trendingPosts();
         const tags = trendingTags();
         const reels = trendingReels();
         const books = window.diaryLibrary ? window.diaryLibrary.popular(10) : [];
-        const groups = (E.groups || []).filter(g => !g.joined).slice(0, 6);
         const allGroups = E.groups || [];
         const people = s.suggestions || [];
         const q = E.query;
+        const tabsHTML = `
+            <nav class="ex-tabs" role="tablist" aria-label="Show">
+                ${TABS.map(([k, l]) => `<button type="button" class="cm-filter" role="tab" aria-selected="${tab === k}" data-action="ex-tab" data-tab="${k}"><svg class="i"><use href="#${TAB_ICONS[k]}"/></svg>${l}</button>`).join('')}
+            </nav>`;
 
-        const sections = [];
-        if (tab === 'news') {
-            return `
-                <div class="explore">
-                    <nav class="ex-tabs" role="tablist" aria-label="Show">
-                        ${TABS.map(([k, l]) => `<button type="button" class="cm-filter" role="tab" aria-selected="${tab === k}" data-action="ex-tab" data-tab="${k}"><svg class="i"><use href="#${TAB_ICONS[k]}"/></svg>${l}</button>`).join('')}
-                    </nav>
-                    ${newsTab()}
-                </div>`;
-        }
-        if (show('spaces') && window.diarySpaces) sections.push(window.diarySpaces.exploreSection());
-        if (show('live')) {
-            sections.push(`<section class="ex-sec">${head('i-live', 'Live now', (window.diaryLive && window.diaryLive.list().length) ? `${window.diaryLive.list().length} live right now — tap to join` : 'Nobody’s live right now — start one')}<div class="lv-grid">${liveCards()}</div></section>`);
-        }
-        if (show('posts') && tags.length) {
-            sections.push(`<section class="ex-sec">${head('i-trend', 'Trending tags', 'What your circle is talking about')}
-                <div class="ex-tags">${tags.map(([t, v], i) => `<button type="button" class="ex-tag${i < 3 ? ' top' : ''}" data-action="ex-tag" data-tag="${esc(t)}"><span class="ex-tag-rank">${i + 1}</span>#${esc(t)}<small>${v.n} ${v.n === 1 ? 'post' : 'posts'}</small></button>`).join('')}</div></section>`);
-        }
-        if (show('posts')) {
-            const list = tab === 'posts' ? posts : posts.slice(0, 9);
-            sections.push(`<section class="ex-sec">${head('i-sparkle', 'Trending posts', 'Most loved and talked about this week',
-                tab === 'all' && posts.length > 9 ? '<button type="button" class="link-btn accent ex-more" data-action="ex-tab" data-tab="posts">See all</button>' : '')}
-                ${loading ? `<div class="ex-grid">${'<span class="ex-tile skel"></span>'.repeat(6)}</div>`
-                    : list.length ? `<div class="ex-grid">${list.map((p, i) => postTile(p, i)).join('')}</div>`
-                    : '<div class="ex-empty small"><strong>No posts yet</strong><span>When friends share entries, the most loved ones show up here.</span></div>'}</section>`);
-        }
-        if (tab === 'all' && window.diaryPlay) sections.unshift(window.diaryPlay.exploreSection());
+        if (tab === 'news') return `<div class="explore" data-tab="news">${tabsHTML}${newsTab()}</div>`;
+
+        let body;
         if (tab === 'all') {
-            sections.push(newsSection('world', true));
-            sections.push(newsSection('local', true));
-            if (window.diaryMarket) sections.push(window.diaryMarket.exploreSection());
-        }
-        if (show('reels') && (reels.length || tab === 'reels')) {
-            sections.push(`<section class="ex-sec">${head('i-reel', 'Popular reels', 'Short videos your friends are watching',
-                '<button type="button" class="link-btn accent ex-more" data-action="go-reels">Open Reels</button>')}
-                ${reels.length ? `<div class="ex-row">${reels.slice(0, tab === 'reels' ? 30 : 10).map(reelTile).join('')}</div>` : '<div class="ex-empty small"><strong>No reels yet</strong><span>Post one from the Feed with the Video button.</span></div>'}</section>`);
-        }
-        if (show('library') && window.diaryLibrary && (books.length || tab === 'library')) {
-            sections.push(`<section class="ex-sec">${head('i-book', 'Top in the Library', 'Stories, poems and books people love',
-                '<button type="button" class="link-btn accent ex-more" data-action="go-library">Browse</button>')}
-                ${books.length ? `<div class="ex-row">${books.map(bookTile).join('')}</div>` : '<div class="ex-empty small"><strong>The Library is quiet</strong><span>Publish a story or poem to get it started.</span></div>'}</section>`);
-        }
-        if (show('groups')) {
-            const list = tab === 'groups' ? allGroups : groups;
-            if (list.length || tab === 'groups') {
-                sections.push(`<section class="ex-sec">${head('i-users', tab === 'groups' ? 'Communities' : 'Communities to join', 'The biggest groups on Cordial')}
-                    ${E.groups === null ? '<p class="muted">Loading communities…</p>' : list.length ? `<div class="ex-groups">${list.map(groupCard).join('')}</div>` : '<div class="ex-empty small"><strong>You’re in every community</strong><span>Start a new one from the Groups tab.</span></div>'}</section>`);
+            body = forYou({ loading, posts, reels, people });
+        } else {
+            const sections = [];
+            if (show('spaces') && window.diarySpaces) sections.push(window.diarySpaces.exploreSection());
+            if (show('live')) {
+                sections.push(`<section class="ex-sec">${head('i-live', 'Live now', (window.diaryLive && window.diaryLive.list().length) ? `${window.diaryLive.list().length} live right now — tap to join` : 'Nobody’s live right now — start one')}<div class="lv-grid">${liveCards()}</div></section>`);
             }
-        }
-        if (show('people') && (people.length || tab === 'people')) {
-            sections.push(`<section class="ex-sec">${head('i-user-plus', 'People you may know', 'Friends of your friends')}
-                ${people.length ? `<div class="ex-people">${people.map(personRow).join('')}</div>` : '<div class="ex-empty small"><strong>No suggestions right now</strong><span>Add friends by username from Chats.</span></div>'}</section>`);
+            if (show('posts') && tags.length) {
+                sections.push(`<section class="ex-sec">${head('i-trend', 'Trending tags', 'What your circle is talking about')}
+                    <div class="ex-tags">${tags.map(([t, v], i) => `<button type="button" class="ex-tag${i < 3 ? ' top' : ''}" data-action="ex-tag" data-tag="${esc(t)}"><span class="ex-tag-rank">${i + 1}</span>#${esc(t)}<small>${v.n} ${v.n === 1 ? 'post' : 'posts'}</small></button>`).join('')}</div></section>`);
+            }
+            if (show('posts')) {
+                sections.push(`<section class="ex-sec">${head('i-sparkle', 'Trending posts', 'Most loved and talked about this week')}
+                    ${loading ? `<div class="ex-grid">${'<span class="ex-tile skel"></span>'.repeat(6)}</div>`
+                        : posts.length ? `<div class="ex-grid">${posts.map((p, i) => postTile(p, i)).join('')}</div>`
+                        : '<div class="ex-empty small"><strong>No posts yet</strong><span>When friends share entries, the most loved ones show up here.</span></div>'}</section>`);
+            }
+            if (show('reels')) {
+                sections.push(`<section class="ex-sec">${head('i-reel', 'Popular reels', 'Short videos your friends are watching', seeAll('data-action="go-reels"', 'Open Reels'))}
+                    ${reels.length ? `<div class="ex-row">${reels.slice(0, 30).map(reelTile).join('')}</div>` : '<div class="ex-empty small"><strong>No reels yet</strong><span>Post one from the Feed with the Video button.</span></div>'}</section>`);
+            }
+            if (show('library') && window.diaryLibrary) {
+                sections.push(`<section class="ex-sec">${head('i-book', 'Top in the Library', 'Stories, poems and books people love', seeAll('data-action="go-library"', 'Browse'))}
+                    ${books.length ? `<div class="ex-row">${books.map(bookTile).join('')}</div>` : '<div class="ex-empty small"><strong>The Library is quiet</strong><span>Publish a story or poem to get it started.</span></div>'}</section>`);
+                if (window.diaryMarket) sections.push(window.diaryMarket.exploreSection());
+            }
+            if (show('groups')) {
+                sections.push(`<section class="ex-sec">${head('i-users', 'Communities', 'The biggest groups on Cordial')}
+                    ${E.groups === null ? '<p class="muted">Loading communities…</p>' : allGroups.length ? `<div class="ex-groups">${allGroups.map(groupCard).join('')}</div>` : '<div class="ex-empty small"><strong>No communities yet</strong><span>Start one from the Groups tab.</span></div>'}</section>`);
+            }
+            if (show('people')) {
+                sections.push(`<section class="ex-sec">${head('i-user-plus', 'People you may know', 'Friends of your friends')}
+                    ${people.length ? `<div class="ex-people">${people.map(personRow).join('')}</div>` : '<div class="ex-empty small"><strong>No suggestions right now</strong><span>Add friends by username from Chats.</span></div>'}</section>`);
+            }
+            body = sections.join('');
         }
 
         return `
-            <div class="explore">
-                <section class="ex-hero">
-                    <div class="ex-hero-text">
-                        <h2>What’s happening in your circle</h2>
-                        <p class="ex-hero-sub">Posts, reels, news, games and people, all in one place.</p>
-                    </div>
+            <div class="explore" data-tab="${tab}">
+                <section class="ex-top" aria-label="Search Explore">
                     <label class="search ex-search">
                         <svg class="i"><use href="#i-search"/></svg>
                         <input type="search" id="ex-search" placeholder="Search people, posts, #tags, books and groups" aria-label="Search Explore" value="${esc(E.raw ?? q)}" enterkeyhint="search" autocomplete="off">
                     </label>
-                    ${tags.length ? `<div class="ex-hero-tags" aria-label="Hot right now">${tags.slice(0, 6).map(([t]) => `<button type="button" class="ex-hero-tag" data-action="ex-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('')}</div>` : ''}
+                    ${tags.length && tab === 'all' ? `<div class="ex-topics" aria-label="Trending topics">${tags.slice(0, 8).map(([t]) => `<button type="button" class="ex-topic" data-action="ex-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('')}</div>` : ''}
                 </section>
-                <nav class="ex-tabs" role="tablist" aria-label="Show">
-                    ${TABS.map(([k, l]) => `<button type="button" class="cm-filter" role="tab" aria-selected="${tab === k}" data-action="ex-tab" data-tab="${k}"><svg class="i"><use href="#${TAB_ICONS[k]}"/></svg>${l}</button>`).join('')}
-                </nav>
-                <div id="ex-body">${q ? searchResults(q) : sections.join('')}</div>
+                ${tabsHTML}
+                <div id="ex-body">${q ? searchResults(q) : body}</div>
             </div>`;
     };
 

@@ -260,10 +260,12 @@ document.addEventListener('DOMContentLoaded', () => {
     function topicsHTML() {
         const st = P.stats || {};
         const byCat = new Map((st.categories || []).map(c => [c.category, c]));
+        const all = Object.entries(CATS).sort(([a], [b]) => (byCat.has(b) ? 1 : 0) - (byCat.has(a) ? 1 : 0));
+        const shown = P.allTopics ? all : all.slice(0, 4);
         return `
             <section class="pl-section" aria-labelledby="pl-practice-h">
                 <header class="pl-sec-head"><h3 id="pl-practice-h">Practice any topic</h3><p class="pl-note">As many rounds as you like</p></header>
-                <div class="pl-topics">${Object.entries(CATS).map(([k, [icon, l]]) => {
+                <div class="pl-topics" id="pl-topics">${shown.map(([k, [icon, l]]) => {
                     const c = byCat.get(k);
                     const pct = c && c.answered ? Math.round(100 * c.correct / c.answered) : null;
                     return `<button type="button" class="pl-topic" data-pl="practice" data-cat="${k}">
@@ -272,12 +274,13 @@ document.addEventListener('DOMContentLoaded', () => {
                         ${pct === null ? '' : `<span class="pl-meter" style="--pct:${pct}%" aria-hidden="true"></span>`}
                     </button>`;
                 }).join('')}</div>
+                ${all.length > 4 ? `<button type="button" class="pl-more" data-pl="topics" aria-expanded="${!!P.allTopics}" aria-controls="pl-topics">${P.allTopics ? 'Show fewer topics' : `Show all ${all.length} topics`}${ic(P.allTopics ? 'i-chevron-up' : 'i-chevron-down')}</button>` : ''}
             </section>`;
     }
 
     function levelHTML() {
         const L = P.badges;
-        if (!L) return '';
+        if (!L || L.level === undefined || L.level === null) return '';
         const span = Math.max(1, L.level_next - L.level_floor);
         const pct = Math.min(100, Math.round(100 * (L.xp - L.level_floor) / span));
         return `<div class="pl-level" aria-label="Level ${L.level}, ${fmt(L.xp)} XP">
@@ -328,12 +331,15 @@ document.addEventListener('DOMContentLoaded', () => {
         return `
             <div class="pl">
                 ${mastheadHTML()}
-                <section class="g-grid" aria-label="Today’s games">
+                <section class="pl-today" aria-label="Today’s games">
                     ${gameTile('daily', true)}
-                    ${gameTile('qotd')}
-                    ${gameTile('bible')}
-                    ${gameTile('brain')}
-                    ${gameTile('weekly')}
+                    <h3 class="pl-today-h">More for today</h3>
+                    <div class="pl-today-rest">
+                        ${gameTile('qotd')}
+                        ${gameTile('bible')}
+                        ${gameTile('brain')}
+                        ${gameTile('weekly')}
+                    </div>
                 </section>
                 <div class="pl-reading">
                     ${wordPanel(P.today.word)}
@@ -635,6 +641,11 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (act === 'practice') start('practice', b.dataset.cat);
         else if (act === 'scope' || act === 'period' || act === 'board') { P.board[act === 'board' ? 'kind' : act] = b.dataset.v; P.board.rows = null; paint(); loadBoard(); }
         else if (act === 'open-post') { app.setView('feed'); I.openEntry(b.dataset.id); }
+        else if (act === 'topics') {
+            P.allTopics = !P.allTopics;
+            paint();
+            if (!P.allTopics) setTimeout(() => document.getElementById('pl-practice-h')?.scrollIntoView({ block: 'nearest' }), 50);
+        }
         else if (act === 'scroll-games') document.getElementById('pl-games-h')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         else if (act === 'vote') {
             const { data, error } = await client.rpc('diary_daily_vote', { p_choice: Number(b.dataset.i) });

@@ -14571,3 +14571,177 @@ dialog.nsd::backdrop { background: rgba(8, 10, 20, .6); backdrop-filter: blur(4p
     .nsd-thumb { width: 96px; }
 }
 @media (prefers-reduced-motion: reduce) { .nsd-show-bar, .nslide [contenteditable] { transition: none; } }
+
+/* ==========================================================================
+   Explore & Playnote, calmer: search first, one featured item, rails instead of walls,
+   plain section titles, secondary things one tap away. Same tokens, same identity.
+   ========================================================================== */
+
+/* ---------- Explore ---------- */
+.explore { gap: 28px; }
+.explore .ex-sec { gap: 12px; }
+.explore .ex-top { display: grid; gap: 12px; }
+.explore .ex-top .ex-search {
+    display: flex; align-items: center; gap: 10px; min-height: 50px; margin: 0; padding: 0 16px;
+    border: 1px solid var(--border); border-radius: 14px; background: var(--input); box-shadow: none; color: var(--text-muted);
+}
+.explore .ex-top .ex-search input { flex: 1; min-width: 0; height: 48px; border: 0; background: none; color: var(--text); font: inherit; font-size: 16px; outline: none; }
+.explore .ex-top .ex-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.ex-topics { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; padding: 1px; }
+.ex-topics::-webkit-scrollbar { display: none; }
+.ex-topic {
+    flex: none; min-height: 34px; padding: 0 13px; border: 1px solid var(--border); border-radius: 999px; background: transparent;
+    color: var(--text-muted); font: inherit; font-size: 0.86rem; font-weight: 600; cursor: pointer; touch-action: manipulation;
+    transition: color 140ms, border-color 140ms, background-color 140ms;
+}
+.ex-topic:active { transform: scale(0.97); }
+@media (hover: hover) and (pointer: fine) { .ex-topic:hover { color: var(--text); border-color: color-mix(in srgb, var(--text) 30%, var(--border)); } }
+
+/* Tabs: a quiet segmented row */
+.explore .ex-tabs { margin: -12px 0 0; gap: 6px; }
+.explore .ex-tabs .cm-filter { min-height: 36px; padding: 0 14px; font-weight: 600; font-size: 0.88rem; }
+.explore .ex-tabs .cm-filter .i { width: 15px; height: 15px; opacity: 0.75; }
+
+/* Section titles: just the words (and a "See all") — no badge, no subtitle on For you */
+.explore .ex-ic { display: none; }
+.explore .ex-head { flex-wrap: nowrap; align-items: baseline; }
+.explore .ex-head h3 { gap: 0; font-size: 1.06rem; font-weight: 700; letter-spacing: -0.01em; }
+.explore .ex-head p { padding-left: 0; }
+.explore .ex-head .ex-more { margin-left: auto; flex: none; }
+.explore[data-tab="all"] .ex-head p { display: none; }
+.explore[data-tab="all"] .lv-tile.go, .explore[data-tab="all"] .cl-host { display: none; }
+
+/* Most loved today: one post, given room */
+.ex-feature {
+    display: grid; width: 100%; overflow: hidden; padding: 0; border: 1px solid var(--border); border-radius: 16px;
+    background: color-mix(in srgb, var(--accent) 7%, var(--surface)); color: var(--text); font: inherit; text-align: left; cursor: pointer;
+    transition: border-color 160ms, transform 160ms cubic-bezier(0.2, 0.9, 0.3, 1); touch-action: manipulation;
+}
+.ex-feature.has-photo { grid-template-columns: minmax(0, 42%) minmax(0, 1fr); }
+.ex-feature:active { transform: scale(0.99); }
+@media (hover: hover) and (pointer: fine) { .ex-feature:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); } }
+.ex-feature:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ex-feature-img { position: relative; min-height: 200px; background: var(--input); }
+.ex-feature-img img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.ex-feature-body { display: grid; align-content: start; gap: 8px; padding: 20px 22px; min-width: 0; }
+.ex-feature-who { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--text-muted); font-size: 0.82rem; font-weight: 600; }
+.ex-feature-who > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ex-feature-title { font-size: 1.3rem; line-height: 1.25; letter-spacing: -0.015em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-wrap: balance; }
+.ex-feature-text { color: var(--text-muted); font-size: 0.95rem; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; max-width: 62ch; }
+.ex-feature-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px; color: var(--text-muted); font-size: 0.82rem; font-weight: 600; }
+.ex-feature-foot .ex-stats { display: inline-flex; align-items: center; gap: 4px; }
+.ex-feature-foot .ex-stats .i { width: 14px; height: 14px; }
+.ex-feature-foot .ex-stats .i + .i, .ex-feature-foot .ex-stats .i:nth-of-type(2) { margin-left: 8px; }
+.ex-feature-go { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); font-weight: 700; }
+.ex-feature-go .i { width: 15px; height: 15px; transition: transform 180ms ease-out; }
+@media (hover: hover) and (pointer: fine) { .ex-feature:hover .ex-feature-go .i { transform: translateX(3px); } }
+.ex-feature.skel { min-height: 170px; border: 0; background: linear-gradient(90deg, var(--input), var(--border), var(--input)); background-size: 200% 100%; animation: sk-shimmer 1.2s linear infinite; }
+
+/* Trending: a rail of quieter tiles (and the same tiles in the Posts tab grid) */
+.explore .ex-rail { gap: 10px; margin: 0 -2px; }
+.explore .ex-rail .ex-tile { flex: none; width: 196px; }
+.explore .ex-tile.text { background: color-mix(in srgb, var(--t1) 13%, var(--surface)); color: var(--text); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--t1) 20%, var(--border)); }
+.explore .ex-tile.text .ex-tile-text { font-size: 0.92rem; font-weight: 600; color: var(--text); }
+.explore .ex-tile.text .ex-tile-foot { color: var(--text-muted); }
+.explore .ex-rank { padding: 3px 8px 3px 6px; background: color-mix(in srgb, var(--t1) 22%, var(--surface)); color: var(--text); box-shadow: none; font-size: 0.74rem; }
+.explore .ex-tile.photo .ex-rank { background: rgba(9, 9, 11, 0.55); color: #fff; }
+
+/* Happening now: one quiet row to start your own */
+.ex-start {
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px;
+    padding: 14px 16px; border-radius: 14px; background: var(--input);
+}
+.ex-start-text { display: grid; gap: 2px; min-width: 0; }
+.ex-start-text strong { font-size: 0.95rem; }
+.ex-start-text small { color: var(--text-muted); font-size: 0.82rem; }
+.ex-start-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.ex-start-btns .chip { min-height: 38px; }
+
+/* People you may know: a rail of small cards */
+.ex-pcard {
+    flex: none; width: 150px; display: grid; justify-items: center; align-content: start; gap: 3px; padding: 16px 12px 14px;
+    border: 1px solid var(--border); border-radius: 14px; background: var(--surface); text-align: center;
+}
+.ex-pcard-who { padding: 0; border: 0; border-radius: 50%; background: none; cursor: pointer; margin-bottom: 6px; }
+.ex-pcard strong { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.9rem; }
+.ex-pcard small { color: var(--text-muted); font-size: 0.78rem; }
+.ex-pcard .chip { margin-top: 8px; min-height: 34px; }
+
+/* More to explore: everything else, one tap away */
+.ex-elsewhere { display: grid; gap: 12px; padding-top: 4px; }
+.ex-elsewhere h3 { margin: 0; font-size: 1.06rem; font-weight: 700; letter-spacing: -0.01em; }
+.ex-else-links { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+.ex-else-links button {
+    display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 14px; border: 1px solid var(--border); border-radius: 12px;
+    background: transparent; color: var(--text); font: inherit; font-size: 0.9rem; font-weight: 600; text-align: left; cursor: pointer; touch-action: manipulation;
+    transition: border-color 140ms, background-color 140ms;
+}
+.ex-else-links button .i { width: 18px; height: 18px; color: var(--text-muted); }
+.ex-else-links button:active { transform: scale(0.98); }
+@media (hover: hover) and (pointer: fine) { .ex-else-links button:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); background: var(--input); } }
+
+@media (max-width: 760px) {
+    .explore { gap: 24px; }
+    .ex-feature.has-photo { grid-template-columns: minmax(0, 1fr); }
+    .ex-feature-img { min-height: 0; aspect-ratio: 16 / 9; }
+    .ex-feature-body { padding: 16px 16px 18px; }
+    .ex-feature-title { font-size: 1.15rem; }
+    .explore .ex-rail .ex-tile { width: 168px; }
+    .explore .ex-rail, .explore .ex-people-rail, .explore .ex-row { margin: 0 -16px; padding-left: 16px; padding-right: 16px; scroll-padding-left: 16px; }
+    .ex-topics { margin: 0 -16px; padding: 1px 16px; }
+    .explore .ex-tabs { margin: -10px -16px 0; padding: 2px 16px; }
+    .ex-else-links { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .ex-start-btns { width: 100%; }
+    .ex-start-btns .chip { flex: 1; justify-content: center; }
+}
+
+/* ---------- Playnote ---------- */
+.pl { gap: 32px; }
+.pl-date { font-size: clamp(1.7rem, 4.2vw, 2.4rem); }
+.pl-today { display: grid; gap: 12px; }
+.pl-today .g-tile.lead { grid-template-columns: minmax(0, 40%) minmax(0, 1fr); grid-template-rows: none; }
+.pl-today .g-tile.lead .g-field { min-height: 210px; }
+.pl-today-h { margin: 10px 0 0; font-size: 1.06rem; font-weight: 700; letter-spacing: -0.01em; }
+.pl-today-rest { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.pl-today-rest .g-tile { display: flex; flex-direction: column; gap: 12px; padding: 14px; border-color: var(--border); }
+.pl-today-rest .g-field { width: 40px; height: 40px; min-height: 0; border-radius: 12px; flex: none; }
+.pl-today-rest .g-field .i { width: 20px; height: 20px; }
+.pl-today-rest .g-text { padding: 0; gap: 3px; align-content: start; }
+.pl-today-rest .g-text strong { font-size: 0.95rem; }
+.pl-today-rest .g-text small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pl-today-rest .g-go { margin-top: 6px; font-size: 0.84rem; }
+.pl-more {
+    display: inline-flex; align-items: center; gap: 6px; justify-self: start; min-height: 40px; margin-top: 2px; padding: 0 16px;
+    border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--text); font: inherit; font-size: 0.88rem; font-weight: 600; cursor: pointer; touch-action: manipulation;
+}
+.pl-more .i { width: 16px; height: 16px; color: var(--text-muted); }
+@media (hover: hover) and (pointer: fine) { .pl-more:hover { background: var(--input); } }
+.pl-section { gap: 12px; }
+
+@media (max-width: 760px) {
+    .pl { gap: 28px; }
+    .pl-today .g-tile.lead { grid-template-columns: minmax(0, 40%) minmax(0, 1fr); }
+    .pl-today .g-tile.lead .g-field { min-height: 0; }
+    .pl-today-rest { display: flex; overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none; overscroll-behavior-x: contain; margin: 0 -16px; padding: 0 16px 4px; scroll-padding-left: 16px; }
+    .pl-today-rest::-webkit-scrollbar { display: none; }
+    .pl-today-rest .g-tile { flex: none; width: 164px; scroll-snap-align: start; }
+    .gm-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .gm-tile { flex-direction: column; align-items: flex-start; gap: 10px; padding: 14px; }
+    .gm-t-ic { width: 40px; height: 40px; border-radius: 12px; }
+    .gm-t-ic .i { width: 21px; height: 21px; }
+    .gm-t-text small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .pl-topics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .pl-topic { flex-direction: column; align-items: flex-start; gap: 10px; padding: 14px; }
+    .pl-topic-ic { width: 36px; height: 36px; }
+}
+/* Calm pass, fixes from the rendered check */
+.explore .ex-top .ex-search { order: 0; max-width: none; }
+.explore .ex-top .ex-topics { order: 1; }
+.explore #ex-body { display: grid; gap: 32px; min-width: 0; }
+.explore #ex-body > * { min-width: 0; }
+.explore .ex-row { scrollbar-width: none; }
+.explore .ex-row::-webkit-scrollbar { display: none; }
+.ex-start .chip { background: var(--surface); color: var(--text); }
+.pl-today .g-tile.lead { grid-column: auto; grid-row: auto; }
+.pl-standing.out p { flex: 1 1 220px; }
+@media (max-width: 760px) { .explore #ex-body { gap: 28px; } }

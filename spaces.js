@@ -959,5 +959,5 @@ document.addEventListener('DOMContentLoaded', () => {
         return [{ label: 'Back to your space', icon: 'i-headphones', onClick: expand }, ...before];
     };
 
-    window.diarySpaces = { exploreSection, feedStrip, open: enter, refresh: load, current: () => (R ? R.id : null) };
+    window.diarySpaces = { exploreSection, feedStrip, liveCount: () => { if (!L.loaded) load(); return L.live.length; }, open: enter, refresh: load, current: () => (R ? R.id : null) };
 });
