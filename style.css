@@ -14349,3 +14349,9 @@ body[data-view="explore"] .fab { display: none; } /* it covered "Open" / "See al
 }
 .wpm-list > * { min-width: 0; }
 .wpm-skel { width: 100%; max-width: 100%; box-sizing: border-box; }
+
+/* Reels: the side buttons stay on screen on shorter phones */
+.reel-side { max-height: calc(100% - 96px); }
+@media (max-height: 780px) { .reel-side { gap: 6px; } .reel-act { min-height: 44px; } .reel-act .i { width: 26px; height: 26px; } }
+@media (max-height: 640px) { .reel-act span { font-size: 0.68rem; } }
+.post-actions .reshare-btn[aria-pressed="true"] { color: #22c55e; }

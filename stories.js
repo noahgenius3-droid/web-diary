@@ -956,8 +956,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const person = { id: r.author, ...p };
         const liked = r.likes.some(l => l.user_id === me);
         const saved = s.savedReels.has(r.id);
+        const reshares = r.reshares || [];
+        const reshared = reshares.some(x => x.user_id === me);
+        const via = r.author === me || (s.friends || []).some(f => f.id === r.author) ? null
+            : reshares.map(x => (s.friends || []).find(f => f.id === x.user_id)).find(Boolean);
         return `
             <article class="post ig reel-post" data-reel="${esc(r.id)}" data-search="${esc(`${p.display_name} ${p.username} ${r.caption || ''}`.toLowerCase())}">
+                ${reshared || via ? `<p class="repost-line"><svg class="i"><use href="#i-repost"/></svg>${reshared ? 'You reshared this' : `${esc(String(via.display_name || '').split(' ')[0])} reshared this`}</p>` : ''}
                 <header class="post-head">
                     ${avatar(person, 'md')}
                     <div class="post-who">
@@ -978,6 +983,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         <svg class="i"><use href="#${liked ? 'i-heart-fill' : 'i-heart'}"/></svg><span class="act-count" data-count="likes">${r.likes.length || ''}</span>
                     </button>
                     <button class="act" data-action="reel-comments" data-id="${esc(r.id)}" aria-label="Comments"><svg class="i"><use href="#i-chat"/></svg><span class="act-count" data-count="comments">${count(r) || ''}</span></button>
+                    <button class="act reshare-btn" data-action="reel-reshare" data-id="${esc(r.id)}" aria-pressed="${reshared}" aria-label="${reshared ? 'Undo reshare' : 'Reshare to your friends'}" title="Reshare"><svg class="i"><use href="#i-repost"/></svg><span class="act-count">${reshares.length ? compact(reshares.length) : 'Reshare'}</span></button>
+                    <button class="act" data-action="reel-story" data-id="${esc(r.id)}" aria-label="Add to your story" title="Add to your story"><svg class="i"><use href="#i-plus"/></svg><span class="act-count">Story</span></button>
                     <button class="act save-btn" data-action="reel-save" data-id="${esc(r.id)}" aria-pressed="${saved}" aria-label="${saved ? 'Remove from Saved' : 'Save reel'}">
                         <svg class="i"><use href="#${saved ? 'i-bookmark-fill' : 'i-bookmark'}"/></svg><span class="sr-only">${saved ? 'Saved' : 'Save'}</span>
                     </button>
@@ -1092,6 +1099,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <button class="reel-act" data-action="reel-comments" data-id="${esc(r.id)}" aria-label="Comments">
                         <svg class="i"><use href="#i-chat"/></svg><span data-count="comments">${compact(count(r))}</span>
                     </button>
+                    ${`<button class="reel-act" data-action="reel-reshare" data-id="${esc(r.id)}" aria-pressed="${reshared}" aria-label="${reshared ? 'Undo reshare' : 'Reshare to your friends'}"><svg class="i"><use href="#i-repost"/></svg><span>${reshares.length ? compact(reshares.length) : 'Reshare'}</span></button>`}
                     <button class="reel-act" data-action="reel-save" data-id="${esc(r.id)}" aria-pressed="${saved}" aria-label="${saved ? 'Remove from Saved' : 'Save reel'}">
                         <svg class="i"><use href="#${saved ? 'i-bookmark-fill' : 'i-bookmark'}"/></svg><span>${saved ? 'Saved' : 'Save'}</span>
                     </button>
@@ -1099,7 +1107,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         <svg class="i"><use href="#${st.muted ? 'i-volume-off' : 'i-volume'}"/></svg>
                     </button>
                     ${r.author === me && /\.mov$/i.test(r.video_path) ? `<button class="reel-act" data-action="reel-convert" data-id="${esc(r.id)}" aria-label="Convert so every device can play it"><svg class="i"><use href="#i-refresh"/></svg><span>Fix</span></button>` : ''}
-                    ${`<button class="reel-act" data-action="reel-reshare" data-id="${esc(r.id)}" aria-pressed="${reshared}" aria-label="${reshared ? 'Undo reshare' : 'Reshare to your friends'}"><svg class="i"><use href="#i-repost"/></svg><span>${reshares.length ? compact(reshares.length) : 'Reshare'}</span></button>`}
                     <button class="reel-act" data-action="reel-story" data-id="${esc(r.id)}" aria-label="Add to your story"><svg class="i"><use href="#i-plus"/></svg><span>Story</span></button>
                     ${r.author === me ? `<button class="reel-act" data-action="reel-delete" data-id="${esc(r.id)}" aria-label="Delete reel"><svg class="i"><use href="#i-trash"/></svg></button>` : ''}
                 </div>
