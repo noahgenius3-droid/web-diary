@@ -15052,3 +15052,7 @@ body.chat-open #content.repaint .inbox .chat-pane { animation: none !important; 
 .explore .search.ex-search input { color: var(--text); -webkit-text-fill-color: var(--text); width: 100%; }
 .explore .search.ex-search input::placeholder { color: var(--text-faint); -webkit-text-fill-color: var(--text-faint); }
 .explore .ex-search-row .ex-search { flex: 1 1 0; width: 0; min-width: 0; }
+/* Composer tools: instant press feedback, and no tap lost to the text box losing focus */
+.post-composer .pc-tool, .post-composer .pc-audience, .post-composer .pc-schedule, .post-composer .pc-quick { touch-action: manipulation; -webkit-tap-highlight-color: transparent; transition: transform 120ms ease-out, background-color 120ms; }
+.post-composer :is(.pc-tool, .pc-audience, .pc-schedule, .pc-quick):active { transform: scale(0.95); background: var(--input); }
+.post-composer .pc-post:active { transform: scale(0.97); }

@@ -923,8 +923,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Reels ----------
     async function loadReels() {
-        if (st.reelsLoading) return;
+        if (st.reelsLoading) { st.reelsAgain = true; return; }
         st.reelsLoading = true;
+        st.reelsAgain = false;
         const { data, error } = await client.from('diary_reels')
             .select(`id, author, video_path, poster_path, caption, duration, created_at,
                 author_profile:diary_profiles!diary_reels_author_fkey(${PROFILE}),
@@ -934,6 +935,7 @@ document.addEventListener('DOMContentLoaded', () => {
             .order('created_at', { ascending: false })
             .limit(50);
         st.reelsLoading = false;
+        if (st.reelsAgain) { st.reelsAgain = false; return loadReels(); }
         st.reels = error ? [] : data;
         st.reelsError = !!error;
         app.requestRender(['reels', 'feed', 'explore']);
@@ -1271,6 +1273,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 video_path: videoPath, poster_path: posterPath, caption: result.caption, duration
             });
             if (error) throw error;
+            // It's saved. Read it back (a failure here is harmless: the reload below fetches it anyway)
+            const { data: made } = await client.from('diary_reels').select('id, author, video_path, poster_path, caption, duration, created_at')
+                .eq('video_path', videoPath).maybeSingle().then(r => r, () => ({ data: null }));
+            if (made) {
+                const mine = { ...made, author_profile: { username: s.profile.username, display_name: s.profile.display_name, avatar_path: s.profile.avatar_path }, likes: [], reshares: [], comments: [{ count: 0 }] };
+                st.reels = [mine, ...(st.reels || []).filter(r => r.id !== mine.id)];
+                app.requestRender(['reels', 'feed', 'explore', 'profile']);
+            }
             if (result.alsoStory) {
                 await shareToStory({ bucket: REEL_BUCKET, path: videoPath, type: 'video', caption: result.caption, duration }).catch(() => {});
                 loadStories();
@@ -1286,9 +1296,8 @@ document.addEventListener('DOMContentLoaded', () => {
         } finally {
             result.done();
             st.busy = false;
-            st.reels = null;
             if (app.state.view === 'reels') app.render();
-            else if (app.state.view === 'feed') loadReels();
+            loadReels();
         }
     }
 

@@ -3693,7 +3693,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <input type="search" id="feed-search" placeholder="Search posts, people and #tags" aria-label="Search posts" enterkeyhint="search">
                     </label>
 
-                    <form class="post-composer${s.feedDraft.text || s.feedDraft.photos.length ? ' open' : ''}" data-form="feed-post">
+                    <form class="post-composer${s.feedDraft.text || s.feedDraft.photos.length || s.feedDraft.audio || s.composerEngaged ? ' open' : ''}" data-form="feed-post">
                         <div class="pc-row">
                             ${avatar(s.profile, 'md')}
                             <textarea id="feed-text" rows="1" maxlength="5000" placeholder="What would you like to share?" aria-label="Write a post"></textarea>
@@ -3803,6 +3803,24 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>`;
     };
 
+    // The composer opens on the first touch and stays open while you choose a tool
+    document.addEventListener('pointerdown', e => {
+        const form = document.querySelector('form.post-composer');
+        if (!form) return;
+        if (form.contains(e.target)) {
+            if (!s.composerEngaged) { s.composerEngaged = true; form.classList.add('open'); }
+            return;
+        }
+        // Menus and pickers opened from the composer don't count as "elsewhere"
+        if (e.target.closest('#popover, dialog')) return;
+        const draft = s.feedDraft.text || s.feedDraft.photos.length || s.feedDraft.audio;
+        if (s.composerEngaged && !draft) { s.composerEngaged = false; form.classList.remove('open'); }
+    }, true);
+    document.addEventListener('focusin', e => {
+        const form = e.target.closest && e.target.closest('form.post-composer');
+        if (form && !s.composerEngaged) { s.composerEngaged = true; form.classList.add('open'); }
+    });
+
     // ---------- Posting from the feed ----------
     const MAX_POST_PHOTOS = 10;
 
@@ -3831,7 +3849,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!box) return;
         const photos = s.feedDraft.photos;
         box.hidden = !photos.length;
-        box.closest('.post-composer')?.classList.toggle('open', photos.length > 0 || !!s.feedDraft.text || !!s.feedDraft.audio);
+        box.closest('.post-composer')?.classList.toggle('open', photos.length > 0 || !!s.feedDraft.text || !!s.feedDraft.audio || !!s.composerEngaged);
         box.innerHTML = photos.map(p => `
             <figure class="pc-thumb">
                 <img src="${p.preview}" alt="">
@@ -3846,7 +3864,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!box) return;
         const a = s.feedDraft.audio;
         box.hidden = !a;
-        box.closest('.post-composer')?.classList.toggle('open', !!a || s.feedDraft.photos.length > 0 || !!s.feedDraft.text);
+        box.closest('.post-composer')?.classList.toggle('open', !!a || s.feedDraft.photos.length > 0 || !!s.feedDraft.text || !!s.composerEngaged);
         box.innerHTML = a ? `
             <span class="pa-art small" aria-hidden="true"><svg class="i"><use href="#i-music"/></svg></span>
             <span class="pc-audio-text"><strong>${esc(a.name)}</strong><small>${Media.formatDuration(a.duration)} · plays with your post</small></span>
@@ -3893,6 +3911,7 @@ document.addEventListener('DOMContentLoaded', () => {
             photos.forEach(p => URL.revokeObjectURL(p.preview));
             if (result.ok && s.feedStory && window.diaryStories) window.diaryStories.shareEntry(note.id, text);
             s.feedDraft = { text: '', photos: [], audio: null };
+            s.composerEngaged = false;
             s.feed = null;
             if (!result.ok) return; // upsertShared already explained; the entry is still saved in the diary
             if (result.photos < photos.length) app.showToast(`Posted, but ${photos.length - result.photos} photo(s) couldn’t upload`);
@@ -3937,7 +3956,11 @@ document.addEventListener('DOMContentLoaded', () => {
             items.sort((a, b) => b.score - a.score || b.at - a.at);
         } else if (ranked && s.feedSort === 'foryou') {
             const aff = affinity();
-            items.forEach(i => { i.score = forYouScore(i.post, aff); });
+            const me = s.profile.id;
+            items.forEach(i => {
+                i.score = forYouScore(i.post, aff);
+                if ((i.post.author === me) && Date.now() - i.at < 10 * 60000) i.score += 1e6;
+            });
             items.sort((a, b) => b.score - a.score || b.at - a.at);
         } else {
             items.sort((a, b) => b.at - a.at);
@@ -6106,7 +6129,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target.id === 'feed-text' || e.target.id === 'cm-text') suggestTags(e.target);
         if (e.target.id === 'feed-text') {
             s.feedDraft.text = e.target.value;
-            e.target.closest('.post-composer')?.classList.toggle('open', !!e.target.value || s.feedDraft.photos.length > 0);
+            e.target.closest('.post-composer')?.classList.toggle('open', !!e.target.value || s.feedDraft.photos.length > 0 || !!s.composerEngaged);
             e.target.style.height = 'auto';
             e.target.style.height = Math.min(e.target.scrollHeight, 240) + 'px';
         }
