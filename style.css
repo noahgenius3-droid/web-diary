@@ -14473,3 +14473,17 @@ dialog.live[data-mode="watch"] .lv-host small, dialog.live[data-mode="live"] .lv
 @media (max-width: 760px) { .post-composer:not(.open):not(:focus-within) .pc-tl-more { display: none; } }
 @media (max-width: 360px) { .post-composer:not(.open):not(:focus-within) .pc-tool { font-size: 0.6rem; padding: 6px 0; } }
 @media (min-width: 900px) and (min-height: 600px) and (hover: hover) { dialog.live[open] { display: grid; place-items: center; } dialog.live[open] .lv-stage { margin: 0; } }
+
+/* Live on phones: a wider comment box — the occasional controls (fit, flip, mute) float in a column on the right */
+@media (max-width: 760px) {
+    .lv-bar { gap: 6px; padding-left: 10px; padding-right: 10px; }
+    .lv-bar .lv-btn { width: 40px; height: 40px; }
+    .lv-say input { min-height: 44px; padding: 0 42px 0 14px; }
+    .lv-send { width: 34px; height: 34px; right: 5px; }
+    .lv-bar #lv-fit, .lv-bar #lv-flip, .lv-bar #lv-mute { position: absolute; right: 10px; width: 42px; height: 42px; }
+    .lv-bar #lv-fit { bottom: calc(100% + 6px); }
+    .lv-bar #lv-flip { bottom: calc(100% + 6px); }
+    .lv-bar #lv-mute { bottom: calc(100% + 54px); }
+    .lv-end { padding: 0 14px; min-height: 40px; }
+    .lv-hearts { right: 60px; }
+}
