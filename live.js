@@ -481,6 +481,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function status(html) {
+        $('lv-status').classList.remove('leaving');
         $('lv-status').innerHTML = html || '';
         $('lv-status').hidden = !html;
     }
@@ -612,6 +613,14 @@ document.addEventListener('DOMContentLoaded', () => {
         L.viewers = 0;
         paintViewers();
         status(`<span class="lv-wait">You’re live${L.stream.audience === 'public' ? ' to everyone' : ''}. Waiting for someone to join…</span>`);
+        // It's a moment's reassurance, not a sign to sit on top of your video: fade it away after a few seconds
+        clearTimeout(L.waitTimer);
+        L.waitTimer = setTimeout(() => {
+            const w = $('lv-status').querySelector('.lv-wait');
+            if (!w) return;
+            $('lv-status').classList.add('leaving');
+            setTimeout(() => { if ($('lv-status').querySelector('.lv-wait')) status(''); }, 400);
+        }, 5000);
         paintTitle();
         joinChannel(true);
         L.beat = bgEvery(HEARTBEAT, () => {
