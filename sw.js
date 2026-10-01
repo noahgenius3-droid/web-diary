@@ -4,7 +4,7 @@
 //
 // Strategy: when online, always fetch fresh (so a new deploy shows up right away) and refresh the saved copy;
 // when the network fails, answer from the saved copy. Supabase data (posts, messages…) is never cached here.
-const CACHE = 'cordial-shell-v84';
+const CACHE = 'cordial-shell-v85';
 const SHELL = [
     '/', '/index.html', '/manifest.webmanifest',
     '/style.css', '/photoedit.css',
@@ -146,8 +146,15 @@ self.addEventListener('notificationclick', event => {
         const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
         const open = windows.find(w => new URL(w.url).origin === self.location.origin);
         if (open) {
-            await open.focus();
-            if ('navigate' in open) return open.navigate(target).catch(() => {});
+            await open.focus().catch(() => {});
+            // Ask the open app to go there itself (no reload); fall back to loading the address
+            const handled = await new Promise(resolve => {
+                const ch = new MessageChannel();
+                const timer = setTimeout(() => resolve(false), 1500);
+                ch.port1.onmessage = () => { clearTimeout(timer); resolve(true); };
+                open.postMessage({ type: 'open-url', url: target }, [ch.port2]);
+            });
+            if (!handled && 'navigate' in open) return open.navigate(target).catch(() => {});
             return;
         }
         return self.clients.openWindow(target);

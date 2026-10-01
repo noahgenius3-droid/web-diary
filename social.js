@@ -2751,13 +2751,46 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // #/post/<id> (a feed post) or #/post/g-<id> (a group post): open it over the right page
     const resolving = new Set();
+    // Opening the app from a notification: the saved sign-in takes a moment to load, so wait for it
+    async function accountReady() {
+        if (signedIn()) return true;
+        const { data } = await client.auth.getSession().catch(() => ({ data: {} }));
+        if (!data || !data.session) return false;
+        const t0 = Date.now();
+        while (!signedIn() && Date.now() - t0 < 15000) await new Promise(r => setTimeout(r, 200));
+        return signedIn();
+    }
+    // A notification tapped while Cordial is already open: go to the post without reloading
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.addEventListener('message', e => {
+            const d = e.data || {};
+            if (d.type !== 'open-url') return;
+            const url = new URL(d.url, location.origin);
+            if (url.pathname !== '/' && url.pathname !== '/index.html' || url.search || !url.hash) return;
+            if (e.ports && e.ports[0]) e.ports[0].postMessage('ok');
+            const parts = url.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
+            if (parts[0] === 'post' && parts[1]) {
+                document.querySelectorAll('dialog[open]').forEach(dl => { if (!dl.classList.contains('post-view')) dl.close(); });
+                if (parts[1].startsWith('g-')) app.setView('post', { postId: parts[1] });
+                else { if (app.state.view !== 'feed') app.setView('feed'); window.diarySocial.internals.openEntry(parts[1]); }
+            } else {
+                history.pushState(null, '', url.hash);
+                window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
+            }
+        });
+    }
     app.views.post = () => {
         const id = app.state.postId || '';
         if (!resolving.has(id)) {
             resolving.add(id);
             setTimeout(async () => {
+                const ready = await accountReady();
                 resolving.delete(id);
-                if (!signedIn()) return app.setView('feed', {}, { replace: true });
+                if (!ready) {
+                    app.setView('feed', {}, { replace: true });
+                    if (window.diarySocial && window.diarySocial.requireSignIn) window.diarySocial.requireSignIn('Sign in to see this post.');
+                    return;
+                }
                 if (id.startsWith('g-')) {
                     const pid = id.slice(2);
                     const { data } = await client.from('diary_community_posts').select('community_id').eq('id', pid).maybeSingle();
