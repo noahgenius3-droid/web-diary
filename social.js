@@ -3541,6 +3541,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const audio = await syncAudio(note);
         if (audio) s.remoteAudio.set(note.id, audio);
         else s.remoteAudio.delete(note.id);
+        // Note colours the server accepts, and the nearest one for each of the others
+        const SHARE_COLOR = { yellow: 'yellow', pink: 'pink', blue: 'blue', green: 'green', purple: 'purple', orange: 'yellow', coral: 'pink', teal: 'green', sky: 'blue', lime: 'green', gray: 'blue' };
         const { error } = await client.from('diary_shared_entries').upsert({
             audio,
             photos,
@@ -3549,7 +3551,7 @@ document.addEventListener('DOMContentLoaded', () => {
             title: note.title.slice(0, 200),
             body: note.text.slice(0, 20000),
             html,
-            color: note.color,
+            color: SHARE_COLOR[note.color] || 'yellow', // the server keeps five note colours; the rest map to the nearest
             mood: note.mood,
             audience: note.audience === 'public' ? 'public' : 'friends',
             written_at: new Date(note.createdAt).toISOString(),
