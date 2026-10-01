@@ -364,9 +364,37 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function getCamera(facing = 'user') {
-        return (await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: facing, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24, max: 30 } }
+        const track = (await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } }
         })).getVideoTracks()[0];
+        if (track && 'contentHint' in track) track.contentHint = 'motion';
+        return track;
+    }
+
+    // ---------- Picture quality ----------
+    // Everyone sends to everyone, so each camera's upload is shared across the call: one-to-one gets HD at a
+    // generous bitrate, bigger calls scale each copy down a little instead of freezing. A shared screen keeps
+    // its sharpness (text must stay readable) and gives up smoothness first.
+    function tuneSenders() {
+        if (!call) return;
+        const n = Math.max(1, call.peers.size);
+        const camBitrate = n <= 1 ? 2500000 : n === 2 ? 1500000 : Math.max(350000, Math.round(4000000 / n));
+        const camScale = n <= 2 ? 1 : n <= 4 ? 1.5 : 2;
+        const tune = (sender, enc, pref) => {
+            if (!sender || !sender.getParameters || !sender.setParameters) return;
+            try {
+                const params = sender.getParameters();
+                if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+                Object.assign(params.encodings[0], enc);
+                params.degradationPreference = pref;
+                sender.setParameters(params).catch(() => {});
+            } catch (e) { /* older browsers keep their defaults */ }
+        };
+        call.peers.forEach(peer => {
+            const tr = peer.pc.getTransceivers();
+            if (tr[1]) tune(tr[1].sender, { maxBitrate: camBitrate, maxFramerate: 30, scaleResolutionDownBy: camScale }, 'balanced');
+            if (tr[2]) tune(tr[2].sender, { maxBitrate: 1500000, maxFramerate: 15 }, 'maintain-resolution');
+        });
     }
 
     // ---------- Joining a room ----------
@@ -553,6 +581,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         };
         pc.onconnectionstatechange = () => {
+            if (pc.connectionState === 'connected') tuneSenders();
             if (pc.connectionState === 'failed') {
                 // Networks change (Wi-Fi ↔ mobile); try once to recover, then report
                 if (!peer.restarted && offerer) {
@@ -572,6 +601,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const tr = peer.pc.getTransceivers();
         if (tr[1]) tr[1].sender.replaceTrack(call.cam || null).catch(() => {});
         if (tr[2]) tr[2].sender.replaceTrack(call.screen || null).catch(() => {});
+        tuneSenders();
     }
     const eachPeer = fn => call && call.peers.forEach(fn);
 
@@ -634,6 +664,7 @@ document.addEventListener('DOMContentLoaded', () => {
         peer.pc.close();
         if (peer.audio) peer.audio.remove();
         call.peers.delete(id);
+        tuneSenders();
         call.meters.delete(id);
         if (call.focus === id) call.focus = null;
     }
@@ -906,7 +937,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!call || !canShare) return;
         let track;
         try {
-            const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 12, max: 15 } }, audio: false });
+            const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 15 } }, audio: false });
+            stream.getVideoTracks().forEach(t => { if ('contentHint' in t) t.contentHint = 'detail'; });
             track = stream.getVideoTracks()[0];
         } catch (e) {
             if (e && e.name !== 'NotAllowedError' && e.name !== 'AbortError') app.showToast('Couldn’t share your screen');

@@ -43,9 +43,110 @@ document.addEventListener('DOMContentLoaded', () => {
     const cameraFor = facing => {
         const upright = window.innerHeight > window.innerWidth && window.matchMedia('(pointer: coarse)').matches;
         return upright
-            ? { facingMode: facing, width: { ideal: 720 }, height: { ideal: 1280 } }
-            : { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } };
+            ? { facingMode: facing, width: { ideal: 1080 }, height: { ideal: 1920 }, frameRate: { ideal: 30, max: 30 } }
+            : { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 30 } };
     };
+
+    // ---------- Picture quality ----------
+    // The host sends one copy per viewer, so the upload is shared out: a few viewers get full resolution and a
+    // generous bitrate; a bigger audience gets each copy scaled down a little rather than everyone stuttering.
+    function tuneViewers() {
+        const n = Math.max(1, L.peers.size);
+        const maxBitrate = Math.round(Math.min(2500000, Math.max(400000, 6000000 / n)));
+        const scale = n <= 2 ? 1 : n <= 6 ? 1.5 : 2;
+        L.peers.forEach(p => {
+            const sender = p.vs;
+            if (!sender || !sender.getParameters || !sender.setParameters) return;
+            try {
+                const params = sender.getParameters();
+                if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+                params.encodings[0].maxBitrate = maxBitrate;
+                params.encodings[0].maxFramerate = 30;
+                params.encodings[0].scaleResolutionDownBy = scale;
+                params.degradationPreference = 'balanced';
+                sender.setParameters(params).catch(() => {});
+            } catch (e) { /* older browsers: their defaults */ }
+        });
+    }
+
+    // ---------- Filters ----------
+    // The host's picture is drawn through a canvas with the filter, and that's what viewers receive.
+    const FX = [['none', 'Normal', ''], ['warm', 'Warm', 'sepia(0.22) saturate(1.25) brightness(1.04)'], ['cool', 'Cool', 'hue-rotate(-10deg) saturate(1.12) brightness(1.04)'],
+        ['vivid', 'Vivid', 'saturate(1.5) contrast(1.08)'], ['glow', 'Glow', 'brightness(1.1) contrast(0.92) saturate(1.12)'], ['bright', 'Bright', 'brightness(1.16) contrast(1.04)'],
+        ['vintage', 'Vintage', 'sepia(0.5) contrast(0.95) brightness(1.05) saturate(0.9)'], ['mono', 'Mono', 'grayscale(1) contrast(1.12)']];
+    const canvasFilters = (() => { try { return 'filter' in document.createElement('canvas').getContext('2d'); } catch (e) { return false; } })();
+    const fxCss = key => (FX.find(f => f[0] === key) || FX[0])[2];
+    const outgoingVideo = () => (L.fx && L.fx.track) || (L.media && L.media.getVideoTracks()[0]) || null;
+
+    function startFx() {
+        if (!canvasFilters || !L.media || L.fx) return;
+        const src = document.createElement('video');
+        src.muted = true;
+        src.setAttribute('playsinline', '');
+        src.className = 'lv-fx-src';
+        dialog.append(src); // phones only decode a video that's on the page
+        const canvas = document.createElement('canvas');
+        canvas.width = 720;
+        canvas.height = 1280;
+        const ctx = canvas.getContext('2d');
+        L.fx = { src, canvas, ctx, raf: 0, track: canvas.captureStream(30).getVideoTracks()[0] };
+        if (L.fx.track && 'contentHint' in L.fx.track) L.fx.track.contentHint = 'motion';
+        src.srcObject = new MediaStream(L.media.getVideoTracks());
+        src.play().catch(() => {});
+        const draw = () => {
+            const f = L.fx;
+            if (!f) return;
+            const w = f.src.videoWidth, h = f.src.videoHeight;
+            if (w && h) {
+                const k = Math.min(1, 1280 / Math.max(w, h));
+                const cw = Math.round(w * k), ch = Math.round(h * k);
+                if (f.canvas.width !== cw || f.canvas.height !== ch) { f.canvas.width = cw; f.canvas.height = ch; }
+                f.ctx.filter = fxCss(L.filter) || 'none';
+                f.ctx.drawImage(f.src, 0, 0, cw, ch);
+            }
+            f.raf = requestAnimationFrame(draw);
+        };
+        draw();
+    }
+    function stopFx() {
+        const f = L.fx;
+        if (!f) return;
+        L.fx = null;
+        cancelAnimationFrame(f.raf);
+        if (f.track) f.track.stop();
+        f.src.srcObject = null;
+        f.src.remove();
+    }
+    function setFilter(key) {
+        L.filter = key;
+        const css = fxCss(key);
+        video.style.filter = css; // your own preview, instantly
+        if (css) startFx(); else stopFx();
+        const track = outgoingVideo();
+        L.peers.forEach(p => { if (p.vs && track) p.vs.replaceTrack(track).catch(() => {}); });
+        paintFx();
+    }
+    function paintFx() {
+        const strip = $('lv-fx-strip');
+        if (!strip) return;
+        strip.innerHTML = FX.map(([k, l, css]) => `<button type="button" class="lv-fx-opt" data-fx="${k}" aria-pressed="${(L.filter || 'none') === k}"><span class="lv-fx-sw" style="filter:${css || 'none'}" aria-hidden="true"></span>${l}</button>`).join('');
+    }
+
+    // ---------- Pinned comment ----------
+    // The host pins a comment for everyone (sent again to anyone who joins later);
+    // a viewer can pin one just for themselves.
+    function paintPin() {
+        const box = $('lv-pin');
+        if (!box) return;
+        const p = L.pin || L.myPin;
+        box.hidden = !p;
+        if (!p) { box.innerHTML = ''; return; }
+        const byHost = !!L.pin;
+        const canUnpin = byHost ? L.mode === 'live' : true;
+        box.innerHTML = `<svg class="i lv-pin-ic" aria-hidden="true"><use href="#i-pin-note"/></svg>
+            <span class="lv-pin-text"><small>${byHost ? 'Pinned by the host' : 'Pinned for you'}</small><span><strong>${esc(p.name)}</strong> ${esc(p.text)}</span></span>
+            ${canUnpin ? '<button type="button" class="lv-pin-x" data-pin="off" aria-label="Unpin this comment"><svg class="i"><use href="#i-close"/></svg></button>' : ''}`;
+    }
     const reduced = () => document.documentElement.dataset.motion === 'reduce' || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     window.diaryLive = {
@@ -179,6 +280,14 @@ document.addEventListener('DOMContentLoaded', () => {
             ? `${face}<span class="lv-event"><strong>${esc(name)}</strong> ${esc(text)}</span>`
             : `${face}<span class="lv-bubble"><strong>${esc(name)}</strong><span>${esc(text)}</span></span>`;
         if (face) I.hydrateStorage(row);
+        if (cls !== 'lv-join' && cls !== 'lv-love') {
+            row.classList.add('pinnable');
+            row.dataset.name = name;
+            row.dataset.text = text;
+            row.tabIndex = 0;
+            row.setAttribute('role', 'button');
+            row.setAttribute('aria-label', `${name}: ${text} — options`);
+        }
         box.append(row);
         while (box.children.length > 40) box.firstChild.remove();
         box.scrollTop = box.scrollHeight;
@@ -202,8 +311,9 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             L.media = await navigator.mediaDevices.getUserMedia({
                 video: cameraFor(L.facing),
-                audio: { echoCancellation: true, noiseSuppression: true }
+                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
             });
+            L.media.getVideoTracks().forEach(t => { if ('contentHint' in t) t.contentHint = 'motion'; });
         } catch (e) {
             return app.showToast('Allow camera and microphone access to go live');
         }
@@ -276,10 +386,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const pc = new RTCPeerConnection({ iceServers: ICE });
         const peer = { pc, queue: [], remoteSet: false };
         L.peers.set(viewerId, peer);
-        L.media.getTracks().forEach(t => pc.addTrack(t, L.media));
+        L.media.getAudioTracks().forEach(t => pc.addTrack(t, L.media));
+        const out = outgoingVideo();
+        if (out) peer.vs = pc.addTrack(out, L.media);
         pc.onicecandidate = e => { if (e.candidate) send('ice', { to: viewerId, candidate: e.candidate.toJSON() }); };
         pc.onconnectionstatechange = () => {
             if (['failed', 'closed'].includes(pc.connectionState)) closePeer(viewerId);
+            else if (pc.connectionState === 'connected') tuneViewers();
         };
         pc.createOffer()
             .then(offer => pc.setLocalDescription(offer))
@@ -292,6 +405,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!peer) return;
         L.peers.delete(id);
         try { peer.pc.close(); } catch (e) {}
+        tuneViewers();
     }
 
     async function flipCamera() {
@@ -301,7 +415,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const fresh = await navigator.mediaDevices.getUserMedia({ video: cameraFor(next) });
             const track = fresh.getVideoTracks()[0];
             const old = L.media.getVideoTracks()[0];
-            L.peers.forEach(p => p.pc.getSenders().filter(x => x.track && x.track.kind === 'video').forEach(x => x.replaceTrack(track)));
+            if ('contentHint' in track) track.contentHint = 'motion';
+            if (L.fx) L.fx.src.srcObject = new MediaStream([track]);
+            else L.peers.forEach(p => { if (p.vs) p.vs.replaceTrack(track).catch(() => {}); });
             L.media.removeTrack(old);
             old.stop();
             L.media.addTrack(track);
@@ -409,7 +525,18 @@ document.addEventListener('DOMContentLoaded', () => {
         L.channel = channel;
         const forMe = p => p && p.to === L.selfId;
         channel
-            .on('broadcast', { event: 'join' }, ({ payload }) => { if (isHost && payload.from) hostOffer(payload.from); })
+            .on('broadcast', { event: 'join' }, ({ payload }) => {
+                if (isHost && payload.from) {
+                    hostOffer(payload.from);
+                    if (L.pin) send('pin', { pin: L.pin });
+                }
+            })
+            .on('broadcast', { event: 'pin' }, ({ payload }) => {
+                if (isHost) return;
+                const p = payload && payload.pin;
+                L.pin = p && typeof p.text === 'string' ? { name: String(p.name || 'Someone').slice(0, 60), text: p.text.slice(0, 200) } : null;
+                paintPin();
+            })
             .on('broadcast', { event: 'hello' }, () => { if (!isHost) send('join', {}); })
             .on('broadcast', { event: 'offer' }, ({ payload }) => { if (!isHost && forMe(payload)) viewerAnswer(payload.sdp); })
             .on('broadcast', { event: 'answer' }, ({ payload }) => {
@@ -499,6 +626,14 @@ document.addEventListener('DOMContentLoaded', () => {
         L.peers.forEach((_, id) => closePeer(id));
         if (L.pc) try { L.pc.close(); } catch (e) {}
         L.pc = null;
+        stopFx();
+        L.filter = 'none';
+        video.style.filter = '';
+        const strip = $('lv-fx-strip');
+        if (strip) strip.hidden = true;
+        L.pin = null;
+        L.myPin = null;
+        paintPin();
         if (L.media) L.media.getTracks().forEach(t => t.stop());
         L.media = null;
         if (L.channel) client.removeChannel(L.channel);
@@ -609,6 +744,36 @@ document.addEventListener('DOMContentLoaded', () => {
     $('lv-close').addEventListener('click', leave);
     $('lv-end').addEventListener('click', leave);
     $('lv-flip').addEventListener('click', flipCamera);
+    if (!canvasFilters) $('lv-fx').remove(); // this browser can't draw filters into the stream
+    else $('lv-fx').addEventListener('click', () => {
+        const strip = $('lv-fx-strip');
+        strip.hidden = !strip.hidden;
+        $('lv-fx').setAttribute('aria-expanded', String(!strip.hidden));
+        if (!strip.hidden) paintFx();
+    });
+    $('lv-fx-strip').addEventListener('click', e => {
+        const b = e.target.closest('[data-fx]');
+        if (b) setFilter(b.dataset.fx);
+    });
+    const pinMenu = row => {
+        if (!row || !L.mode) return;
+        const c = { name: row.dataset.name, text: row.dataset.text };
+        if (L.mode === 'live') app.openPopover(row, [{ label: 'Pin for everyone', icon: 'i-pin-note', onClick: () => { L.pin = c; send('pin', { pin: c }); paintPin(); } }]);
+        else if (L.mode === 'watch') app.openPopover(row, [{ label: 'Pin for me', icon: 'i-pin-note', onClick: () => { L.myPin = c; paintPin(); } }]);
+    };
+    $('lv-chat').addEventListener('click', e => {
+        const row = e.target.closest('.lv-msg.pinnable');
+        if (!row) return;
+        e.stopPropagation(); // the page's "tap outside closes menus" would shut it straight away
+        pinMenu(row);
+    });
+    $('lv-chat').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { const row = e.target.closest('.lv-msg.pinnable'); if (row) { e.preventDefault(); pinMenu(row); } } });
+    $('lv-pin').addEventListener('click', e => {
+        if (!e.target.closest('[data-pin="off"]')) return;
+        if (L.pin && L.mode === 'live') { L.pin = null; send('pin', { pin: null }); }
+        else L.myPin = null;
+        paintPin();
+    });
     $('lv-mute').addEventListener('click', toggleMute);
     $('lv-heart').addEventListener('click', () => {
         floatHeart();
