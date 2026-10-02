@@ -439,8 +439,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Any sheet or dialog that opens gets the one shared history entry…
-    const nativeShowModal = HTMLDialogElement.prototype.showModal;
-    HTMLDialogElement.prototype.showModal = function () {
+    // (Older iPhones, iOS 15.0–15.3, have no <dialog>: Cordial still starts, sheets just don't get history entries)
+    const Dialog = window.HTMLDialogElement || function () {};
+    const nativeShowModal = Dialog.prototype.showModal || function () {};
+    if (window.HTMLDialogElement) HTMLDialogElement.prototype.showModal = function () {
         nativeShowModal.call(this);
         if (!this.dataset.navWatch) {
             this.dataset.navWatch = '1';
