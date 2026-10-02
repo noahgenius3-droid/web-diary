@@ -3392,7 +3392,34 @@ document.addEventListener('DOMContentLoaded', () => {
     // Upload new entry photos to the friends-only bucket and drop ones that were removed
     // Upload one picture as raw bytes (never FormData — iPhone WebKit sends those empty).
     // Big or unusual formats (e.g. HEIC) are converted to JPEG first. Returns the stored path or null.
-    async function uploadImage(bucket, pathWithoutExt, source) {
+    // Upload with progress: the storage REST endpoint via XHR, so the posting strip can show real bytes.
+    // Falls back to the client library when XHR isn't possible.
+    function uploadWithProgress(bucket, path, body, contentType, onProgress) {
+        const token = s.session && s.session.access_token;
+        if (!token || !window.XMLHttpRequest) {
+            return client.storage.from(bucket).upload(path, body, { contentType, upsert: false }).then(r => { if (onProgress) onProgress(1); return r; });
+        }
+        return new Promise(resolve => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', `${cfg.supabaseUrl}/storage/v1/object/${bucket}/${path.split('/').map(encodeURIComponent).join('/')}`);
+            xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+            xhr.setRequestHeader('apikey', cfg.supabaseKey);
+            xhr.setRequestHeader('Content-Type', contentType);
+            xhr.setRequestHeader('x-upsert', 'false');
+            xhr.setRequestHeader('cache-control', 'max-age=3600');
+            if (xhr.upload && onProgress) xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+            xhr.onload = () => {
+                if (xhr.status >= 200 && xhr.status < 300) { if (onProgress) onProgress(1); return resolve({ data: { path }, error: null }); }
+                let message = `Upload failed (${xhr.status})`;
+                try { message = JSON.parse(xhr.responseText).message || message; } catch (e) {}
+                resolve({ data: null, error: { message, status: xhr.status } });
+            };
+            xhr.onerror = () => resolve({ data: null, error: { message: 'Network error' } });
+            xhr.send(body);
+        });
+    }
+
+    async function uploadImage(bucket, pathWithoutExt, source, onProgress) {
         let blob = source;
         try {
             blob = await Media.compressImage(source instanceof File ? source : new File([source], 'photo', { type: source.type }));
@@ -3400,7 +3427,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const data = await Media.bytes(blob);
         if (!data || !FEED_TYPES.includes(data.type)) return null;
         const path = `${pathWithoutExt}${extFor(data.type)}`;
-        const { error } = await client.storage.from(bucket).upload(path, data.buf, { contentType: data.type, upsert: false });
+        const { error } = await uploadWithProgress(bucket, path, data.buf, data.type, onProgress);
         if (error && !/exist|duplicate/i.test(error.message)) {
             console.warn('Photo upload failed', path, error.message);
             return null;
@@ -3426,7 +3453,8 @@ document.addEventListener('DOMContentLoaded', () => {
             // Photos just picked in the feed composer are still in memory — skip the device-storage round trip
             const source = freshFiles.get(img.id) || await Media.get(img.id);
             if (!source) continue;
-            const path = await uploadImage(FEED_BUCKET, `${me}/${note.id}/${img.id}`, source);
+            const track = progressFor.get(note.id);
+            const path = await uploadImage(FEED_BUCKET, `${me}/${note.id}/${img.id}`, source, track ? f => track(img.id, f) : null);
             if (path) photos.push({ id: img.id, path, name: String(img.name || '').slice(0, 120) });
         }
         images.forEach(img => freshFiles.delete(img.id));
@@ -3463,6 +3491,10 @@ document.addEventListener('DOMContentLoaded', () => {
         return new Promise(resolve => {
             let picked = false;
             app.openPopover(anchor, [
+                ...(window.diaryAudioLib ? [{ label: 'Music library', icon: 'i-music', onClick: async () => {
+                    picked = true;
+                    resolve(await window.diaryAudioLib.open());
+                } }] : []),
                 { label: 'Record audio', icon: 'i-mic', onClick: async () => {
                     picked = true;
                     const rec = await Media.recordVoice();
@@ -3495,10 +3527,10 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    async function uploadAudio(folder, file) {
+    async function uploadAudio(folder, file, onProgress) {
         const type = (file.type || 'audio/webm').split(';')[0];
         const path = `${s.profile.id}/${folder}/${randomId()}.${audioExt(type)}`;
-        const { error } = await client.storage.from(POST_AUDIO).upload(path, await file.arrayBuffer(), { contentType: type, upsert: false });
+        const { error } = await uploadWithProgress(POST_AUDIO, path, await file.arrayBuffer(), type, onProgress);
         return error ? null : path;
     }
 
@@ -3506,22 +3538,38 @@ document.addEventListener('DOMContentLoaded', () => {
     async function syncAudio(note) {
         const clip = (note.attachments || []).find(a => a.kind === 'audio');
         const previous = s.remoteAudio.get(note.id) || null;
+        if (!clip && note.music && note.music.source === 'licensed') {
+            if (previous && previous.path) client.storage.from(POST_AUDIO).remove([previous.path]);
+            return { id: note.music.id, name: `${note.music.title} · ${note.music.artist}`.slice(0, 80), duration: note.music.length || null, music: note.music };
+        }
         if (!clip) {
-            if (previous) client.storage.from(POST_AUDIO).remove([previous.path]);
+            if (previous && previous.path) client.storage.from(POST_AUDIO).remove([previous.path]);
             return null;
         }
         if (previous && previous.id === clip.id) return previous;
         const source = freshFiles.get(clip.id) || await Media.get(clip.id);
         if (!source) return previous;
         const file = source instanceof File ? source : new File([source], clip.name || 'audio', { type: clip.type || source.type || 'audio/webm' });
-        const path = await uploadAudio(note.id, file);
+        const track = progressFor.get(note.id);
+        const path = await uploadAudio(note.id, file, track ? f => track(clip.id, f) : null);
         freshFiles.delete(clip.id);
         if (!path) return previous;
-        if (previous) client.storage.from(POST_AUDIO).remove([previous.path]);
-        return { id: clip.id, path, name: String(clip.name || 'Audio').replace(/\.[a-z0-9]+$/i, '').slice(0, 80), duration: Math.round(clip.duration || 0) || null };
+        if (previous && previous.path) client.storage.from(POST_AUDIO).remove([previous.path]);
+        const name = clip.music ? `${clip.music.title} · ${clip.music.artist}` : String(clip.name || 'Audio').replace(/\.[a-z0-9]+$/i, '');
+        return { id: clip.id, path, name: name.slice(0, 80), duration: Math.round(clip.duration || 0) || null, ...(clip.music ? { music: clip.music } : {}) };
     }
 
     function audioCardHTML(audio) {
+        if (audio && audio.music && (audio.path || audio.music.src)) {
+            const m = audio.music;
+            const cover = window.diaryAudioLib && window.diaryAudioLib.coverHTML ? window.diaryAudioLib.coverHTML({ cover: m.cover, style: m.style }) : '';
+            return `
+            <div class="post-music">
+                ${cover}
+                <span class="pm-text"><strong>${esc(m.title)}</strong><small>${esc(m.artist)}${m.category ? ` · ${esc(m.category)}` : ''}</small></span>
+                <button type="button" class="pm-play" data-action="post-music" data-path="${esc(audio.path || '')}" data-music="${esc(JSON.stringify(m))}" aria-label="Play ${esc(m.title)} by ${esc(m.artist)}" aria-pressed="false"><svg class="i pm-i-play"><use href="#i-play"/></svg><svg class="i pm-i-pause"><use href="#i-pause"/></svg></button>
+            </div>`;
+        }
         if (!audio || !audio.path) return '';
         return `
             <div class="post-audio">
@@ -3616,7 +3664,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (blocked) return blocked;
         if (s.feed === null) {
             loadFeed();
-            return `<div class="social feed-v2"><section class="social-main" aria-busy="true" aria-label="Loading posts">${'<div class="post-skel"><span class="sk-row"><i class="sk-av"></i><i class="sk-line w40"></i></span><i class="sk-line"></i><i class="sk-line w70"></i><i class="sk-media"></i><span class="sk-row sk-acts"><i></i><i></i><i></i><i class="sk-save"></i></span></div>'.repeat(3)}</section></div>`;
+            return `<div class="social feed-v2"><section class="social-main" aria-busy="true" aria-label="Loading posts"><div id="post-progress-slot">${postProgressHTML()}</div>${'<div class="post-skel"><span class="sk-row"><i class="sk-av"></i><i class="sk-line w40"></i></span><i class="sk-line"></i><i class="sk-line w70"></i><i class="sk-media"></i><span class="sk-row sk-acts"><i></i><i></i><i></i><i class="sk-save"></i></span></div>'.repeat(3)}</section></div>`;
         }
 
         const me = s.profile.id;
@@ -3738,6 +3786,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
                     </form>
 
+                    <div id="post-progress-slot">${postProgressHTML()}</div>
                     ${window.diaryPlay && s.feedFilter === 'all' && !s.feedAuthor && s.feedSort === 'foryou' ? window.diaryPlay.feedCard() : ''}
                     ${filterLabel && s.feedFilter !== 'saved' ? `<button class="chip filter-chip" data-action="feed-all"><svg class="i"><use href="#i-close"/></svg>${esc(filterLabel)} · show everything</button>` : ''}
                     ${(() => {
@@ -3885,16 +3934,70 @@ document.addEventListener('DOMContentLoaded', () => {
         const a = s.feedDraft.audio;
         box.hidden = !a;
         box.closest('.post-composer')?.classList.toggle('open', !!a || s.feedDraft.photos.length > 0 || !!s.feedDraft.text || !!s.composerEngaged);
+        const m = a && a.music;
         box.innerHTML = a ? `
-            <span class="pa-art small" aria-hidden="true"><svg class="i"><use href="#i-music"/></svg></span>
-            <span class="pc-audio-text"><strong>${esc(a.name)}</strong><small>${Media.formatDuration(a.duration)} · plays with your post</small></span>
+            ${m && window.diaryAudioLib ? window.diaryAudioLib.coverHTML({ cover: m.cover, style: m.style }) : '<span class="pa-art small" aria-hidden="true"><svg class="i"><use href="#i-music"/></svg></span>'}
+            <span class="pc-audio-text"><strong>${esc(m ? m.title : a.name)}</strong><small>${m ? `${esc(m.artist)} · ${Media.formatDuration(m.start)}–${Media.formatDuration(m.start + m.length)} · ${Math.round((m.volume || 0.8) * 100)}% volume` : `${Media.formatDuration(a.duration)} · plays with your post`}</small></span>
             <button type="button" class="pc-audio-play" data-action="feed-audio-play" aria-label="Play preview"><svg class="i"><use href="#i-play"/></svg></button>
             <audio preload="metadata" src="${a.preview}" hidden></audio>
             <button type="button" class="att-remove" data-action="feed-remove-audio" aria-label="Remove audio"><svg class="i"><use href="#i-close"/></svg></button>` : '';
     }
 
+    // ---------- Posting progress (a strip at the top of the Feed, like Instagram) ----------
+    // One upload at a time; the strip shows a thumbnail, what's happening, real progress, then "Posted" — or
+    // "Couldn't post" with Retry (nothing to redo) and Discard.
+    const progressFor = new Map(); // note id -> (item id, fraction) => void
+    s.upload = null;               // { thumb, kind, label, progress, state: 'active' | 'done' | 'failed', retry, discard }
+    function postProgressHTML() {
+        const u = s.upload;
+        if (!u) return '';
+        const pct = Math.round(Math.max(0.03, Math.min(1, u.progress)) * 100);
+        const thumb = u.thumb ? `<img src="${esc(u.thumb)}" alt="">` : `<span class="pp-ic"><svg class="i"><use href="#${u.kind === 'audio' ? 'i-music' : u.kind === 'video' ? 'i-reel' : 'i-pencil'}"/></svg></span>`;
+        return `
+            <div class="post-progress ${u.state}" role="status" aria-live="polite">
+                <span class="pp-thumb">${thumb}</span>
+                <span class="pp-main">
+                    <span class="pp-label">${u.state === 'done' ? '<svg class="i"><use href="#i-check"/></svg>' : ''}${esc(u.label)}</span>
+                    ${u.state === 'failed' ? '' : `<span class="pp-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Upload progress"><i style="width:${pct}%"></i></span>`}
+                </span>
+                ${u.state === 'failed' ? '<button type="button" class="chip accent" data-action="post-retry">Retry</button><button type="button" class="icon-btn" data-action="post-discard" aria-label="Discard this post"><svg class="i"><use href="#i-close"/></svg></button>' : ''}
+            </div>`;
+    }
+    function paintProgress() {
+        const box = document.getElementById('post-progress-slot');
+        if (box) box.innerHTML = postProgressHTML();
+    }
+    // Used by the Feed composer and by reels (stories.js)
+    function startProgress({ thumb = null, kind = 'post', label = 'Posting…' } = {}) {
+        if (s.upload && s.upload.thumbUrl) URL.revokeObjectURL(s.upload.thumbUrl);
+        s.upload = { thumb, kind, label, progress: 0.03, state: 'active' };
+        paintProgress();
+        const u = s.upload;
+        return {
+            update(progress, newLabel) {
+                if (s.upload !== u || u.state !== 'active') return;
+                u.progress = Math.max(u.progress, Math.min(0.97, progress));
+                if (newLabel) u.label = newLabel;
+                paintProgress();
+            },
+            done(doneLabel = 'Posted') {
+                if (s.upload !== u) return;
+                Object.assign(u, { state: 'done', progress: 1, label: doneLabel });
+                paintProgress();
+                if (navigator.vibrate) navigator.vibrate(12);
+                setTimeout(() => { if (s.upload === u) { s.upload = null; paintProgress(); } }, 2600);
+            },
+            fail(message, retry, discard) {
+                if (s.upload !== u) return;
+                Object.assign(u, { state: 'failed', label: message || 'Couldn’t post — check your connection', retry, discard });
+                paintProgress();
+            },
+            remove() { if (s.upload === u) { s.upload = null; paintProgress(); } }
+        };
+    }
+
     async function postToFeed() {
-        if (s.posting) return;
+        if (s.posting || (s.upload && s.upload.state === 'active')) return app.showToast('Still posting your last one…');
         const text = s.feedDraft.text.trim();
         const photos = s.feedDraft.photos;
         const audio = s.feedDraft.audio;
@@ -3904,45 +4007,67 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         s.posting = true;
-        const btn = $('feed-post-btn');
-        if (btn) {
-            btn.textContent = 'Posting…';
-            btn.disabled = true;
-        }
+        const thumb = photos[0] ? photos[0].preview : null;
+        const p = startProgress({ thumb, kind: photos.length ? 'photo' : audio ? 'audio' : 'post', label: photos.length ? `Uploading ${photos.length === 1 ? 'your photo' : `${photos.length} photos`}…` : 'Posting…' });
+        // The composer is free again straight away; the strip carries the post from here
+        const audience = s.feedAudience;
+        const alsoStory = s.feedStory;
+        s.feedDraft = { text: '', photos: [], audio: null };
+        s.composerEngaged = false;
+        if (app.state.view === 'feed') app.render();
+        let note;
         try {
-            const files = photos.map(p => p.file);
-            if (audio) {
+            const files = photos.map(ph => ph.file);
+            if (audio && audio.file) {
                 audio.file.duration = audio.duration;
+                if (audio.music) audio.file.music = audio.music;
                 files.push(audio.file);
             }
-            const note = await app.createEntry({ text, shared: true, audience: s.feedAudience, origin: 'post' }, files); // lives on the Feed, not in Notes
+            note = await app.createEntry({ text, shared: true, audience, origin: 'post' }, files); // lives on the Feed, not in Notes
             note.attachments.forEach((att, i) => { if (files[i]) freshFiles.set(att.id, files[i]); });
-            if (audio) URL.revokeObjectURL(audio.preview);
-            // Share right away instead of waiting for the autosave debounce
-            clearTimeout(shareTimers.get(note.id));
-            const result = await new Promise(resolve => queue(async () => {
-                try {
-                    resolve(await upsertShared(note));
-                } catch (err) {
-                    app.showToast('Couldn’t reach the server — your post is saved and will share next time');
-                    resolve({ ok: false, photos: 0 });
-                }
-            }));
-            photos.forEach(p => URL.revokeObjectURL(p.preview));
-            if (result.ok && s.feedStory && window.diaryStories) window.diaryStories.shareEntry(note.id, text);
-            s.feedDraft = { text: '', photos: [], audio: null };
-            s.composerEngaged = false;
-            s.feed = null;
-            if (!result.ok) return; // upsertShared already explained; the entry is still saved in the diary
-            if (result.photos < photos.length) app.showToast(`Posted, but ${photos.length - result.photos} photo(s) couldn’t upload`);
-            else app.showToast(`${photos.length ? 'Posted with photos 📸' : 'Posted'} — ${s.feedAudience === 'public' ? 'everyone can see it' : 'your friends can see it'}`);
-            checkBadges();
+            if (audio && !audio.file && audio.music) app.updateNote(note.id, { music: audio.music }); // streamed music: remember which part
+            if (audio && audio.file) URL.revokeObjectURL(audio.preview);
         } catch (err) {
-            app.showToast('Couldn’t post that — please try again');
-        } finally {
             s.posting = false;
-            if (app.state.view === 'feed') app.render();
+            p.fail('Couldn’t save your post on this device', null, () => p.remove());
+            return;
         }
+        // Real progress: each file's share of the bytes, then a last step to publish
+        const sizes = new Map(note.attachments.map(a => [a.id, Math.max(1, a.size || 1)]));
+        const total = [...sizes.values()].reduce((x, y) => x + y, 0) || 1;
+        const done = new Map();
+        const run = async () => {
+            done.clear();
+            progressFor.set(note.id, (id, f) => {
+                done.set(id, f);
+                const sent = [...done.entries()].reduce((sum, [k, v]) => sum + (sizes.get(k) || 0) * v, 0);
+                const n = [...done.values()].filter(v => v >= 1).length;
+                p.update(0.05 + 0.85 * (sent / total), photos.length > 1 ? `Uploading ${Math.min(photos.length, n + 1)} of ${photos.length}…` : null);
+            });
+            clearTimeout(shareTimers.get(note.id)); // share right away instead of waiting for the autosave debounce
+            const result = await new Promise(resolve => queue(async () => {
+                try { resolve(await upsertShared(note)); } catch (err) { resolve({ ok: false, photos: 0 }); }
+            }));
+            progressFor.delete(note.id);
+            if (!result.ok) {
+                s.posting = false;
+                p.fail('Couldn’t post — check your connection', () => { s.posting = true; if (s.upload) { s.upload.state = 'active'; s.upload.label = 'Trying again…'; s.upload.progress = 0.03; paintProgress(); } run(); }, () => {
+                    p.remove();
+                    app.showToast('Your post is still saved in your diary');
+                });
+                return;
+            }
+            p.update(0.98, 'Publishing…');
+            photos.slice(1).forEach(ph => URL.revokeObjectURL(ph.preview));
+            if (photos[0]) setTimeout(() => URL.revokeObjectURL(photos[0].preview), 4000); // the strip shows it until it fades
+            if (alsoStory && window.diaryStories) window.diaryStories.shareEntry(note.id, text);
+            s.posting = false;
+            p.done(result.photos < photos.length ? `Posted — ${photos.length - result.photos} photo(s) couldn’t upload` : 'Posted');
+            s.feed = null;
+            if (app.state.view === 'feed') app.render();
+            checkBadges();
+        };
+        run();
     }
 
     // Posts and reels in one timeline (reels come from stories.js)
@@ -5149,6 +5274,8 @@ document.addEventListener('DOMContentLoaded', () => {
         likeButtonHTML, reactSummaryHTML, openPost, closePost, copyText, postLink, save, load,
         isHidden: (kind, id) => s.hidden.has(`${kind}:${id}`),
         // Open a feed post in the post view from anywhere (Explore, notifications, links), even if its card isn't on screen
+        startProgress: opts => startProgress(opts),
+        uploadWithProgress: (bucket, path, body, type, onProgress) => uploadWithProgress(bucket, path, body, type, onProgress),
         openEntry(id, opts) {
             const p = findPost('entry', id);
             if (!p) {
@@ -5651,7 +5778,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const picked = await pickAudio(el);
             if (!picked) return;
             if (s.feedDraft.audio) URL.revokeObjectURL(s.feedDraft.audio.preview);
-            s.feedDraft.audio = { ...picked, preview: URL.createObjectURL(picked.file) };
+            s.feedDraft.audio = { ...picked, preview: picked.file ? URL.createObjectURL(picked.file) : (picked.music && picked.music.src) || '' };
             renderFeedAudio();
         },
         'feed-audio-play': el => {
@@ -5660,11 +5787,13 @@ document.addEventListener('DOMContentLoaded', () => {
             const icon = name => { el.innerHTML = `<svg class="i"><use href="#${name}"/></svg>`; };
             audio.onended = audio.onpause = () => { icon('i-play'); el.setAttribute('aria-label', 'Play preview'); };
             audio.onplay = () => { icon('i-pause'); el.setAttribute('aria-label', 'Pause preview'); };
+            const m = s.feedDraft.audio && s.feedDraft.audio.music;
+            if (audio.paused && m && m.source === 'licensed') audio.currentTime = m.start || 0;
             if (audio.paused) audio.play().catch(() => app.showToast('Couldn’t play that audio'));
             else audio.pause();
         },
         'feed-remove-audio': () => {
-            if (s.feedDraft.audio) URL.revokeObjectURL(s.feedDraft.audio.preview);
+            if (s.feedDraft.audio && s.feedDraft.audio.file) URL.revokeObjectURL(s.feedDraft.audio.preview);
             s.feedDraft.audio = null;
             renderFeedAudio();
         },
@@ -5694,6 +5823,20 @@ document.addEventListener('DOMContentLoaded', () => {
             ]);
         },
         'repost': el => toggleRepost(el.dataset.id),
+        'post-retry': () => { const u = s.upload; if (u && u.retry) u.retry(); },
+        'post-discard': () => { const u = s.upload; if (u && u.discard) u.discard(); else { s.upload = null; paintProgress(); } },
+        'post-music': async el => {
+            let music = null;
+            try { music = JSON.parse(el.dataset.music || 'null'); } catch (e) {}
+            if (!music || !window.diaryAudioLib) return;
+            let url = music.src || null;
+            if (!url && el.dataset.path) {
+                const { data } = await client.storage.from(POST_AUDIO).createSignedUrl(el.dataset.path, 3600);
+                url = data && data.signedUrl;
+            }
+            if (!url) return app.showToast('Couldn’t load that audio');
+            window.diaryAudioLib.playPost(el, music, url);
+        },
         'post-share': el => openPostShare(el, el.dataset.id),
         'feed-more': () => { s.feedShown = (s.feedShown || FEED_PAGE) + FEED_PAGE; app.render(); },
         'feed-retry': () => { s.feed = null; s.feedError = false; app.render(); },

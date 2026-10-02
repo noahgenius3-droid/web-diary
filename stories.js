@@ -227,7 +227,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Big phone videos (4K, high frame rate) are re-recorded at 720p so they fit under the 50 MB limit.
     // Runs in real time while the video plays silently off-screen. Returns a File, or null if the browser can't.
-    async function shrinkVideo(file, { maxSeconds, onProgress }) {
+    // Decode the music chosen for a video: a rendered clip (file) or a licensed track's URL (streamed, from its start)
+    async function musicBuffer(audioCtx, pick) {
+        let bytes;
+        if (pick.file) bytes = await pick.file.arrayBuffer();
+        else if (pick.music && pick.music.src) bytes = await (await fetch(pick.music.src)).arrayBuffer();
+        if (!bytes) return null;
+        return new Promise((resolve, reject) => audioCtx.decodeAudioData(bytes, resolve, reject));
+    }
+
+    async function shrinkVideo(file, { maxSeconds, onProgress, music = null }) {
         const mime = window.MediaRecorder && ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
             .find(t => MediaRecorder.isTypeSupported(t));
         if (!mime || !HTMLCanvasElement.prototype.captureStream) return null;
@@ -253,13 +262,32 @@ document.addEventListener('DOMContentLoaded', () => {
             const ctx = canvas.getContext('2d');
             const stream = canvas.captureStream(30);
             // Route the sound into the recording only — nothing plays out loud
+            let musicSrc = null;
             try {
                 audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 const source = audioCtx.createMediaElementSource(video);
                 const dest = audioCtx.createMediaStreamDestination();
-                source.connect(dest);
+                const own = audioCtx.createGain();
+                own.gain.value = music ? 0.35 : 1; // the video's own sound sits under the music
+                source.connect(own);
+                own.connect(dest);
+                if (music) {
+                    const buf = await musicBuffer(audioCtx, music);
+                    if (!buf) throw new Error('music');
+                    const m = music.music || {};
+                    musicSrc = audioCtx.createBufferSource();
+                    musicSrc.buffer = buf;
+                    musicSrc.loop = true;
+                    if (!music.file && m.start) { musicSrc.loopStart = m.start; musicSrc.loopEnd = Math.min(buf.duration, m.start + (m.length || 30)); }
+                    const mg = audioCtx.createGain();
+                    mg.gain.value = music.file ? 1 : (m.volume || 0.8); // a rendered clip already carries its volume
+                    musicSrc.connect(mg);
+                    mg.connect(dest);
+                }
                 dest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
-            } catch (e) { /* no sound track */ }
+            } catch (e) {
+                if (music) throw e; // the music was the point: report it
+            }
             const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 2200000, audioBitsPerSecond: 96000 });
             const chunks = [];
             recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
@@ -281,6 +309,7 @@ document.addEventListener('DOMContentLoaded', () => {
             };
             video.onended = stop;
             recorder.start(1000);
+            if (musicSrc) musicSrc.start(0, (!music.file && music.music && music.music.start) || 0);
             try {
                 await video.play();
             } catch (e) {
@@ -293,6 +322,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const out = new File(chunks, `video${VIDEO_TYPES[type] || '.mp4'}`, { type });
             return out.size ? out : null;
         } catch (e) {
+            if (music) throw e;
             return null;
         } finally {
             if (audioCtx) audioCtx.close().catch(() => {});
@@ -302,16 +332,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Upload a picked video, shrinking it first if it's over the limit. Updates the Share button as it goes.
-    async function prepareVideo(file, maxSeconds) {
+    async function prepareVideo(file, maxSeconds, onStep = null) {
         const hevc = await isHevc(file);
         if (file.size <= MAX_BYTES && !hevc) return file;
-        const btn = $('mc-share');
+        const btn = onStep ? null : $('mc-share');
         app.showToast(hevc
             ? 'Converting your video so everyone can watch it — keep Cordial open…'
             : 'Making your video smaller so it can upload — keep Cordial open…');
         const out = await shrinkVideo(file, {
             maxSeconds,
-            onProgress: p => { if (btn) btn.textContent = `${hevc ? 'Converting' : 'Compressing'} ${Math.round(p * 100)}%`; }
+            onProgress: p => { if (onStep) onStep(p, hevc ? 'Converting your video' : 'Compressing your video'); else if (btn) btn.textContent = `${hevc ? 'Converting' : 'Compressing'} ${Math.round(p * 100)}%`; }
         });
         if (out && out.size <= MAX_BYTES) return out;
         // Couldn't convert here: the original still plays on Apple devices, so send it if it fits
@@ -353,7 +383,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // The compose sheet: preview, caption, Share. Resolves with { caption, alsoStory } or null if cancelled.
     // allowAudio: offer "Add music" (photo stories). Photos can always be edited with filters first.
-    function compose({ title, file, isVideo, maxCaption, note, offerStory = false, storyDefault = false, allowAudio = false }) {
+    function compose({ title, file, isVideo, maxCaption, note, offerStory = false, storyDefault = false, allowAudio = false, videoAudio = false }) {
         const dialog = $('media-compose');
         const preview = $('mc-preview');
         const caption = $('mc-caption');
@@ -362,11 +392,11 @@ document.addEventListener('DOMContentLoaded', () => {
         let audio = null;
         const canEdit = !isVideo && window.PhotoEditor && file.type !== 'image/gif';
         $('mc-edit').hidden = !canEdit;
-        $('mc-audio').hidden = !(allowAudio && !isVideo && I.pickAudio);
+        $('mc-audio').hidden = !(allowAudio && (!isVideo || videoAudio) && I.pickAudio);
         const paintAudio = () => {
             const chip = $('mc-audio-chip');
             chip.hidden = !audio;
-            chip.innerHTML = audio ? `<svg class="i"><use href="#i-music"/></svg><span>${esc(audio.name)} · ${Media.formatDuration(Math.min(audio.duration, STORY_AUDIO_MAX))}</span><button type="button" class="mc-audio-x" aria-label="Remove music"><svg class="i"><use href="#i-close"/></svg></button>` : '';
+            chip.innerHTML = audio ? `<svg class="i"><use href="#i-music"/></svg><span>${esc(audio.name)} · ${Media.formatDuration(isVideo ? audio.duration : Math.min(audio.duration, STORY_AUDIO_MAX))}</span><button type="button" class="mc-audio-x" aria-label="Remove music"><svg class="i"><use href="#i-close"/></svg></button>` : '';
             $('mc-audio').innerHTML = `<svg class="i"><use href="#i-music"/></svg>${audio ? 'Change music' : 'Add music'}`;
         };
         paintAudio();
@@ -502,10 +532,12 @@ document.addEventListener('DOMContentLoaded', () => {
         paintStrip();
     }
 
-    async function uploadVideo(bucket, file, type) {
+    async function uploadVideo(bucket, file, type, onProgress = null) {
         const path = `${s.profile.id}/${randomId()}${VIDEO_TYPES[type]}`;
         const buf = await file.arrayBuffer();
-        const { error } = await client.storage.from(bucket).upload(path, buf, { contentType: type, upsert: false });
+        const { error } = I.uploadWithProgress
+            ? await I.uploadWithProgress(bucket, path, buf, type, onProgress)
+            : await client.storage.from(bucket).upload(path, buf, { contentType: type, upsert: false });
         if (error) {
             console.warn('Video upload failed', error.message);
             return null;
@@ -1252,57 +1284,87 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const result = await compose({
             title: 'New reel', file, isVideo: true, maxCaption: 2200, note: 'Friends only',
-            offerStory: true, storyDefault: !!opts.alsoStory
+            offerStory: true, storyDefault: !!opts.alsoStory, allowAudio: true, videoAudio: true
         });
         if (!result) return;
+        result.done(); // the sheet closes; the posting strip on the Feed takes over
 
         st.busy = true;
+        const thumb = info.poster ? URL.createObjectURL(info.poster) : null;
+        const strip = I.startProgress ? I.startProgress({ thumb, kind: 'video', label: result.audio ? 'Adding your music…' : 'Preparing your reel…' }) : null;
+        const prog = (f, label) => { if (strip) strip.update(f, label); };
+        const duration = info.duration ? Math.max(1, Math.round(info.duration * 10) / 10) : null;
+        let upload = null, videoPath = null, posterPath = null, saved = false;
+
+        const run = async () => {
+            try {
+                if (!upload) {
+                    if (result.audio) {
+                        upload = await shrinkVideo(file, { maxSeconds: MAX_REEL, music: result.audio, onProgress: f => prog(0.03 + 0.37 * f, `Adding your music… ${Math.round(f * 100)}%`) });
+                        if (!upload) throw new Error('music');
+                    } else {
+                        upload = await prepareVideo(file, MAX_REEL, (f, what) => prog(0.03 + 0.37 * f, `${what}… ${Math.round(f * 100)}%`));
+                    }
+                    if (!upload || upload.size > MAX_BYTES) { upload = null; throw new Error('too big'); }
+                }
+                if (!videoPath) {
+                    prog(0.4, 'Uploading your reel…');
+                    videoPath = await uploadVideo(REEL_BUCKET, upload, videoType(upload) || type, f => prog(0.4 + 0.52 * f, `Uploading your reel… ${Math.round(f * 100)}%`));
+                    if (!videoPath) throw new Error('upload');
+                }
+                if (info.poster && !posterPath) {
+                    const path = `${s.profile.id}/${randomId()}.jpg`;
+                    const { error } = await client.storage.from(REEL_BUCKET).upload(path, await info.poster.arrayBuffer(), { contentType: 'image/jpeg', upsert: false });
+                    if (!error) posterPath = path;
+                }
+                if (!saved) {
+                    prog(0.95, 'Publishing…');
+                    const { error } = await client.from('diary_reels').insert({ video_path: videoPath, poster_path: posterPath, caption: result.caption, duration });
+                    if (error) throw error;
+                    saved = true;
+                    // It's saved. Read it back (a failure here is harmless: the reload below fetches it anyway)
+                    const { data: made } = await client.from('diary_reels').select('id, author, video_path, poster_path, caption, duration, created_at')
+                        .eq('video_path', videoPath).maybeSingle().then(r => r, () => ({ data: null }));
+                    if (made) {
+                        const mine = { ...made, author_profile: { username: s.profile.username, display_name: s.profile.display_name, avatar_path: s.profile.avatar_path }, likes: [], reshares: [], comments: [{ count: 0 }] };
+                        st.reels = [mine, ...(st.reels || []).filter(r => r.id !== mine.id)];
+                        app.requestRender(['reels', 'feed', 'explore', 'profile']);
+                    }
+                    if (result.alsoStory) {
+                        await shareToStory({ bucket: REEL_BUCKET, path: videoPath, type: 'video', caption: result.caption, duration }).catch(() => {});
+                        loadStories();
+                    }
+                }
+                app.state.reelFilter = 'all';
+                st.busy = false;
+                if (strip) strip.done(result.alsoStory ? 'Reel posted — and on your story' : 'Reel posted');
+                else app.showToast('Your reel is live 🎬');
+                if (app.state.view === 'reels') app.render();
+                loadReels();
+            } catch (e) {
+                st.busy = false;
+                const message = e.message === 'too big' ? 'That video is too large to upload — try a shorter clip'
+                    : e.message === 'music' ? 'Couldn’t add the music on this device — try again, or post without it'
+                    : 'Couldn’t post your reel — check your connection';
+                if (!strip) return app.showToast(message);
+                strip.fail(message, () => {
+                    if (st.busy) return;
+                    st.busy = true;
+                    if (s.upload) { s.upload.state = 'active'; s.upload.label = 'Trying again…'; }
+                    strip.update(0.03);
+                    run();
+                }, () => {
+                    // Discard: tidy away anything uploaded for a reel that never got saved
+                    if (!saved) {
+                        const leftovers = [videoPath, posterPath].filter(Boolean);
+                        if (leftovers.length) client.storage.from(REEL_BUCKET).remove(leftovers);
+                    }
+                    strip.remove();
+                });
+            }
+        };
         if (app.state.view === 'reels') app.render();
-        let videoPath = null;
-        let posterPath = null;
-        try {
-            const upload = await prepareVideo(file, MAX_REEL);
-            if (!upload) throw new Error('too big');
-            if ($('mc-share')) $('mc-share').textContent = 'Uploading…';
-            videoPath = await uploadVideo(REEL_BUCKET, upload, videoType(upload) || type);
-            if (!videoPath) throw new Error('upload');
-            if (info.poster) {
-                const path = `${s.profile.id}/${randomId()}.jpg`;
-                const { error } = await client.storage.from(REEL_BUCKET)
-                    .upload(path, await info.poster.arrayBuffer(), { contentType: 'image/jpeg', upsert: false });
-                if (!error) posterPath = path;
-            }
-            const duration = info.duration ? Math.max(1, Math.round(info.duration * 10) / 10) : null;
-            const { error } = await client.from('diary_reels').insert({
-                video_path: videoPath, poster_path: posterPath, caption: result.caption, duration
-            });
-            if (error) throw error;
-            // It's saved. Read it back (a failure here is harmless: the reload below fetches it anyway)
-            const { data: made } = await client.from('diary_reels').select('id, author, video_path, poster_path, caption, duration, created_at')
-                .eq('video_path', videoPath).maybeSingle().then(r => r, () => ({ data: null }));
-            if (made) {
-                const mine = { ...made, author_profile: { username: s.profile.username, display_name: s.profile.display_name, avatar_path: s.profile.avatar_path }, likes: [], reshares: [], comments: [{ count: 0 }] };
-                st.reels = [mine, ...(st.reels || []).filter(r => r.id !== mine.id)];
-                app.requestRender(['reels', 'feed', 'explore', 'profile']);
-            }
-            if (result.alsoStory) {
-                await shareToStory({ bucket: REEL_BUCKET, path: videoPath, type: 'video', caption: result.caption, duration }).catch(() => {});
-                loadStories();
-            }
-            app.showToast(result.alsoStory ? 'Your reel is live — and on your story 🎬' : 'Your reel is live 🎬');
-            app.state.reelFilter = 'all';
-        } catch (e) {
-            const leftovers = [videoPath, posterPath].filter(Boolean);
-            if (leftovers.length) client.storage.from(REEL_BUCKET).remove(leftovers);
-            app.showToast(e.message === 'too big'
-                ? 'That video is too large to upload — try a shorter clip, or record at 1080p'
-                : 'Couldn’t post your reel — check your connection and try again');
-        } finally {
-            result.done();
-            st.busy = false;
-            if (app.state.view === 'reels') app.render();
-            loadReels();
-        }
+        run();
     }
 
     // Older iPhone reels (.mov, often HEVC) don't play on many Android and Windows browsers.

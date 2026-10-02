@@ -15182,3 +15182,95 @@ dialog.live.mini::after { content: 'LIVE'; position: absolute; left: 8px; bottom
 #lv-status { transition: opacity 400ms ease; }
 #lv-status.leaving { opacity: 0; }
 @media (prefers-reduced-motion: reduce) { #lv-status { transition: none; } }
+
+/* ==========================================================================
+   Posting progress, the audio library and music on posts
+   ========================================================================== */
+
+/* ---------- Posting strip (top of the Feed) ---------- */
+#post-progress-slot:empty { display: none; }
+.post-progress {
+    display: flex; align-items: center; gap: 12px; margin: 0 0 14px; padding: 10px 12px;
+    border: 1px solid var(--border); border-radius: 14px; background: var(--surface);
+    animation: pp-in 200ms ease-out;
+}
+@keyframes pp-in { from { opacity: 0; transform: translateY(-6px); } }
+.pp-thumb { flex: none; width: 44px; height: 44px; overflow: hidden; border-radius: 10px; background: var(--input); display: grid; place-items: center; }
+.pp-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.pp-ic .i { width: 20px; height: 20px; color: var(--text-muted); }
+.pp-main { flex: 1; min-width: 0; display: grid; gap: 8px; }
+.pp-label { display: inline-flex; align-items: center; gap: 6px; font-size: 0.9rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pp-label .i { flex: none; width: 16px; height: 16px; color: var(--online, #16a34a); }
+.pp-bar { position: relative; display: block; height: 4px; overflow: hidden; border-radius: 999px; background: var(--input); }
+.pp-bar i { position: absolute; inset: 0 auto 0 0; border-radius: inherit; background: var(--accent); transition: width 240ms ease-out; }
+.post-progress.active .pp-bar i { background-image: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 60%, #fff), var(--accent)); background-size: 200% 100%; animation: pp-shine 1.4s linear infinite; }
+@keyframes pp-shine { from { background-position: 200% 0; } to { background-position: 0 0; } }
+.post-progress.done .pp-bar i { background: var(--online, #16a34a); }
+.post-progress.failed { border-color: color-mix(in srgb, var(--danger, #ef4444) 45%, var(--border)); }
+.post-progress.failed .pp-label { color: var(--danger, #ef4444); white-space: normal; }
+.post-progress .chip { flex: none; }
+@media (prefers-reduced-motion: reduce) { .post-progress, .post-progress.active .pp-bar i { animation: none; } .pp-bar i { transition: none; } }
+@media (max-width: 760px) { .post-progress { margin: 0 0 12px; } }
+
+/* ---------- Covers (artwork, or generated for Cordial Sounds) ---------- */
+.al-cover { flex: none; position: relative; display: grid; place-items: center; width: 48px; height: 48px; overflow: hidden; border-radius: 10px; background: var(--input); }
+.al-cover img { width: 100%; height: 100%; object-fit: cover; }
+.al-cover.big { width: 64px; height: 64px; border-radius: 12px; }
+.al-cover.gen { display: flex; align-items: flex-end; justify-content: center; gap: 3px; padding: 0 8px 10px; background: linear-gradient(135deg, var(--c1), var(--c2)); }
+.al-cover.gen i { width: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.85); }
+.al-cover.gen i:nth-child(1) { height: 30%; } .al-cover.gen i:nth-child(2) { height: 62%; } .al-cover.gen i:nth-child(3) { height: 45%; } .al-cover.gen i:nth-child(4) { height: 75%; } .al-cover.gen i:nth-child(5) { height: 38%; }
+
+/* ---------- The library ---------- */
+dialog.al-dlg { width: min(520px, calc(100vw - 32px)); max-width: none; max-height: min(720px, calc(100dvh - 32px)); padding: 0; border: 1px solid var(--border); border-radius: 20px; background: var(--surface); color: var(--text); overflow: hidden; }
+dialog.al-dlg::backdrop { background: rgba(8, 10, 20, 0.55); }
+.al-card { display: flex; flex-direction: column; gap: 12px; max-height: min(720px, calc(100dvh - 34px)); padding: 14px 16px 16px; }
+.al-head { display: flex; align-items: center; gap: 6px; }
+.al-head h3 { flex: 1; margin: 0; font-size: 1.05rem; }
+.al-search { width: 100%; max-width: none; margin: 0; }
+.al-search input { font-size: 16px; }
+.al-cats { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0 -16px; padding: 0 16px 2px; }
+.al-cats::-webkit-scrollbar { display: none; }
+.al-cat { flex: none; min-height: 34px; padding: 0 12px; border: 1px solid var(--border); border-radius: 999px; background: none; color: var(--text-muted); font: inherit; font-size: 0.84rem; font-weight: 600; cursor: pointer; }
+.al-cat[aria-selected="true"] { border-color: transparent; background: var(--text); color: var(--bg); }
+.al-list { list-style: none; margin: 0 -8px; padding: 0; overflow-y: auto; overscroll-behavior: contain; min-height: 0; flex: 1; }
+.al-row { display: flex; align-items: center; gap: 4px; padding: 0 8px; border-radius: 12px; }
+@media (hover: hover) and (pointer: fine) { .al-row:hover { background: var(--input); } }
+.al-pick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 6px 0; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.al-text { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.al-text strong, .al-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.al-text small { color: var(--text-muted); font-size: 0.8rem; }
+.al-play { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 50%; background: var(--input); color: var(--text); cursor: pointer; touch-action: manipulation; }
+.al-play[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+.al-play.big { width: 48px; height: 48px; }
+.al-empty { padding: 20px 8px; color: var(--text-muted); text-align: center; }
+.al-note { margin: 0; color: var(--text-muted); font-size: 0.76rem; line-height: 1.45; }
+.al-now { display: flex; align-items: center; gap: 12px; }
+.al-field { display: grid; gap: 8px; font-size: 0.86rem; color: var(--text-muted); }
+.al-field b { color: var(--text); font-variant-numeric: tabular-nums; }
+.al-field input[type="range"] { width: 100%; accent-color: var(--accent); }
+.al-window { position: relative; display: block; height: 8px; border-radius: 999px; background: var(--input); }
+.al-window i { position: absolute; top: 0; bottom: 0; border-radius: inherit; background: color-mix(in srgb, var(--accent) 55%, transparent); }
+.al-seg { display: flex; gap: 6px; }
+.al-seg button { min-height: 36px; padding: 0 14px; border: 1px solid var(--border); border-radius: 999px; background: none; color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
+.al-seg button[aria-checked="true"] { border-color: transparent; background: var(--accent); color: var(--on-accent); }
+.al-use { width: 100%; justify-content: center; display: inline-flex; align-items: center; gap: 8px; min-height: 46px; margin-top: 4px; }
+@media (max-width: 760px) {
+    dialog.al-dlg { width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; border: 0; border-radius: 0; }
+    .al-card { height: 100%; max-height: 100dvh; padding-top: calc(12px + env(safe-area-inset-top, 0px)); padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* ---------- Music on a post, and in the composer ---------- */
+.post-music { display: flex; align-items: center; gap: 10px; margin: 8px 16px 2px; padding: 8px 8px 8px 8px; border-radius: 12px; background: var(--input); }
+.post-music .al-cover { width: 36px; height: 36px; border-radius: 8px; padding-bottom: 7px; }
+.post-music .al-cover.gen i { width: 3px; }
+.pm-text { flex: 1; min-width: 0; display: grid; }
+.pm-text strong, .pm-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pm-text strong { font-size: 0.86rem; }
+.pm-text small { color: var(--text-muted); font-size: 0.76rem; }
+.pm-play { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: 50%; background: var(--surface); color: var(--text); cursor: pointer; touch-action: manipulation; }
+.pm-play .i { width: 16px; height: 16px; }
+.pm-play .pm-i-pause, .pm-play.playing .pm-i-play { display: none; }
+.pm-play.playing .pm-i-pause { display: block; }
+.pm-play.playing { background: var(--accent); color: var(--on-accent); }
+body[data-view="feed"] .feed-v2 .post.ig .post-music { margin: 8px 0 2px; }
+.pc-audio .al-cover { width: 40px; height: 40px; border-radius: 9px; padding-bottom: 8px; }

@@ -2811,7 +2811,7 @@ document.addEventListener('DOMContentLoaded', () => {
         async createEntry({ title = '', text = '', html = null, shared = false, color = null, audience = 'friends', origin = null }, files = []) {
             const attachments = [];
             for (const file of files) {
-                const att = { id: uid(), kind: Media.kindOf(file.type || ''), name: file.name || 'photo', type: file.type, size: file.size, ...(file.duration ? { duration: file.duration } : {}) };
+                const att = { id: uid(), kind: Media.kindOf(file.type || ''), name: file.name || 'photo', type: file.type, size: file.size, ...(file.duration ? { duration: file.duration } : {}), ...(file.music ? { music: file.music } : {}) };
                 await Media.put(att.id, file);
                 attachments.push(att);
             }
