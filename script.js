@@ -91,6 +91,7 @@ document.addEventListener('DOMContentLoaded', () => {
         view: 'home',
         folderId: null,
         noteRange: 'all',
+        notesShown: 0,          // Notes page: 0 = just the recent few; more = how many are on screen after "View more notes"
         calMonth: firstOfMonth(new Date()),
         calDay: dayKey(new Date()),
         query: ''
@@ -325,6 +326,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function setView(view, extra = {}, opts = {}) {
         if (view === 'settings' && !('settingsPage' in extra)) extra = { ...extra, settingsPage: '' }; // Settings opens on its menu
+        if (view !== state.view) state.notesShown = 0;
         const changed = view !== state.view || (view === 'settings' && (extra.settingsPage || '') !== (state.settingsPage || ''));
         Object.assign(state, { view }, extra);
         const paint = () => {
@@ -739,6 +741,7 @@ document.addEventListener('DOMContentLoaded', () => {
         content.classList.toggle('repaint', repaint);
         content.innerHTML = (views[state.view] || renderHome)();
         Media.hydrate(content);
+        if (state.view === 'home' && state.notesShown) watchMoreNotes();
         markArrival();
         dockBar();
         if (hooks.afterRender) hooks.afterRender(state.view, { repaint });
@@ -874,6 +877,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const words = live.reduce((sum, n) => sum + countWords(fullText(n)), 0);
         const streak = calcStreak();
         const tagList = noteHashtags(live).slice(0, 14);
+        const voice = live.filter(n => !(n.private && !privateUnlocked) && n.attachments.some(a => a.kind === 'audio'));
 
         // The last seven days, oldest first: did you write that day?
         const wrote = new Set(live.map(n => dayKey(new Date(n.createdAt))));
@@ -909,6 +913,20 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                 </header>
 
+                ${pinned.length ? `
+                    <section class="nh-sec">
+                        <h3 class="nh-h"><svg class="i"><use href="#i-pin-note"/></svg>Pinned</h3>
+                        <div class="nh-pinned">${pinned.map(n => noteCard(n, false)).join('')}</div>
+                    </section>` : ''}
+
+                ${recentSection(live, list, folderList)}
+
+                ${voice.length >= 3 ? `
+                    <section class="nh-sec">
+                        <h3 class="nh-h"><svg class="i"><use href="#i-wave"/></svg>Voice notes <span class="nh-count">${voice.length}</span></h3>
+                        <div class="nh-pinned">${voice.slice(0, 10).map(n => noteCard(n, false)).join('')}</div>
+                    </section>` : ''}
+
                 <section class="nh-sec">
                     <h3 class="nh-h"><svg class="i"><use href="#i-sparkle"/></svg>Start from a template</h3>
                     <div class="nh-templates" role="list">
@@ -928,15 +946,58 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
                     </section>` : ''}
 
-                ${pinned.length ? `
-                    <section class="nh-sec">
-                        <h3 class="nh-h"><svg class="i"><use href="#i-pin-note"/></svg>Pinned</h3>
-                        <div class="nh-pinned">${pinned.map(n => noteCard(n, false)).join('')}</div>
-                    </section>` : ''}
+            </div>`;
+    }
 
-                <section class="nh-sec">
-                    <div class="nh-bar">
-                        <h3 class="nh-h"><svg class="i"><use href="#i-book"/></svg>All notes <span class="nh-count">${list.length}</span></h3>
+    // How many notes the Notes page shows before "View more notes": a calm first screen on every size
+    // (function declarations: the first paint can run before this part of the file)
+    function recentLimit() { return window.innerWidth < 600 ? 4 : window.innerWidth < 1100 ? 6 : 8; }
+    var BATCH = 30; // after "View more notes", cards arrive this many at a time as you scroll
+    function touched(n) { return Math.max(n.updatedAt || 0, n.createdAt || 0); }
+
+    function recentSection(live, list, folderList) {
+        const backup = window.diaryBackup && window.diaryBackup.status ? window.diaryBackup.status() : {};
+        const sorted = [...list].sort((a, b) => touched(b) - touched(a));
+        const limit = recentLimit();
+        const collapsible = sorted.length > limit + 2; // never "View 1 more"
+        const shown = !collapsible ? sorted.length : state.notesShown ? Math.min(state.notesShown, sorted.length) : limit;
+        const expanded = collapsible && state.notesShown > 0;
+        const filtered = state.noteRange !== 'all';
+        let body;
+        if (!live.length && backup.signedIn && backup.busy) {
+            // Bringing notes back from the account onto this device
+            body = `<div class="masonry nh-skeleton" aria-hidden="true">${'<div class="mcard nh-skel"><i></i><i></i><i></i></div>'.repeat(limit)}</div>
+                <p class="sr-only" role="status">Loading your notes…</p>`;
+            setTimeout(() => { if (state.view === 'home' && !state.query) render(); }, 800);
+        } else if (!live.length && backup.signedIn && backup.error) {
+            body = `<div class="nh-state" role="alert">
+                <strong>Couldn’t load your notes</strong>
+                <span>Check your connection — the notes on this device are safe.</span>
+                <button class="chip" data-action="notes-retry">Try again</button></div>`;
+        } else if (!live.length) {
+            body = `<div class="nh-state nh-empty">
+                <span class="nh-empty-ic" aria-hidden="true"><svg class="i"><use href="#i-pencil"/></svg></span>
+                <strong>No notes yet</strong>
+                <span>Capture your thoughts, ideas and moments in Cordial.</span>
+                <button class="primary-btn" data-action="new-note"><svg class="i"><use href="#i-plus"/></svg>Create your first note</button></div>`;
+        } else if (!sorted.length) {
+            body = `<div class="nh-state"><span>No notes ${rangeText(state.noteRange)}.</span>
+                <button class="chip" data-action="note-range-all">Show all notes</button></div>`;
+        } else {
+            body = `<div class="masonry nh-recent${state.noteLayout === 'list' ? ' as-list' : ''}" id="nh-first">${sorted.slice(0, limit).map(n => noteCard(n, false)).join('')}</div>
+                <div class="masonry nh-rest${state.noteLayout === 'list' ? ' as-list' : ''}" id="nh-rest"${expanded ? '' : ' hidden'}>${expanded ? sorted.slice(limit, shown).map(n => noteCard(n, false)).join('') : ''}</div>
+                ${expanded && shown < sorted.length ? '<div class="nh-sentinel" id="nh-sentinel" aria-hidden="true"></div>' : ''}
+                ${collapsible ? moreButton(expanded, sorted.length - limit) : ''}`;
+        }
+        return `
+            <section class="nh-sec nh-notes" aria-labelledby="nh-recent-h">
+                <div class="nh-bar">
+                    <div class="nh-headline">
+                        <h3 class="nh-h" id="nh-recent-h"><svg class="i"><use href="#i-book"/></svg>${filtered ? `Notes ${rangeText(state.noteRange)}` : 'Recent notes'}</h3>
+                        ${sorted.length ? `<p class="nh-sub">${collapsible && !expanded ? `Your latest ${limit} of ${sorted.length}` : `${sorted.length} ${sorted.length === 1 ? 'note' : 'notes'}`}</p>` : ''}
+                    </div>
+                    ${live.length ? `<details class="nh-opts">
+                        <summary class="icon-btn" aria-label="View options" title="View options"><svg class="i"><use href="#i-filter"/></svg></summary>
                         <div class="nh-controls">
                             ${tabs('noteRange')}
                             ${pourControl()}
@@ -945,19 +1006,105 @@ document.addEventListener('DOMContentLoaded', () => {
                                 <button data-action="note-layout" data-layout="list" aria-pressed="${state.noteLayout === 'list'}" aria-label="List"><svg class="i"><use href="#i-list"/></svg></button>
                             </div>
                         </div>
-                    </div>
-                    <div class="folder-chips">
-                        ${folderList.map(f => `
-                            <button class="folder-chip c-${f.color}" data-action="open-folder" data-id="${escapeHTML(f.id)}">
-                                <span class="chip-dot"></span>${escapeHTML(f.name)}
-                                <span class="muted small">${live.filter(n => n.folderId === f.id).length}</span>
-                            </button>`).join('')}
-                        <button class="folder-chip add" data-action="new-folder"><svg class="i"><use href="#i-plus"/></svg>New folder</button>
-                    </div>
-                    ${notesGrid(list, { empty: live.length ? `No notes ${rangeText(state.noteRange)}.` : 'Your diary is empty — pick a template or write your first note.' })}
-                </section>
-            </div>`;
+                    </details>` : ''}
+                </div>
+                ${live.length ? `<div class="folder-chips">
+                    ${folderList.map(f => `
+                        <button class="folder-chip c-${f.color}" data-action="open-folder" data-id="${escapeHTML(f.id)}">
+                            <span class="chip-dot"></span>${escapeHTML(f.name)}
+                            <span class="muted small">${live.filter(n => n.folderId === f.id).length}</span>
+                        </button>`).join('')}
+                    <button class="folder-chip add" data-action="new-folder"><svg class="i"><use href="#i-plus"/></svg>New folder</button>
+                </div>` : ''}
+                ${body}
+            </section>`;
     }
+
+    function moreButton(expanded, more) {
+        return `<button type="button" class="nh-more" data-action="notes-more" aria-expanded="${expanded}" aria-controls="nh-rest">
+            <span>${expanded ? 'Show fewer notes' : `View more notes <b>· ${more}</b>`}</span>
+            <svg class="i" aria-hidden="true"><use href="#i-chevron-${expanded ? 'up' : 'down'}"/></svg></button>`;
+    }
+
+    // The notes behind "View more notes", in the same order the page uses
+    function recentList() {
+        return activeNotes().filter(n => !n.pinned && inRange(n.createdAt, state.noteRange)).sort((a, b) => touched(b) - touched(a));
+    }
+    function scroller() {
+        const main = document.querySelector('.main-col');
+        return main && main.scrollHeight > main.clientHeight + 1 ? main : document.scrollingElement;
+    }
+    function motionOn() { return document.documentElement.dataset.motion !== 'reduce' && !matchMedia('(prefers-reduced-motion: reduce)').matches; }
+
+    // Expand: the next cards appear under the first few, softly; collapse: back to the first few, keeping your place
+    function toggleMoreNotes(btn) {
+        const rest = $('nh-rest');
+        if (!rest) return;
+        const list = recentList();
+        const limit = recentLimit();
+        if (state.notesShown) {
+            const before = btn.getBoundingClientRect().top;
+            state.notesShown = 0;
+            rest.innerHTML = '';
+            rest.hidden = true;
+            $('nh-sentinel')?.remove();
+            btn.outerHTML = moreButton(false, list.length - limit);
+            const sub = content.querySelector('.nh-notes .nh-sub');
+            if (sub) sub.textContent = `Your latest ${limit} of ${list.length}`;
+            const again = content.querySelector('[data-action="notes-more"]');
+            // Keep the button where your eyes are, rather than jumping to wherever the page lands
+            scroller().scrollBy(0, again.getBoundingClientRect().top - before);
+            again.focus({ preventScroll: true });
+            return;
+        }
+        state.notesShown = Math.min(list.length, limit + BATCH);
+        rest.hidden = false;
+        appendNoteCards(rest, list.slice(limit, state.notesShown));
+        btn.outerHTML = moreButton(true, list.length - limit);
+        const sub = content.querySelector('.nh-notes .nh-sub');
+        if (sub) sub.textContent = `${list.length} notes`;
+        if (state.notesShown < list.length) rest.insertAdjacentHTML('afterend', '<div class="nh-sentinel" id="nh-sentinel" aria-hidden="true"></div>');
+        watchMoreNotes();
+        content.querySelector('[data-action="notes-more"]').focus({ preventScroll: true });
+    }
+
+    function appendNoteCards(container, list) {
+        const at = container.children.length;
+        container.insertAdjacentHTML('beforeend', list.map(n => noteCard(n, false)).join(''));
+        const added = [...container.children].slice(at);
+        Media.hydrate(container);
+        if (!motionOn()) return;
+        added.forEach((el, i) => {
+            el.classList.add('nh-in');
+            el.style.animationDelay = `${Math.min(i, 8) * 24}ms`;
+            el.addEventListener('animationend', () => { el.classList.remove('nh-in'); el.style.animationDelay = ''; }, { once: true });
+        });
+    }
+
+    // Large collections: render the next batch only as you near the end
+    var moreObserver = null;
+    function watchMoreNotes() {
+        if (moreObserver) moreObserver.disconnect();
+        const sentinel = $('nh-sentinel');
+        if (!sentinel || !('IntersectionObserver' in window)) return;
+        moreObserver = new IntersectionObserver(entries => {
+            if (!entries.some(e => e.isIntersecting) || !state.notesShown) return;
+            const list = recentList();
+            const rest = $('nh-rest');
+            if (!rest) return moreObserver.disconnect();
+            const next = Math.min(list.length, state.notesShown + BATCH);
+            appendNoteCards(rest, list.slice(state.notesShown, next));
+            state.notesShown = next;
+            if (next >= list.length) { $('nh-sentinel')?.remove(); moreObserver.disconnect(); }
+        }, { rootMargin: '600px 0px' });
+        moreObserver.observe(sentinel);
+    }
+
+    Object.assign(actions, {
+        'notes-more': el => toggleMoreNotes(el),
+        'notes-retry': () => { if (window.diaryBackup) window.diaryBackup.syncNow(); setTimeout(render, 50); },
+        'note-range-all': () => { state.noteRange = 'all'; render(); }
+    });
 
     // #tags written in your notes, most used first → [[tag, count], …]
     function tagsIn(text) {
@@ -1402,7 +1549,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${body ? `<p class="mcard-body">${withTags(highlight(body, q))}</p>` : hidden ? '<p class="mcard-body">Open to read this entry.</p>' : ''}
                 ${noteTags.length && !trash ? `<div class="mcard-hashtags">${noteTags.map(t => `<button class="mcard-hashtag" data-action="note-tag" data-tag="${escapeHTML(t)}">#${escapeHTML(t)}</button>`).join('')}</div>` : ''}
                 <div class="mcard-foot">
-                    <span class="mcard-date">${date.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}${n.mood && !hidden ? ` · ${MOODS[n.mood]}` : ''}</span>
+                    <span class="mcard-date">${date.toLocaleDateString(undefined, date.getFullYear() === new Date().getFullYear() ? { day: 'numeric', month: 'short' } : { day: 'numeric', month: 'short', year: 'numeric' })}${n.mood && !hidden ? ` · ${MOODS[n.mood]}` : ''}</span>
                     ${actions}
                 </div>
             </article>`;
