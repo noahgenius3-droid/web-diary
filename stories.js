@@ -236,7 +236,9 @@ document.addEventListener('DOMContentLoaded', () => {
         return new Promise((resolve, reject) => audioCtx.decodeAudioData(bytes, resolve, reject));
     }
 
-    async function shrinkVideo(file, { maxSeconds, onProgress, music = null }) {
+    const hasEdits = v => !!(v && (v.filter || v.overlay || (v.ownVolume != null && v.ownVolume !== 1)));
+    const editOpts = v => (v ? { filter: v.filter, overlay: v.overlay, ownVolume: v.ownVolume } : {});
+    async function shrinkVideo(file, { maxSeconds, onProgress, music = null, filter = null, overlay = null, ownVolume = null }) {
         const mime = window.MediaRecorder && ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
             .find(t => MediaRecorder.isTypeSupported(t));
         if (!mime || !HTMLCanvasElement.prototype.captureStream) return null;
@@ -268,7 +270,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const source = audioCtx.createMediaElementSource(video);
                 const dest = audioCtx.createMediaStreamDestination();
                 const own = audioCtx.createGain();
-                own.gain.value = music ? 0.35 : 1; // the video's own sound sits under the music
+                own.gain.value = ownVolume != null ? ownVolume : music ? 0.35 : 1; // the video's own sound sits under the music
                 source.connect(own);
                 own.connect(dest);
                 if (music) {
@@ -280,7 +282,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     musicSrc.loop = true;
                     if (!music.file && m.start) { musicSrc.loopStart = m.start; musicSrc.loopEnd = Math.min(buf.duration, m.start + (m.length || 30)); }
                     const mg = audioCtx.createGain();
-                    mg.gain.value = music.file ? 1 : (m.volume || 0.8); // a rendered clip already carries its volume
+                    mg.gain.value = music.volume != null ? music.volume : m.volume != null ? m.volume : 0.8;
                     musicSrc.connect(mg);
                     mg.connect(dest);
                 }
@@ -302,7 +304,10 @@ document.addEventListener('DOMContentLoaded', () => {
             };
             const draw = () => {
                 if (finished) return;
+                if (filter && 'filter' in ctx) ctx.filter = filter;
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                if (filter && 'filter' in ctx) ctx.filter = 'none';
+                if (overlay) ctx.drawImage(overlay, 0, 0, canvas.width, canvas.height);
                 if (onProgress) onProgress(Math.min(1, video.currentTime / limit));
                 if (video.currentTime >= limit) stop();
                 else requestAnimationFrame(draw);
@@ -383,7 +388,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // The compose sheet: preview, caption, Share. Resolves with { caption, alsoStory } or null if cancelled.
     // allowAudio: offer "Add music" (photo stories). Photos can always be edited with filters first.
-    function compose({ title, file, isVideo, maxCaption, note, offerStory = false, storyDefault = false, allowAudio = false, videoAudio = false }) {
+    function compose({ title, file, isVideo, maxCaption, note, offerStory = false, storyDefault = false, allowAudio = false, videoAudio = false, mode = null }) {
+        if (window.diaryMediaEditor && mode) {
+            return window.diaryMediaEditor.open({ files: [file], mode, maxCaption, alsoStory: storyDefault, offerStory, allowAudio, note })
+                .then(r => r && { caption: r.caption, alsoStory: r.alsoStory, file: r.files[0], audio: r.audio, video: r.video, done: () => {} });
+        }
         const dialog = $('media-compose');
         const preview = $('mc-preview');
         const caption = $('mc-caption');
@@ -589,7 +598,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return app.showToast('Pick a photo or a video');
         }
 
-        const result = await compose({ title: 'New story', file, isVideo, maxCaption: 300, note: 'Friends only · disappears after 24 hours', allowAudio: true });
+        const result = await compose({ title: 'New story', file, isVideo, maxCaption: 300, note: 'Friends only · disappears after 24 hours', allowAudio: true, mode: 'story' });
         if (!result) return;
 
         st.busy = true;
@@ -598,7 +607,12 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             let path;
             let upload = result.file || file;
-            if (isVideo) {
+            if (isVideo && (result.audio || hasEdits(result.video))) {
+                app.showToast('Adding your edits to the video — keep Cordial open…');
+                upload = await shrinkVideo(file, { maxSeconds: MAX_STORY_VIDEO, music: result.audio, ...editOpts(result.video) });
+                if (!upload || upload.size > MAX_BYTES) throw new Error('too big');
+                path = await uploadVideo(STORY_BUCKET, upload, videoType(upload) || type);
+            } else if (isVideo) {
                 upload = await prepareVideo(file, MAX_STORY_VIDEO);
                 if (!upload) throw new Error('too big');
                 path = await uploadVideo(STORY_BUCKET, upload, videoType(upload) || type);
@@ -606,7 +620,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 path = await uploadImage(STORY_BUCKET, `${s.profile.id}/${randomId()}`, upload);
             }
             if (!path) throw new Error('upload');
-            if (result.audio && !result.audio.file) app.showToast('Licensed music can’t go on stories yet — posting the story without it');
+            if (isVideo) { /* the sound is already in the video */ }
+            else if (result.audio && !result.audio.file) app.showToast('Licensed music can’t go on photo stories yet — posting the story without it');
             else if (result.audio) {
                 audioPath = await I.uploadAudio('stories', result.audio.file);
                 if (!audioPath) app.showToast('Couldn’t add the music — posting the story without it');
@@ -1326,7 +1341,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const result = await compose({
             title: 'New reel', file, isVideo: true, maxCaption: 2200, note: 'Friends only',
-            offerStory: true, storyDefault: !!opts.alsoStory, allowAudio: true, videoAudio: true
+            offerStory: true, storyDefault: !!opts.alsoStory, allowAudio: true, videoAudio: true, mode: 'reel'
         });
         if (!result) return;
         result.done(); // the sheet closes; the posting strip on the Feed takes over
@@ -1341,9 +1356,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const run = async () => {
             try {
                 if (!upload) {
-                    if (result.audio) {
-                        upload = await shrinkVideo(file, { maxSeconds: MAX_REEL, music: result.audio, onProgress: f => prog(0.03 + 0.37 * f, `Adding your music… ${Math.round(f * 100)}%`) });
+                    if (result.audio || hasEdits(result.video)) {
+                        upload = await shrinkVideo(file, { maxSeconds: MAX_REEL, music: result.audio, ...editOpts(result.video), onProgress: f => prog(0.03 + 0.37 * f, `${result.audio ? 'Adding your sound' : 'Adding your edits'}… ${Math.round(f * 100)}%`) });
                         if (!upload) throw new Error('music');
+                        // The poster shows the edits too
+                        if (hasEdits(result.video)) { const again = await probeVideo(upload, true); if (again.poster) info.poster = again.poster; }
                     } else {
                         upload = await prepareVideo(file, MAX_REEL, (f, what) => prog(0.03 + 0.37 * f, `${what}… ${Math.round(f * 100)}%`));
                     }

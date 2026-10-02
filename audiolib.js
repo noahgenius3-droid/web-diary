@@ -175,7 +175,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (e) { /* no list yet */ }
         try {
-            const table = cfg.audioCatalogTable;
+            const table = cfg.audioCatalogTable || 'diary_sound_catalog';
             const client = window.diarySocial && window.diarySocial.internals && window.diarySocial.internals.client;
             if (table && client) {
                 const { data } = await client.from(table).select('*').eq('active', true).limit(500);
@@ -191,7 +191,8 @@ document.addEventListener('DOMContentLoaded', () => {
             id: String(t.id || t.audio_id), title: String(t.title || 'Untitled'), artist: String(t.artist || t.artist_name || ''),
             cover: t.cover || t.cover_url || t.artwork || null, preview: t.preview || t.preview_url || t.src || t.audio_url || null,
             src: t.src || t.audio_url || t.preview_url || null, duration: Number(t.duration) || 30,
-            category: [...cat.map(c => String(c).trim().toLowerCase()).filter(Boolean), ...flags], source: 'licensed'
+            category: [...cat.map(c => String(c).trim().toLowerCase()).filter(Boolean), ...flags], source: 'licensed',
+            licenseUrl: t.licenseUrl || t.license_url || null, licenseName: t.licenseName || t.license_name || null, provider: t.provider || null, shareurl: t.shareurl || null
         };
     }
     // Licensed tracks from the diary-music function (Jamendo: independent artists, Creative Commons licences).
@@ -277,12 +278,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     const catLabel = track => (CATEGORIES.find(c => track.category.includes(c[0]) && !['trending', 'popular', 'new', 'all'].includes(c[0])) || ['', ''])[1];
 
-    // ---------- The picker ----------
+    // ---------- The picker: a sheet with search, For you / Trending / Original audio / Saved, genres and a list ----------
+    // Tap a sound to hear it and choose the part; "Use sound" hands it back. Counts ("N posts") and Trending come
+    // from the server (diary_sound_usage / diary_sound_trending); saved sounds live in diary_saved_sounds, or on this
+    // device until that table exists.
     const dlg = document.createElement('dialog');
     dlg.className = 'al-dlg';
     dlg.setAttribute('aria-labelledby', 'al-h');
     document.body.append(dlg);
-    let P = null; // { tracks, cat, q, sel, start, length, volume, resolve, playing }
+    let P = null;
+    const TABS = [['foryou', 'For you'], ['trending', 'Trending'], ['original', 'Original audio'], ['saved', 'Saved'], ['gospel', 'Gospel'], ['afrobeats', 'Afrobeats'], ['afropop', 'Afropop'], ['highlife', 'Highlife'], ['amapiano', 'Amapiano']];
+    const GENRES = new Set(['gospel', 'afrobeats', 'afropop', 'highlife', 'amapiano']);
+    const sb = () => window.diarySocial && window.diarySocial.internals && window.diarySocial.internals.client;
+    const compact = n => (n >= 1e6 ? `${(n / 1e6).toFixed(1).replace(/\.0$/, '')}M` : n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, '')}K` : String(n));
 
     // The sound record a post or reel stores. Older posts saved id / cover / start / length only; the aliases
     // (audioId, coverArt, audioUrl, genre, startTime, endTime, duration, createdAt) are filled in from those.
@@ -312,153 +320,402 @@ document.addEventListener('DOMContentLoaded', () => {
             licenseUrl: m.licenseUrl || null, licenseName: m.licenseName || null, shareurl: m.shareurl || null, provider: m.provider || null
         };
     }
+    // What a saved sound keeps (enough to list it and play it again)
+    const savedRecord = t => ({
+        id: t.id, audioId: t.id, title: t.title, artist: t.artist, cover: t.cover || null, style: t.style || null, category: catLabel(t) || null,
+        source: t.source, trackDuration: Math.round(t.duration) || null, start: 0, length: 30,
+        ...(t.src ? { src: t.src, audioUrl: t.src } : {}),
+        ...(t.licenseUrl ? { licenseUrl: t.licenseUrl, licenseName: t.licenseName, shareurl: t.shareurl, provider: t.provider } : {})
+    });
 
+    // ---------- Usage counts, Trending and Saved (server first, device fallback) ----------
+    const usage = new Map();
+    let usageOff = false;
+    async function fetchUsage(ids) {
+        const c = sb();
+        const want = [...new Set(ids)].filter(id => !usage.has(id)).slice(0, 100);
+        if (usageOff || !c || !want.length) return false;
+        const { data, error } = await c.rpc('diary_sound_usage', { p_ids: want });
+        if (error) { usageOff = true; return false; }
+        want.forEach(id => usage.set(id, 0));
+        (data || []).forEach(r => usage.set(r.audio_id, r.uses));
+        return true;
+    }
+    let trendingCache = null;
+    async function fetchTrending() {
+        if (trendingCache) return trendingCache;
+        const c = sb();
+        let list = [];
+        if (c) {
+            const { data, error } = await c.rpc('diary_sound_trending', { p_limit: 30 });
+            if (!error) list = (data || []).map(r => { usage.set(r.audio_id, r.uses); return trackFromMusic({ ...r.music, audioId: r.audio_id }); }).filter(Boolean);
+        }
+        trendingCache = list.map(t => ({ ...t, hot: true }));
+        return trendingCache;
+    }
+    const SAVED_KEY = 'cordial-saved-sounds';
+    const saved = { list: null, server: true };
+    const readLocal = () => { try { return JSON.parse(localStorage.getItem(SAVED_KEY) || '[]'); } catch (e) { return []; } };
+    const writeLocal = list => { try { localStorage.setItem(SAVED_KEY, JSON.stringify(list.slice(0, 200))); } catch (e) {} };
+    async function loadSaved() {
+        if (saved.list) return saved.list;
+        const c = sb();
+        let rows = null;
+        if (c) {
+            const { data, error } = await c.from('diary_saved_sounds').select('audio_id, music').order('created_at', { ascending: false }).limit(200);
+            if (!error) rows = (data || []).map(r => ({ ...r.music, audioId: r.audio_id }));
+        }
+        saved.server = !!rows;
+        saved.list = rows || readLocal();
+        return saved.list;
+    }
+    const isSaved = id => !!(saved.list && saved.list.some(m => (m.audioId || m.id) === id));
+    async function toggleSave(t) {
+        await loadSaved();
+        const on = isSaved(t.id);
+        const rec = savedRecord(t);
+        saved.list = on ? saved.list.filter(m => (m.audioId || m.id) !== t.id) : [rec, ...saved.list];
+        if (saved.server) {
+            const c = sb();
+            const { error } = on
+                ? await c.from('diary_saved_sounds').delete().eq('audio_id', t.id)
+                : await c.from('diary_saved_sounds').insert({ audio_id: t.id, music: rec });
+            if (error) { saved.server = false; writeLocal(saved.list); }
+        } else writeLocal(saved.list);
+        app.showToast(on ? 'Removed from Saved' : 'Saved — find it under Saved');
+    }
+
+    // ---------- Open / close ----------
     function open(opts = {}) {
         return new Promise(async resolve => {
-            P = { tracks: CORDIAL, remote: [], loadingRemote: true, cat: 'all', q: '', sel: null, start: 0, length: 30, volume: 0.8, resolve, playing: null };
+            stopAll();
+            P = { tracks: CORDIAL, remote: [], loadingRemote: false, tab: 'foryou', q: '', sel: null, start: 0, length: 30, resolve, playing: null, own: opts.allowOwn !== false, trending: null };
             const pre = opts.track ? trackFromMusic(opts.track) : null;
             if (pre) {
                 P.sel = pre;
                 P.length = Math.min(30, pre.duration);
                 P.start = Math.max(0, Math.min(Number(opts.track.start) || 0, pre.duration - P.length));
                 paintEdit();
-                if (!dlg.open) dlg.showModal();
-                P.tracks = await catalogue();
-                return;
-            }
-            paintBrowse();
+            } else paintBrowse();
             if (!dlg.open) dlg.showModal();
+            dlg.classList.remove('leaving');
+            loadSaved().then(() => { if (P && !P.sel && P.tab === 'saved') paintBrowse(); });
             P.tracks = await catalogue();
-            if (P && !P.sel) paintBrowse();
-            refreshRemote();
+            if (P && !P.sel) { paintBrowse(); refreshRemote(); }
         });
     }
     function finish(value) {
         stopAll();
+        stopHead();
         const r = P && P.resolve;
         P = null;
         if (dlg.open) dlg.close();
+        dlg.style.transform = '';
         if (r) r(value);
     }
     dlg.addEventListener('close', () => { if (P) finish(null); });
+    dlg.addEventListener('click', e => { if (e.target === dlg) finish(null); }); // tap above the sheet
 
+    // ---------- Lists ----------
+    const matches = (t, q) => !q || `${t.title} ${t.artist} ${t.category.join(' ')}`.toLowerCase().includes(q);
     function listFor() {
         const q = P.q.trim().toLowerCase();
-        const local = P.tracks.filter(t => (P.cat === 'all' || t.category.includes(P.cat)) && (!q || `${t.title} ${t.artist} ${t.category.join(' ')}`.toLowerCase().includes(q)));
-        // Licensed results first (already matched on the server), then the rest
-        const seen = new Set(P.remote.map(t => t.id));
-        return [...P.remote, ...local.filter(t => !seen.has(t.id))];
+        const tab = P.tab;
+        let local;
+        if (tab === 'saved') return (saved.list || []).map(trackFromMusic).filter(Boolean).filter(t => matches(t, q));
+        if (tab === 'original') return CORDIAL.filter(t => matches(t, q));
+        if (tab === 'trending') local = [...(P.trending || []), ...P.tracks.filter(t => t.category.includes('trending'))];
+        else if (GENRES.has(tab)) local = P.tracks.filter(t => t.category.includes(tab));
+        else local = P.tracks;
+        local = local.filter(t => matches(t, q));
+        const seen = new Set();
+        return [...(tab === 'trending' ? local : []), ...P.remote, ...local].filter(t => !seen.has(t.id) && seen.add(t.id));
     }
     let remoteTimer = null;
     function refreshRemote(delay = 0) {
         clearTimeout(remoteTimer);
         if (!P) return;
-        const want = { cat: P.cat, q: P.q.trim() };
+        const tab = P.tab;
+        if (tab === 'trending' && !P.trending) fetchTrending().then(list => { if (P) { P.trending = list; if (!P.sel && P.tab === 'trending') paintBrowse(document.activeElement && document.activeElement.id === 'al-q'); } });
+        if (tab === 'original' || tab === 'saved') { P.remote = []; P.loadingRemote = false; return; }
+        const want = { cat: tab === 'foryou' ? 'all' : tab, q: P.q.trim() };
         P.loadingRemote = remote.ready !== false;
         remoteTimer = setTimeout(async () => {
             const list = await remoteTracks(want.cat, want.q);
-            if (!P || P.cat !== want.cat || P.q.trim() !== want.q) return;
+            if (!P || (P.tab === 'foryou' ? 'all' : P.tab) !== want.cat || P.q.trim() !== want.q) return;
             P.remote = list;
             P.loadingRemote = false;
             if (!P.sel) paintBrowse(document.activeElement && document.activeElement.id === 'al-q');
         }, delay);
     }
-    function paintBrowse(keepFocus = false) {
-        const list = listFor();
-        const hasLicensed = P.remote.length > 0 || remote.ready || P.tracks.some(t => t.source === 'licensed');
-        dlg.innerHTML = `
-            <div class="al-card">
-                <header class="al-head"><h3 id="al-h">Add sound</h3><button type="button" class="icon-btn" data-al="close" aria-label="Close">${ic('i-close')}</button></header>
-                <label class="search al-search">${ic('i-search')}<input type="search" id="al-q" placeholder="Search songs, artists and genres" value="${esc(P.q)}" autocomplete="off" aria-label="Search audio"></label>
-                <div class="al-cats" role="tablist" aria-label="Categories">${CATEGORIES.map(([k, l]) => `<button type="button" role="tab" class="al-cat" aria-selected="${P.cat === k}" data-al="cat" data-k="${k}">${l}</button>`).join('')}</div>
-                <ul class="al-list">${list.length ? list.map(t => `
-                    <li class="al-row">
-                        <button type="button" class="al-pick" data-al="pick" data-id="${esc(t.id)}">${coverHTML(t)}<span class="al-text"><strong>${esc(t.title)}</strong><small>${esc(t.artist)}${t.licenseName ? ` · <span class="al-lic">${esc(t.licenseName)}</span>` : catLabel(t) ? ` · ${esc(catLabel(t))}` : ''} · ${fmt(t.duration)}</small></span></button>
-                        <button type="button" class="al-play" data-al="preview" data-id="${esc(t.id)}" aria-label="${P.playing === t.id ? 'Stop' : 'Play'} ${esc(t.title)}" aria-pressed="${P.playing === t.id}">${ic(P.playing === t.id ? 'i-pause' : 'i-play')}</button>
-                    </li>`).join('') : (P.loadingRemote ? '' : '<li class="al-empty">No audio matches that yet.</li>')}${P.loadingRemote ? '<li class="al-loading" aria-live="polite"><span class="al-spin" aria-hidden="true"></span>Finding licensed music…</li>' : ''}</ul>
-                <p class="al-note">${hasLicensed ? 'Licensed music from independent artists via Jamendo, under Creative Commons licences — the artist and licence are credited on your post. Cordial Sounds are original instrumentals made for Cordial.' : 'Cordial Sounds are original instrumentals made for Cordial — free to use. Licensed music appears here once Cordial’s catalogue is connected.'}</p>
-            </div>`;
-        if (keepFocus) { const q = dlg.querySelector('#al-q'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
+    function rowHTML(t) {
+        const n = usage.get(t.id);
+        const meta = [esc(t.artist), n ? `${compact(n)} ${n === 1 ? 'post' : 'posts'}` : '', fmt(t.duration)].filter(Boolean).join(' · ');
+        const on = isSaved(t.id);
+        return `
+            <li class="al-row">
+                <button type="button" class="al-pick" data-al="pick" data-id="${esc(t.id)}">${coverHTML(t)}<span class="al-text"><strong>${esc(t.title)}</strong><small>${t.hot || t.category.includes('trending') ? `<svg class="i al-up" aria-label="Trending"><use href="#i-trend"/></svg>` : ''}${meta}${t.licenseName ? ` · <span class="al-lic">${esc(t.licenseName)}</span>` : ''}</small></span></button>
+                <button type="button" class="al-save" data-al="save" data-id="${esc(t.id)}" aria-pressed="${on}" aria-label="${on ? 'Remove from Saved' : 'Save'} ${esc(t.title)}">${ic(on ? 'i-bookmark-fill' : 'i-bookmark')}</button>
+            </li>`;
     }
+    function featuredHTML(list) {
+        const top = list.filter(t => t.cover).slice(0, 4);
+        const pick = top.length >= 2 ? top : list.slice(0, 4);
+        if (pick.length < 2) return '';
+        return `
+            <div class="al-feat" aria-label="Featured sounds">
+                <div class="al-feat-track" id="al-feat">${pick.map(t => `
+                    <button type="button" class="al-feat-item" data-al="pick" data-id="${esc(t.id)}">
+                        ${t.cover ? `<img class="al-feat-bg" src="${esc(t.cover)}" alt="" referrerpolicy="no-referrer">` : `<span class="al-feat-bg gen" style="--c1:${(STYLES[t.style] || STYLES.afrobeats).colors[0]};--c2:${(STYLES[t.style] || STYLES.afrobeats).colors[1]}"></span>`}
+                        ${coverHTML(t, true)}
+                        <span class="al-text"><strong>${esc(t.title)}</strong><small>${esc(t.artist)}</small></span>
+                    </button>`).join('')}</div>
+                <div class="al-dots" aria-hidden="true">${pick.map((_, i) => `<i${i === 0 ? ' class="on"' : ''}></i>`).join('')}</div>
+            </div>`;
+    }
+    function paintBrowse(keepFocus = false) {
+        if (!P) return;
+        const list = listFor();
+        const q = P.q.trim();
+        const scrollTop = (dlg.querySelector('.al-list-wrap') || {}).scrollTop || 0;
+        const tabsLeft = (dlg.querySelector('.al-cats') || {}).scrollLeft || 0;
+        const ownRows = P.tab === 'original' && P.own && !q ? `
+            <li class="al-row own"><button type="button" class="al-pick" data-al="own" data-kind="record"><span class="al-cover own">${ic('i-mic')}</span><span class="al-text"><strong>Record audio</strong><small>Your voice or a sound around you</small></span></button></li>
+            <li class="al-row own"><button type="button" class="al-pick" data-al="own" data-kind="file"><span class="al-cover own">${ic('i-music')}</span><span class="al-text"><strong>Use an audio file</strong><small>A song or recording you have the rights to</small></span></button></li>
+            <li class="al-label">Cordial Sounds — original instrumentals</li>` : '';
+        const empty = P.tab === 'saved' ? '<li class="al-empty">Tap the bookmark on a sound to keep it here.</li>' : '<li class="al-empty">No sounds match that yet.</li>';
+        dlg.innerHTML = `
+            <div class="al-sheet">
+                <div class="al-grab" data-al-drag aria-hidden="true"><i></i></div>
+                <h3 id="al-h" class="sr-only">Add sound</h3>
+                <label class="search al-search">${ic('i-search')}<input type="search" id="al-q" placeholder="Search songs and artists" value="${esc(P.q)}" autocomplete="off" enterkeyhint="search" aria-label="Search sounds"></label>
+                <div class="al-cats" role="tablist" aria-label="Sound categories">${TABS.map(([k, l]) => `<button type="button" role="tab" class="al-cat" aria-selected="${P.tab === k}" data-al="tab" data-k="${k}">${l}</button>`).join('')}</div>
+                <div class="al-list-wrap">
+                    ${P.tab === 'foryou' && !q ? featuredHTML(list) : ''}
+                    <ul class="al-list">${ownRows}${list.length ? list.map(rowHTML).join('') : (P.loadingRemote || (P.tab === 'trending' && !P.trending) || (P.tab === 'saved' && !saved.list) ? '' : empty)}${P.loadingRemote ? '<li class="al-loading" aria-live="polite"><span class="al-spin" aria-hidden="true"></span>Finding more music…</li>' : ''}</ul>
+                    <p class="al-note">${P.tab === 'original' ? 'Cordial Sounds are original instrumentals made for Cordial — free to use.' : 'Licensed music is credited to the artist on your post. Cordial never stores copies of licensed songs.'}</p>
+                </div>
+            </div>`;
+        const wrap = dlg.querySelector('.al-list-wrap');
+        if (wrap && !keepFocus) wrap.scrollTop = scrollTop;
+        dlg.querySelector('.al-cats').scrollLeft = tabsLeft;
+        if (keepFocus) { const qe = dlg.querySelector('#al-q'); qe.focus(); qe.setSelectionRange(qe.value.length, qe.value.length); }
+        const feat = dlg.querySelector('#al-feat');
+        if (feat) feat.addEventListener('scroll', () => {
+            const i = Math.round(feat.scrollLeft / Math.max(1, feat.clientWidth));
+            dlg.querySelectorAll('.al-dots i').forEach((d, k) => d.classList.toggle('on', k === i));
+        }, { passive: true });
+        // Counts for what's on screen
+        fetchUsage(list.slice(0, 60).map(t => t.id)).then(changed => { if (changed && P && !P.sel) paintBrowse(document.activeElement && document.activeElement.id === 'al-q'); });
+    }
+
+    // ---------- Choosing the part ----------
+    const BARS = 64;
+    const barsFor = t => {
+        let seed = 0;
+        for (const ch of String(t.id)) seed = (seed * 31 + ch.charCodeAt(0)) | 0;
+        return Array.from({ length: BARS }, (_, i) => 0.22 + 0.78 * Math.abs(Math.sin(i * 0.43 + seed)) * (0.45 + 0.55 * hash(seed, i)));
+    };
     function paintEdit() {
         const t = P.sel;
-        const maxLen = Math.min(60, t.duration);
-        P.length = Math.min(P.length, maxLen);
-        const maxStart = Math.max(0, t.duration - P.length);
-        P.start = Math.min(P.start, maxStart);
+        const lens = [15, 30, 60].filter(n => n <= t.duration || n === 15);
+        P.length = Math.min(P.length, Math.min(60, t.duration));
+        P.start = Math.max(0, Math.min(P.start, t.duration - P.length));
         dlg.innerHTML = `
-            <div class="al-card">
-                <header class="al-head"><button type="button" class="icon-btn" data-al="back" aria-label="Back to the library">${ic('i-chevron-left')}</button><h3 id="al-h">Choose the part</h3><button type="button" class="icon-btn" data-al="close" aria-label="Close">${ic('i-close')}</button></header>
-                <div class="al-now">${coverHTML(t, true)}<span class="al-text"><strong>${esc(t.title)}</strong><small>${esc(t.artist)}${catLabel(t) ? ` · ${esc(catLabel(t))}` : ''}</small></span>
-                    <button type="button" class="al-play big" data-al="preview-sel" aria-label="${P.playing === 'sel' ? 'Stop preview' : 'Preview this part'}" aria-pressed="${P.playing === 'sel'}">${ic(P.playing === 'sel' ? 'i-pause' : 'i-play')}</button></div>
-                <label class="al-field"><span>Start at <b id="al-start-v">${fmt(P.start)}</b></span>
-                    <input type="range" id="al-start" min="0" max="${Math.floor(maxStart)}" step="1" value="${Math.round(P.start)}" ${maxStart ? '' : 'disabled'}>
-                    <span class="al-window" aria-hidden="true"><i style="left:${(P.start / t.duration) * 100}%;width:${(P.length / t.duration) * 100}%"></i></span></label>
-                <div class="al-field"><span>Length</span><div class="al-seg" role="radiogroup" aria-label="Length">${[15, 30, 60].filter(n => n <= maxLen || n === 15).map(n => `<button type="button" role="radio" aria-checked="${P.length === n}" data-al="len" data-n="${n}">${n}s</button>`).join('')}</div></div>
-                <label class="al-field"><span>Volume <b id="al-vol-v">${Math.round(P.volume * 100)}%</b></span><input type="range" id="al-vol" min="10" max="100" step="5" value="${Math.round(P.volume * 100)}"></label>
-                <button type="button" class="primary-btn al-use" data-al="use">${ic('i-check')}Use this sound</button>
+            <div class="al-sheet edit">
+                <div class="al-grab" data-al-drag aria-hidden="true"><i></i></div>
+                <header class="al-head"><button type="button" class="icon-btn" data-al="back" aria-label="Back to the library">${ic('i-chevron-left')}</button><h3 id="al-h">Choose the part</h3><span class="al-head-sp"></span></header>
+                <div class="al-now">${coverHTML(t, true)}<span class="al-text"><strong>${esc(t.title)}</strong><small>${esc(t.artist)}${catLabel(t) ? ` · ${esc(catLabel(t))}` : ''} · ${fmt(t.duration)}</small></span>
+                    <button type="button" class="al-save" data-al="save" data-id="${esc(t.id)}" aria-pressed="${isSaved(t.id)}" aria-label="${isSaved(t.id) ? 'Remove from Saved' : 'Save'}">${ic(isSaved(t.id) ? 'i-bookmark-fill' : 'i-bookmark')}</button></div>
+                <p class="al-times" aria-live="polite"><b id="al-t0">${fmt(P.start)}</b><span aria-hidden="true"></span><b id="al-t1">${fmt(P.start + P.length)}</b></p>
+                <div class="al-track" id="al-track">
+                    <div class="al-bars" aria-hidden="true">${barsFor(t).map(h => `<i style="--h:${h.toFixed(2)}"></i>`).join('')}</div>
+                    <div class="al-win" id="al-win" role="slider" tabindex="0" aria-label="Part of the song to use" aria-valuemin="0" aria-valuemax="${Math.floor(t.duration - P.length)}" aria-valuenow="${Math.round(P.start)}" aria-valuetext="${fmt(P.start)} to ${fmt(P.start + P.length)}"><i class="al-ph" id="al-ph"></i></div>
+                </div>
+                <p class="al-hint">Drag the box to choose the part you want</p>
+                <div class="al-seg" role="radiogroup" aria-label="Length">${lens.map(n => `<button type="button" role="radio" aria-checked="${P.length === n}" data-al="len" data-n="${n}">${n}s</button>`).join('')}</div>
+                <footer class="al-actions">
+                    <button type="button" class="al-btn" data-al="back">Cancel</button>
+                    <button type="button" class="al-btn" data-al="preview-sel" aria-pressed="${P.playing === 'sel'}">${ic(P.playing === 'sel' ? 'i-pause' : 'i-play')}<span>${P.playing === 'sel' ? 'Stop' : 'Preview'}</span></button>
+                    <button type="button" class="al-btn primary" data-al="use">${ic('i-check')}<span>Use sound</span></button>
+                </footer>
             </div>`;
+        placeWindow();
     }
-    dlg.addEventListener('input', e => {
-        if (!P) return;
-        if (e.target.id === 'al-q') { P.q = e.target.value; P.remote = []; paintBrowse(true); refreshRemote(450); }
-        if (e.target.id === 'al-start') {
-            P.start = Number(e.target.value);
-            dlg.querySelector('#al-start-v').textContent = fmt(P.start);
-            dlg.querySelector('.al-window i').style.left = `${(P.start / P.sel.duration) * 100}%`;
-        }
-        if (e.target.id === 'al-vol') { P.volume = Number(e.target.value) / 100; dlg.querySelector('#al-vol-v').textContent = `${e.target.value}%`; }
-    });
-    dlg.addEventListener('change', e => {
-        // A new start or volume previews right away, so you hear what you chose
-        if (P && P.sel && (e.target.id === 'al-start' || e.target.id === 'al-vol') && P.playing === 'sel') startSelPreview();
-    });
+    function placeWindow() {
+        const t = P && P.sel;
+        const win = dlg.querySelector('#al-win');
+        if (!t || !win) return;
+        const left = (P.start / t.duration) * 100;
+        const width = (P.length / t.duration) * 100;
+        win.style.left = `${left}%`;
+        win.style.width = `${Math.max(width, 6)}%`;
+        dlg.querySelectorAll('.al-bars i').forEach((b, i) => {
+            const at = ((i + 0.5) / BARS) * 100;
+            b.classList.toggle('in', at >= left && at <= left + Math.max(width, 6));
+        });
+        dlg.querySelector('#al-t0').textContent = fmt(P.start);
+        dlg.querySelector('#al-t1').textContent = fmt(Math.min(t.duration, P.start + P.length));
+        win.setAttribute('aria-valuenow', String(Math.round(P.start)));
+        win.setAttribute('aria-valuetext', `${fmt(P.start)} to ${fmt(P.start + P.length)}`);
+    }
+    // The playhead walks across the window while the part plays
+    let headRaf = 0;
+    function stopHead() { cancelAnimationFrame(headRaf); const ph = dlg.querySelector('#al-ph'); if (ph) ph.style.left = '0%'; }
+    function runHead() {
+        stopHead();
+        const t0 = performance.now();
+        const len = Math.min(P.length, P.sel.source === 'cordial' ? 20 : P.length);
+        const tick = () => {
+            const ph = dlg.querySelector('#al-ph');
+            if (!P || P.playing !== 'sel' || !ph) return;
+            ph.style.left = `${Math.min(100, ((performance.now() - t0) / 1000 / len) * 100)}%`;
+            headRaf = requestAnimationFrame(tick);
+        };
+        headRaf = requestAnimationFrame(tick);
+    }
     function startSelPreview() {
         P.playing = 'sel';
-        playTrack(P.sel, P.start, P.length, P.volume, () => { if (P && P.playing === 'sel') { P.playing = null; if (P.sel) repaintPlay(); } });
+        playTrack(P.sel, P.start, P.length, 0.85, () => { if (P && P.playing === 'sel') { P.playing = null; stopHead(); if (P.sel) repaintPlay(); } });
         repaintPlay();
+        runHead();
     }
     function repaintPlay() {
         const b = dlg.querySelector('[data-al="preview-sel"]');
         if (!b) return;
-        b.setAttribute('aria-pressed', String(P.playing === 'sel'));
-        b.innerHTML = ic(P.playing === 'sel' ? 'i-pause' : 'i-play');
+        const on = P.playing === 'sel';
+        b.setAttribute('aria-pressed', String(on));
+        b.innerHTML = `${ic(on ? 'i-pause' : 'i-play')}<span>${on ? 'Stop' : 'Preview'}</span>`;
     }
+    // Drag the window along the song (or tap the timeline to jump there)
+    let drag = null;
+    dlg.addEventListener('pointerdown', e => {
+        const track = e.target.closest('#al-track');
+        if (!track || !P || !P.sel) return;
+        const rect = track.getBoundingClientRect();
+        const win = dlg.querySelector('#al-win');
+        const wr = win.getBoundingClientRect();
+        const onWin = e.clientX >= wr.left && e.clientX <= wr.right;
+        drag = { rect, offset: onWin ? e.clientX - wr.left : wr.width / 2, id: e.pointerId };
+        track.setPointerCapture(e.pointerId);
+        track.classList.add('dragging');
+        moveTo(e.clientX);
+        e.preventDefault();
+    });
+    function moveTo(x) {
+        const t = P.sel;
+        const f = (x - drag.offset - drag.rect.left) / drag.rect.width;
+        P.start = Math.round(Math.max(0, Math.min(t.duration - P.length, f * t.duration)));
+        placeWindow();
+    }
+    dlg.addEventListener('pointermove', e => { if (drag && e.pointerId === drag.id && P && P.sel) moveTo(e.clientX); });
+    const endDrag = e => {
+        if (!drag || e.pointerId !== drag.id) return;
+        drag = null;
+        const track = dlg.querySelector('#al-track');
+        if (track) track.classList.remove('dragging');
+        if (P && P.sel) startSelPreview(); // hear the part you landed on
+    };
+    dlg.addEventListener('pointerup', endDrag);
+    dlg.addEventListener('pointercancel', endDrag);
+    dlg.addEventListener('keydown', e => {
+        if (e.target.id !== 'al-win' || !P || !P.sel) return;
+        const step = { ArrowLeft: -1, ArrowRight: 1, PageDown: -10, PageUp: 10 }[e.key];
+        if (e.key === 'Home' || e.key === 'End') P.start = e.key === 'Home' ? 0 : P.sel.duration - P.length;
+        else if (step) P.start = Math.max(0, Math.min(P.sel.duration - P.length, P.start + step));
+        else return;
+        e.preventDefault();
+        placeWindow();
+    });
+    dlg.addEventListener('keyup', e => { if (e.target.id === 'al-win' && P && P.playing === 'sel' && /Arrow|Page|Home|End/.test(e.key)) startSelPreview(); });
+
+    // Pull the sheet down by its handle to close it
+    let pull = null;
+    dlg.addEventListener('pointerdown', e => {
+        if (!e.target.closest('[data-al-drag], .al-head h3')) return;
+        pull = { y: e.clientY, t: performance.now(), id: e.pointerId, dy: 0 };
+        e.target.setPointerCapture(e.pointerId);
+    });
+    dlg.addEventListener('pointermove', e => {
+        if (!pull || e.pointerId !== pull.id) return;
+        pull.dy = Math.max(0, e.clientY - pull.y);
+        dlg.style.transform = `translateY(${pull.dy}px)`;
+    });
+    const endPull = e => {
+        if (!pull || e.pointerId !== pull.id) return;
+        const v = pull.dy / Math.max(1, performance.now() - pull.t);
+        const close = pull.dy > 140 || v > 0.6;
+        pull = null;
+        dlg.style.transition = 'transform 220ms cubic-bezier(.2,.8,.2,1)';
+        dlg.style.transform = close ? 'translateY(100%)' : '';
+        setTimeout(() => { dlg.style.transition = ''; if (close) finish(null); }, 230);
+    };
+    dlg.addEventListener('pointerup', endPull);
+    dlg.addEventListener('pointercancel', endPull);
+
+    dlg.addEventListener('input', e => {
+        if (!P || e.target.id !== 'al-q') return;
+        P.q = e.target.value;
+        P.remote = [];
+        paintBrowse(true);
+        refreshRemote(450);
+    });
+    const byId = id => (P.trending || []).find(t => t.id === id) || P.remote.find(t => t.id === id) || P.tracks.find(t => t.id === id)
+        || (saved.list || []).map(trackFromMusic).filter(Boolean).find(t => t.id === id);
     dlg.addEventListener('click', async e => {
         const el = e.target.closest('[data-al]');
         if (!el || !P) return;
         const what = el.dataset.al;
-        const byId = id => P.remote.find(t => t.id === id) || P.tracks.find(t => t.id === id);
         if (what === 'close') finish(null);
-        else if (what === 'cat') { P.cat = el.dataset.k; P.remote = []; paintBrowse(); refreshRemote(); }
-        else if (what === 'preview') {
-            const t = byId(el.dataset.id);
-            if (P.playing === t.id) { stopAll(); P.playing = null; return paintBrowse(); }
-            P.playing = t.id;
-            paintBrowse();
-            playTrack(t, t.source === 'cordial' ? 0 : 0, 15, 0.8, () => { if (P && P.playing === t.id) { P.playing = null; if (!P.sel) paintBrowse(); } });
-        } else if (what === 'pick') {
+        else if (what === 'tab') {
             stopAll();
             P.playing = null;
+            P.tab = el.dataset.k;
+            P.remote = [];
+            refreshRemote();
+            paintBrowse();
+            el.scrollIntoView && dlg.querySelector(`[data-al="tab"][data-k="${P.tab}"]`).scrollIntoView({ inline: 'nearest', block: 'nearest' });
+        } else if (what === 'save') {
+            const t = (P.sel && P.sel.id === el.dataset.id) ? P.sel : byId(el.dataset.id);
+            if (!t) return;
+            await toggleSave(t);
+            if (!P) return;
+            if (P.sel) { const on = isSaved(t.id); el.setAttribute('aria-pressed', String(on)); el.innerHTML = ic(on ? 'i-bookmark-fill' : 'i-bookmark'); }
+            else paintBrowse();
+        } else if (what === 'own') {
+            const I = window.diarySocial && window.diarySocial.internals;
+            if (!I || !I.ownAudio) return;
+            const r = await I.ownAudio(el.dataset.kind);
+            if (r && P) finish(r);
+        } else if (what === 'pick') {
+            stopAll();
             P.sel = byId(el.dataset.id);
+            if (!P.sel) return;
             P.start = 0;
             P.length = Math.min(30, P.sel.duration);
             paintEdit();
-        } else if (what === 'back') { stopAll(); P.playing = null; P.sel = null; paintBrowse(); if (!P.remote.length) refreshRemote(); }
-        else if (what === 'len') { P.length = Number(el.dataset.n); paintEdit(); }
-        else if (what === 'preview-sel') {
-            if (P.playing === 'sel') { stopAll(); P.playing = null; repaintPlay(); }
+            startSelPreview(); // tapping a sound plays it, like choosing a song should
+        } else if (what === 'back') {
+            stopAll(); stopHead(); P.playing = null; P.sel = null; paintBrowse(); if (!P.remote.length) refreshRemote();
+        } else if (what === 'len') {
+            P.length = Number(el.dataset.n);
+            const playing = P.playing === 'sel';
+            stopAll(); stopHead();
+            paintEdit();
+            if (playing) startSelPreview();
+        } else if (what === 'preview-sel') {
+            if (P.playing === 'sel') { stopAll(); stopHead(); P.playing = null; repaintPlay(); }
             else startSelPreview();
         } else if (what === 'use') {
-            stopAll();
+            stopAll(); stopHead();
             const t = P.sel;
             el.disabled = true;
-            el.innerHTML = 'Preparing…';
-            const music = record({ id: t.id, title: t.title, artist: t.artist, cover: t.cover || null, category: catLabel(t) || null, source: t.source, style: t.style || null, start: Math.round(P.start), length: P.length, volume: P.volume, trackDuration: Math.round(t.duration) || null, createdAt: new Date().toISOString(), ...(t.licenseUrl ? { licenseUrl: t.licenseUrl, licenseName: t.licenseName, shareurl: t.shareurl, provider: t.provider } : {}) });
+            el.innerHTML = '<span>Preparing…</span>';
+            const music = record({ id: t.id, title: t.title, artist: t.artist, cover: t.cover || null, category: catLabel(t) || null, source: t.source, style: t.style || null, start: Math.round(P.start), length: P.length, volume: 0.8, trackDuration: Math.round(t.duration) || null, createdAt: new Date().toISOString(), ...(t.licenseUrl ? { licenseUrl: t.licenseUrl, licenseName: t.licenseName, shareurl: t.shareurl, provider: t.provider } : {}) });
             try {
                 if (t.source === 'cordial') {
-                    // Original instrumentals are rendered into a short clip that travels with the post
-                    const buf = await renderCordial(t, P.start, P.length, P.volume);
+                    // Original instrumentals are rendered into a short clip that travels with the post (its volume is set on playback)
+                    const buf = await renderCordial(t, P.start, P.length, 1);
                     const file = new File([wavFrom(buf)], `${t.title}.wav`, { type: 'audio/wav' });
                     finish({ file, duration: P.length, name: `${t.title} · ${t.artist}`, music });
                 } else {
@@ -467,8 +724,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             } catch (err) {
                 el.disabled = false;
-                el.innerHTML = `${ic('i-check')}Use this sound`;
-                app.showToast('Couldn’t prepare that audio on this device');
+                el.innerHTML = `${ic('i-check')}<span>Use sound</span>`;
+                app.showToast('Couldn’t prepare that sound on this device');
             }
         }
     });

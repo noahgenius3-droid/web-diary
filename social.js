@@ -3487,7 +3487,25 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Record something or choose a song / audio file. Resolves { file, duration, name } or null.
+    async function ownAudio(kind) {
+        if (kind === 'record') {
+            const rec = await Media.recordVoice();
+            if (!rec) return null;
+            if (rec.error) { app.showToast(rec.error); return null; }
+            const file = new File([rec.blob], `Recording.${audioExt(rec.type)}`, { type: rec.type });
+            return { file, duration: Math.max(1, Math.round(rec.duration)), name: 'Recording' };
+        }
+        const [file] = await Media.pickFiles(AUDIO_ACCEPT, false);
+        if (!file) return null;
+        const type = (file.type || '').split(';')[0] || 'audio/mpeg';
+        if (!type.startsWith('audio/')) { app.showToast('Pick an audio file (MP3, M4A, WAV…)'); return null; }
+        if (file.size > MAX_POST_AUDIO) { app.showToast('That audio is over 20 MB — try a shorter clip'); return null; }
+        const duration = Math.round(await audioDuration(file));
+        if (duration > 600) { app.showToast('Audio can be up to 10 minutes'); return null; }
+        return { file, duration: duration || 1, name: String(file.name || 'Audio').replace(/\.[a-z0-9]+$/i, '').slice(0, 80) };
+    }
     function pickAudio(anchor) {
+        if (window.diaryAudioLib) return window.diaryAudioLib.open({ allowOwn: true });
         return new Promise(resolve => {
             let picked = false;
             app.openPopover(anchor, [
@@ -3930,9 +3948,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------- Posting from the feed ----------
     const MAX_POST_PHOTOS = 10;
 
-    async function addFeedPhotos(files) {
+    async function preparePhotos(files, room = MAX_POST_PHOTOS) {
+        const out = [];
         for (const original of files) {
-            if (s.feedDraft.photos.length >= MAX_POST_PHOTOS) {
+            if (out.length >= room) {
                 app.showToast(`Up to ${MAX_POST_PHOTOS} photos per post`);
                 break;
             }
@@ -3945,9 +3964,43 @@ document.addEventListener('DOMContentLoaded', () => {
                 app.showToast(`${original.name || 'That photo'} is too large`);
                 continue;
             }
-            s.feedDraft.photos.push({ id: Math.random().toString(36).slice(2), file, preview: URL.createObjectURL(file) });
+            out.push(file);
         }
+        return out;
+    }
+    async function addFeedPhotos(files) {
+        const ready = await preparePhotos(files, MAX_POST_PHOTOS - s.feedDraft.photos.length);
+        ready.forEach(file => s.feedDraft.photos.push({ id: Math.random().toString(36).slice(2), file, preview: URL.createObjectURL(file) }));
         renderFeedPhotos();
+    }
+
+    // Picking photos opens the media editor (effects, text, stickers, sound, caption, who sees it), then posts
+    async function openPostEditor(picked) {
+        if (!picked || !picked.length) return;
+        if (!window.diaryMediaEditor) return addFeedPhotos(picked);
+        const files = await preparePhotos(picked);
+        if (!files.length) return;
+        const text = ($('feed-text') || {}).value;
+        if (text != null) s.feedDraft.text = text;
+        const draft = s.feedDraft;
+        const result = await window.diaryMediaEditor.open({
+            files: [...draft.photos.map(p => p.file), ...files].slice(0, MAX_POST_PHOTOS), mode: 'post',
+            caption: draft.text, audience: s.feedAudience, alsoStory: s.feedStory,
+            audio: draft.audio ? { ...draft.audio } : null, maxPhotos: MAX_POST_PHOTOS, maxCaption: 5000,
+            addFiles: async () => preparePhotos(await Media.pickFiles('image/*'))
+        });
+        if (!result) return;
+        draft.photos.forEach(p => URL.revokeObjectURL(p.preview));
+        if (draft.audio && draft.audio.file) URL.revokeObjectURL(draft.audio.preview);
+        const a = result.audio;
+        s.feedDraft = {
+            text: result.caption,
+            photos: result.files.map(file => ({ id: Math.random().toString(36).slice(2), file, preview: URL.createObjectURL(file) })),
+            audio: a ? { ...a, preview: a.file ? URL.createObjectURL(a.file) : (a.music && a.music.src) || '' } : null
+        };
+        s.feedAudience = result.audience;
+        s.feedStory = result.alsoStory;
+        postToFeed();
     }
 
     function renderFeedPhotos() {
@@ -5440,7 +5493,7 @@ document.addEventListener('DOMContentLoaded', () => {
         isHidden: (kind, id) => s.hidden.has(`${kind}:${id}`),
         // Open a feed post in the post view from anywhere (Explore, notifications, links), even if its card isn't on screen
         startProgress: opts => startProgress(opts),
-        soundOf, soundLineHTML, soundPlayer, soundRecord, openSound, useSound,
+        soundOf, soundLineHTML, soundPlayer, soundRecord, openSound, useSound, ownAudio, openPostEditor,
         uploadWithProgress: (bucket, path, body, type, onProgress) => uploadWithProgress(bucket, path, body, type, onProgress),
         openEntry(id, opts) {
             const p = findPost('entry', id);
@@ -5931,8 +5984,8 @@ document.addEventListener('DOMContentLoaded', () => {
             document.querySelector('.main-col').scrollTo({ top: 0 });
         },
         'go-insights': () => app.setView('insights'),
-        'feed-add-photos': async () => addFeedPhotos(await Media.pickFiles('image/*')),
-        'feed-camera': async () => addFeedPhotos(await Media.pickFiles('image/*', false, 'environment')),
+        'feed-add-photos': async () => openPostEditor(await Media.pickFiles('image/*')),
+        'feed-camera': async () => openPostEditor(await Media.pickFiles('image/*', false, 'environment')),
         'feed-remove-photo': el => {
             const photo = s.feedDraft.photos.find(p => p.id === el.dataset.id);
             if (photo) URL.revokeObjectURL(photo.preview);
@@ -5982,6 +6035,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!window.diaryStories) return;
             const [file] = await Media.pickFiles('video/*', false);
             if (!file) return;
+            if (window.diaryMediaEditor) return window.diaryStories.addReel(file);
             app.openPopover(el, [
                 { label: 'Post as a reel', icon: 'i-reel', onClick: () => window.diaryStories.addReel(file) },
                 { label: 'Add to your story', icon: 'i-plus', onClick: () => window.diaryStories.addStory(file) },

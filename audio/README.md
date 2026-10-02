@@ -60,3 +60,12 @@ Each post stores its sound in `diary_shared_entries.audio.music`. Each reel stor
 | `volume` | 0.1 to 1 |
 | `licenseUrl`, `licenseName`, `provider`, `shareurl` | Credit, required for Creative Commons tracks |
 | `createdAt` | When it was chosen |
+
+## Server-side catalogue (`diary_sound_catalog`)
+
+Migration `20261002060000_diary_sound_library.sql` adds the following:
+- **`diary_sound_catalog`:** licensed tracks you add in the Supabase dashboard. Only active rows are shown. The columns are `id`, `title`, `artist`, `cover_url`, `preview_url`, `audio_url`, `duration`, `category` (array), `trending`, `popular`, `is_new`, `license_url`, `license_name` and `provider`.
+- **`diary_saved_sounds`:** the bookmark on each sound. Until this table exists, saved sounds stay on the device.
+- **`diary_sound_usage` and `diary_sound_trending`:** "N posts" on each sound, and the Trending tab ranked by real use over the last 14 days.
+
+The library picks all of these up automatically once the migration has run.
