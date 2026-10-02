@@ -393,11 +393,34 @@ document.addEventListener('DOMContentLoaded', () => {
         const canEdit = !isVideo && window.PhotoEditor && file.type !== 'image/gif';
         $('mc-edit').hidden = !canEdit;
         $('mc-audio').hidden = !(allowAudio && (!isVideo || videoAudio) && I.pickAudio);
+        // Hear it before sharing: the music plays with the photo, or with the video from the start (its own sound under the music)
+        let hearing = null;
+        const stopHearing = () => {
+            if (hearing) { hearing.stop(); hearing = null; }
+            const v = preview.querySelector('video');
+            if (v) { v.muted = true; v.volume = 1; }
+            const b = $('mc-audio-chip').querySelector('.mc-hear');
+            if (b) { b.setAttribute('aria-pressed', 'false'); b.innerHTML = '<svg class="i"><use href="#i-play"/></svg>Preview'; }
+        };
+        const hear = () => {
+            if (!audio || !I.soundPlayer) return;
+            stopHearing();
+            const m = audio.music ? I.soundRecord(audio.music) : { volume: 1 };
+            if (audio.file && !audio.url) audio.url = URL.createObjectURL(audio.file);
+            hearing = I.soundPlayer(m, audio.file ? audio.url : m.src);
+            const v = preview.querySelector('video');
+            if (v) { v.currentTime = 0; v.muted = false; v.volume = 0.35; v.play().catch(() => { v.muted = true; v.play().catch(() => {}); }); }
+            hearing.play().catch(() => { stopHearing(); app.showToast('Couldn’t play that sound'); });
+            const b = $('mc-audio-chip').querySelector('.mc-hear');
+            if (b) { b.setAttribute('aria-pressed', 'true'); b.innerHTML = '<svg class="i"><use href="#i-pause"/></svg>Stop'; }
+        };
         const paintAudio = () => {
+            stopHearing();
             const chip = $('mc-audio-chip');
+            const m = audio && audio.music;
             chip.hidden = !audio;
-            chip.innerHTML = audio ? `<svg class="i"><use href="#i-music"/></svg><span>${esc(audio.name)} · ${Media.formatDuration(isVideo ? audio.duration : Math.min(audio.duration, STORY_AUDIO_MAX))}</span><button type="button" class="mc-audio-x" aria-label="Remove music"><svg class="i"><use href="#i-close"/></svg></button>` : '';
-            $('mc-audio').innerHTML = `<svg class="i"><use href="#i-music"/></svg>${audio ? 'Change music' : 'Add music'}`;
+            chip.innerHTML = audio ? `${m && window.diaryAudioLib ? window.diaryAudioLib.coverHTML({ cover: m.cover, style: m.style }) : '<svg class="i"><use href="#i-music"/></svg>'}<span class="mc-audio-text"><strong>${esc(m ? m.title : audio.name)}</strong><small>${m ? `${esc(m.artist)} · ` : ''}${Media.formatDuration(isVideo ? audio.duration : Math.min(audio.duration, STORY_AUDIO_MAX))}</small></span><button type="button" class="chip mc-hear" aria-pressed="false"><svg class="i"><use href="#i-play"/></svg>Preview</button><button type="button" class="mc-audio-x" aria-label="Remove sound"><svg class="i"><use href="#i-close"/></svg></button>` : '';
+            $('mc-audio').innerHTML = `<svg class="i"><use href="#i-music"/></svg>${audio ? 'Change sound' : 'Add sound'}`;
         };
         paintAudio();
         $('mc-edit').onclick = async () => {
@@ -410,10 +433,11 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         $('mc-audio').onclick = async e => {
             const picked = await I.pickAudio(e.currentTarget);
-            if (picked) { audio = picked; paintAudio(); }
+            if (picked) { if (audio && audio.url) URL.revokeObjectURL(audio.url); audio = picked; paintAudio(); hear(); }
         };
         $('mc-audio-chip').onclick = e => {
-            if (e.target.closest('.mc-audio-x')) { audio = null; paintAudio(); }
+            if (e.target.closest('.mc-audio-x')) { if (audio && audio.url) URL.revokeObjectURL(audio.url); audio = null; paintAudio(); }
+            else if (e.target.closest('.mc-hear')) { if (hearing) stopHearing(); else hear(); }
         };
         $('mc-title').textContent = title;
         $('mc-share').disabled = false;
@@ -429,6 +453,8 @@ document.addEventListener('DOMContentLoaded', () => {
         dialog.showModal();
         return new Promise(resolve => {
             const cleanup = value => {
+                stopHearing();
+                if (audio && audio.url) { URL.revokeObjectURL(audio.url); audio.url = null; }
                 $('mc-form').onsubmit = null;
                 $('mc-cancel').onclick = null;
                 dialog.onclose = null;
@@ -440,6 +466,7 @@ document.addEventListener('DOMContentLoaded', () => {
             };
             $('mc-form').onsubmit = e => {
                 e.preventDefault();
+                stopHearing();
                 $('mc-share').disabled = true;
                 $('mc-share').textContent = 'Sharing…';
                 // Keep the sheet up (showing progress) until the caller is done
@@ -579,7 +606,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 path = await uploadImage(STORY_BUCKET, `${s.profile.id}/${randomId()}`, upload);
             }
             if (!path) throw new Error('upload');
-            if (result.audio) {
+            if (result.audio && !result.audio.file) app.showToast('Licensed music can’t go on stories yet — posting the story without it');
+            else if (result.audio) {
                 audioPath = await I.uploadAudio('stories', result.audio.file);
                 if (!audioPath) app.showToast('Couldn’t add the music — posting the story without it');
             }
@@ -963,7 +991,7 @@ document.addEventListener('DOMContentLoaded', () => {
         st.reelsLoading = true;
         st.reelsAgain = false;
         const { data, error } = await client.from('diary_reels')
-            .select(`id, author, video_path, poster_path, caption, duration, created_at,
+            .select(`id, author, video_path, poster_path, caption, duration, created_at, music,
                 author_profile:diary_profiles!diary_reels_author_fkey(${PROFILE}),
                 likes:diary_reel_likes(user_id),
                 reshares:diary_reel_reshares(user_id, created_at),
@@ -988,6 +1016,18 @@ document.addEventListener('DOMContentLoaded', () => {
             (!author || r.author === author) && (!mine || r.author === s.profile.id) && (!saved || s.savedReels.has(r.id)));
     }
 
+    // The sound record a reel keeps (the music itself is mixed into the video)
+    function soundMeta(m) {
+        if (!m) return null;
+        const r = I.soundRecord ? I.soundRecord(m) : m;
+        const keep = ['audioId', 'id', 'title', 'artist', 'cover', 'coverArt', 'audioUrl', 'src', 'genre', 'category', 'source', 'style', 'start', 'length',
+            'startTime', 'endTime', 'duration', 'trackDuration', 'volume', 'licenseUrl', 'licenseName', 'shareurl', 'provider', 'createdAt'];
+        const out = {};
+        keep.forEach(k => { if (r[k] != null && r[k] !== '') out[k] = r[k]; });
+        return JSON.stringify(out).length <= 2000 ? out : null;
+    }
+    const reelSound = r => (r.music && I.soundOf ? I.soundOf({ music: r.music, path: null }) : null);
+
     function feedCard(r) {
         const me = s.profile.id;
         const p = r.author_profile || { display_name: 'Someone', username: '' };
@@ -1005,7 +1045,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${avatar(person, 'md')}
                     <div class="post-who">
                         <strong>${r.author === me ? 'You' : esc(p.display_name)} <span class="post-badge reel-badge"><svg class="i"><use href="#i-reel"/></svg>Reel</span></strong>
-                        <span class="muted">@${esc(p.username)} · ${timeAgo(r.created_at)}</span>
+                        <span class="muted post-sub">${reelSound(r) ? I.soundLineHTML(reelSound(r)) : `@${esc(p.username)}`}</span>
                     </div>
                 </header>
                 <div class="reel-post-media">
@@ -1028,6 +1068,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     </button>
                 </div>
                 ${r.caption ? `<div class="post-caption"><strong class="cap-name">${r.author === me ? 'You' : esc(p.display_name)}</strong> <span class="post-text">${I.linkTags(esc(r.caption))}</span></div>` : ''}
+                <p class="post-when"><span class="post-time">${timeAgo(r.created_at)}</span></p>
             </article>`;
     }
 
@@ -1129,6 +1170,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${reshared || via ? `<p class="reel-via"><svg class="i"><use href="#i-repost"/></svg>${reshared ? 'You reshared this' : `Reshared by ${esc(String(via.display_name || '').split(' ')[0])}`}</p>` : ''}
                     <div class="reel-who">${avatar(person, 'sm')}<strong>${r.author === me ? 'You' : esc(p.display_name)}</strong><span>· ${timeAgo(r.created_at)}</span></div>
                     ${r.caption ? `<p class="reel-caption${long ? ' clamped' : ''}"${long ? ' data-action="reel-caption"' : ''}>${I.linkTags(esc(r.caption))}</p>` : ''}
+                    ${reelSound(r) ? `<p class="reel-sound">${I.soundLineHTML(reelSound(r))}</p>` : ''}
                 </div>
                 <div class="reel-side">
                     <button class="reel-act" data-action="reel-like" data-id="${esc(r.id)}" aria-pressed="${liked}" aria-label="${liked ? 'Unlike' : 'Like'}">
@@ -1319,11 +1361,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 if (!saved) {
                     prog(0.95, 'Publishing…');
-                    const { error } = await client.from('diary_reels').insert({ video_path: videoPath, poster_path: posterPath, caption: result.caption, duration });
+                    const music = soundMeta(result.audio && result.audio.music);
+                    const { error } = await client.from('diary_reels').insert({ video_path: videoPath, poster_path: posterPath, caption: result.caption, duration, ...(music ? { music } : {}) });
                     if (error) throw error;
                     saved = true;
                     // It's saved. Read it back (a failure here is harmless: the reload below fetches it anyway)
-                    const { data: made } = await client.from('diary_reels').select('id, author, video_path, poster_path, caption, duration, created_at')
+                    const { data: made } = await client.from('diary_reels').select('id, author, video_path, poster_path, caption, duration, created_at, music')
                         .eq('video_path', videoPath).maybeSingle().then(r => r, () => ({ data: null }));
                     if (made) {
                         const mine = { ...made, author_profile: { username: s.profile.username, display_name: s.profile.display_name, avatar_path: s.profile.avatar_path }, likes: [], reshares: [], comments: [{ count: 0 }] };

@@ -274,7 +274,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Every page is a browser history entry (#/feed, #/community/<id> …), so Back / Forward and the phone's
     // back gesture move between pages. Open sheets and dialogs share one extra entry on top: Back closes the
     // top one instead of leaving the page.
-    const ROUTE_KEYS = { community: 'communityId', folder: 'folderId', profile: 'profileId', post: 'postId' };
+    const ROUTE_KEYS = { community: 'communityId', folder: 'folderId', profile: 'profileId', post: 'postId', sound: 'soundId' };
     const ROOT_VIEWS = ['home', 'feed', 'explore', 'communities', 'messages'];
     const routeListeners = [];
     let ignorePops = 0;

@@ -3164,15 +3164,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const others = likes.length - (mine ? 1 : 0) - (known ? 1 : 0);
         const names = [mine ? 'You' : '', known ? esc(known.display_name.split(' ')[0]) : ''].filter(Boolean);
         const text = names.length
-            ? `${names.join(names.length === 2 && !others ? ' and ' : ', ')}${others > 0 ? ` and ${others} ${others === 1 ? 'other' : 'others'}` : ''}`
-            : `${likes.length}`;
+            ? `Liked by <b>${names.join(names.length === 2 && !others ? '</b> and <b>' : '</b>, <b>')}</b>${others > 0 ? ` and <b>${others} ${others === 1 ? 'other' : 'others'}</b>` : ''}`
+            : `<b>${likes.length} ${likes.length === 1 ? 'like' : 'likes'}</b>`;
         return `<button type="button" class="react-sum" data-action="reactors" data-kind="${kind}" data-id="${esc(id)}" aria-label="${likes.length} ${likes.length === 1 ? 'reaction' : 'reactions'} — see who reacted"><span class="react-sum-emojis" aria-hidden="true">${top.map(e => `<i>${e}</i>`).join('')}</span><span class="react-sum-text">${text}</span></button>`;
     }
 
     function likeButtonHTML(kind, id, likes) {
         const mine = myReaction(likes);
         const name = mine ? REACT_NAME[mine] || 'Like' : 'Like';
-        return `<button class="act like-btn${mine ? ' reacted' : ''}" data-action="like" data-kind="${kind}" data-id="${esc(id)}" aria-pressed="${!!mine}" aria-label="${mine ? `You reacted ${name} — tap to remove, hold for other reactions` : 'Like — hold for more reactions'}" title="Hold for more reactions">${mine ? `<span class="like-emoji" aria-hidden="true">${mine}</span>` : '<svg class="i"><use href="#i-thumb"/></svg>'}<span class="act-label">${name}</span></button>`;
+        return `<button class="act like-btn${mine ? ' reacted' : ''}" data-action="like" data-kind="${kind}" data-id="${esc(id)}" aria-pressed="${!!mine}" aria-label="${mine ? `You reacted ${name} — tap to remove, hold for other reactions` : 'Like — hold for more reactions'}" title="Hold for more reactions">${mine ? `<span class="like-emoji" aria-hidden="true">${mine}</span>` : '<svg class="i"><use href="#i-thumb"/></svg>'}<span class="act-label">${name}</span><span class="act-count">${(likes || []).length || ''}</span></button>`;
     }
 
     // Set, change or remove your reaction on a feed post ('entry') or group post ('post')
@@ -3559,14 +3559,51 @@ document.addEventListener('DOMContentLoaded', () => {
         return { id: clip.id, path, name: name.slice(0, 80), duration: Math.round(clip.duration || 0) || null, ...(clip.music ? { music: clip.music } : {}) };
     }
 
+    // ---------- Sounds ----------
+    // A post's sound shows as "♪ Artist · Title" under the creator's name and opens its Sound page (#/sound/<id>)
+    s.sounds = new Map(); // audioId -> the sound record (+ path of a rendered clip), so the Sound page opens instantly
+    const soundRecord = m => (window.diaryAudioLib && window.diaryAudioLib.record ? window.diaryAudioLib.record(m) : m);
+    function soundOf(audio) {
+        if (!audio || !audio.music || !(audio.path || audio.music.src)) return null;
+        const m = soundRecord(audio.music);
+        if (m && m.audioId && !s.sounds.has(String(m.audioId))) s.sounds.set(String(m.audioId), { ...m, path: audio.path || null });
+        return m && m.audioId ? m : null;
+    }
+    function soundLineHTML(m) {
+        return `<button type="button" class="post-sound" data-action="sound-open" data-id="${esc(m.audioId)}" aria-label="Sound: ${esc(m.title)} by ${esc(m.artist)} — see posts using it"><svg class="i"><use href="#i-music"/></svg><span class="ps-text">${esc(m.artist)} · ${esc(m.title)}</span></button>`;
+    }
+    // The speaker on a photo: tap to hear the post's sound
+    function mediaSoundHTML(audio, m) {
+        return `<button type="button" class="media-sound" data-action="post-music" data-path="${esc(audio.path || '')}" data-music="${esc(JSON.stringify(m))}" aria-pressed="false" aria-label="Play the sound: ${esc(m.title)} by ${esc(m.artist)}"><svg class="i pm-i-play"><use href="#i-volume-off"/></svg><svg class="i pm-i-pause"><use href="#i-volume"/></svg></button>`;
+    }
+    // Plays a sound record from its chosen part, looping that part. url: a rendered clip or the licensed stream.
+    function soundPlayer(m, url, { loop = true } = {}) {
+        const a = new Audio(url);
+        const licensed = m && m.source === 'licensed';
+        const start = licensed ? Number(m.start) || 0 : 0;
+        const end = licensed ? start + (Number(m.length) || 30) : Infinity;
+        a.volume = Math.max(0.05, Math.min(1, (m && m.volume) || 0.8));
+        a.loop = loop && !licensed;
+        a.preload = 'auto';
+        const seek = () => { try { a.currentTime = start; } catch (e) {} };
+        if (start) a.addEventListener('loadedmetadata', seek, { once: true });
+        a.addEventListener('timeupdate', () => {
+            if (a.currentTime < end) return;
+            if (loop) seek(); else a.pause();
+        });
+        const play = () => { if (start && a.readyState >= 1 && (a.currentTime < start || a.currentTime >= end)) seek(); return a.play(); };
+        return { audio: a, play, stop: () => { a.pause(); a.removeAttribute('src'); a.load(); } };
+    }
+
     function audioCardHTML(audio) {
         if (audio && audio.music && (audio.path || audio.music.src)) {
-            const m = audio.music;
+            const m = soundRecord(audio.music);
+            soundOf(audio);
             const cover = window.diaryAudioLib && window.diaryAudioLib.coverHTML ? window.diaryAudioLib.coverHTML({ cover: m.cover, style: m.style }) : '';
             return `
             <div class="post-music">
                 ${cover}
-                <span class="pm-text"><strong>${esc(m.title)}</strong><small>${esc(m.artist)}${m.licenseUrl ? ` · <a class="pm-lic" href="${esc(m.licenseUrl)}" target="_blank" rel="noopener noreferrer">${esc(m.licenseName || 'Creative Commons')}</a>${m.provider ? ` · ${esc(m.provider)}` : ''}` : m.category ? ` · ${esc(m.category)}` : ''}</small></span>
+                <span class="pm-text"><strong>${m.audioId ? `<button type="button" class="pm-title" data-action="sound-open" data-id="${esc(m.audioId)}">${esc(m.title)}</button>` : esc(m.title)}</strong><small>${esc(m.artist)}${m.licenseUrl ? ` · <a class="pm-lic" href="${esc(m.licenseUrl)}" target="_blank" rel="noopener noreferrer">${esc(m.licenseName || 'Creative Commons')}</a>${m.provider ? ` · ${esc(m.provider)}` : ''}` : m.category ? ` · ${esc(m.category)}` : ''}</small></span>
                 <button type="button" class="pm-play" data-action="post-music" data-path="${esc(audio.path || '')}" data-music="${esc(JSON.stringify(m))}" aria-label="Play ${esc(m.title)} by ${esc(m.artist)}" aria-pressed="false"><svg class="i pm-i-play"><use href="#i-play"/></svg><svg class="i pm-i-pause"><use href="#i-pause"/></svg></button>
             </div>`;
         }
@@ -3773,7 +3810,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="pc-foot">
                             <button type="button" class="pc-tool" data-action="feed-add-photos"><svg class="i"><use href="#i-image"/></svg><span class="pc-tl">Photo</span></button>
                             <button type="button" class="pc-tool camera" data-action="feed-camera"><svg class="i"><use href="#i-camera"/></svg><span class="pc-tl">Camera</span></button>
-                            <button type="button" class="pc-tool audio" data-action="feed-audio" aria-haspopup="menu"><svg class="i"><use href="#i-music"/></svg><span class="pc-tl">Audio</span></button>
+                            <button type="button" class="pc-tool audio" data-action="feed-audio" aria-haspopup="menu"><svg class="i"><use href="#i-music"/></svg><span class="pc-tl">Sound</span></button>
                             <button type="button" class="pc-tool video" data-action="feed-video"><svg class="i"><use href="#i-reel"/></svg><span class="pc-tl">Video</span></button>
                             <button type="button" class="pc-tool note-media" data-action="note-media" aria-haspopup="menu" title="Turn one of your notes into a video or audio post"><svg class="i"><use href="#i-sparkle"/></svg><span class="pc-tl">Note<span class="pc-tl-more"> → video</span></span></button>
                             <button type="button" class="pc-tool live" data-action="live-start"><svg class="i"><use href="#i-live"/></svg><span class="pc-tl">Live</span></button>
@@ -3937,10 +3974,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const m = a && a.music;
         box.innerHTML = a ? `
             ${m && window.diaryAudioLib ? window.diaryAudioLib.coverHTML({ cover: m.cover, style: m.style }) : '<span class="pa-art small" aria-hidden="true"><svg class="i"><use href="#i-music"/></svg></span>'}
-            <span class="pc-audio-text"><strong>${esc(m ? m.title : a.name)}</strong><small>${m ? `${esc(m.artist)} · ${Media.formatDuration(m.start)}–${Media.formatDuration(m.start + m.length)} · ${Math.round((m.volume || 0.8) * 100)}% volume` : `${Media.formatDuration(a.duration)} · plays with your post`}</small></span>
-            <button type="button" class="pc-audio-play" data-action="feed-audio-play" aria-label="Play preview"><svg class="i"><use href="#i-play"/></svg></button>
+            <span class="pc-audio-text"><strong>${esc(m ? m.title : a.name)}</strong><small>${m ? `${esc(m.artist)} · ${Media.formatDuration(m.start)}–${Media.formatDuration(m.start + m.length)}` : `${Media.formatDuration(a.duration)} · plays with your post`}</small></span>
+            <button type="button" class="pc-audio-play" data-action="feed-audio-play" aria-label="Play the sound"><svg class="i"><use href="#i-play"/></svg></button>
             <audio preload="metadata" src="${a.preview}" hidden></audio>
-            <button type="button" class="att-remove" data-action="feed-remove-audio" aria-label="Remove audio"><svg class="i"><use href="#i-close"/></svg></button>` : '';
+            <span class="pc-audio-btns">
+                <button type="button" class="chip" data-action="feed-audio" aria-haspopup="menu">Change</button>
+                ${s.feedDraft.photos.length ? '<button type="button" class="chip accent" data-action="feed-preview">Preview</button>' : ''}
+            </span>
+            <button type="button" class="att-remove" data-action="feed-remove-audio" aria-label="Remove sound"><svg class="i"><use href="#i-close"/></svg></button>` : '';
     }
 
     // ---------- Posting progress (a strip at the top of the Feed, like Instagram) ----------
@@ -4239,7 +4280,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return isNaN(d) ? '' : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
     }
 
-    function postMediaHTML(o, photos) {
+    function postMediaHTML(o, photos, extra = '') {
         const key = `${o.kind}:${o.id}`;
         return `
             <div class="post-media" data-like-kind="${o.kind}" data-like-id="${esc(o.id)}">
@@ -4253,6 +4294,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <span class="slide-count">1/${photos.length}</span>
                     <div class="dots">${photos.map((_, i) => `<span${i === 0 ? ' class="on"' : ''}></span>`).join('')}</div>` : ''}
                 <span class="burst" aria-hidden="true"><svg class="i"><use href="#i-heart-fill"/></svg></span>
+                ${extra}
             </div>`;
     }
 
@@ -4423,7 +4465,8 @@ document.addEventListener('DOMContentLoaded', () => {
         return `
             ${likeButtonHTML(o.kind, o.id, o.likes)}
             <button class="act" data-action="post-open" data-key="${esc(key)}" data-focus="input" aria-label="Comment${o.commentCount ? ` — ${o.commentCount} so far` : ''}"><svg class="i"><use href="#i-chat"/></svg><span class="act-count">${o.commentCount || ''}</span></button>
-            ${o.kind === 'entry' ? `<button class="act share-btn" data-action="post-share" data-id="${esc(o.id)}" aria-haspopup="menu" aria-label="Share${o.reposts.length ? ` — reposted ${o.reposts.length} ${o.reposts.length === 1 ? 'time' : 'times'}` : ''}"><svg class="i"><use href="#i-share"/></svg><span class="act-count">${o.reposts.length || ''}</span></button>` : ''}
+            ${o.kind === 'entry' ? `<button class="act share-btn" data-action="post-share" data-id="${esc(o.id)}" aria-haspopup="menu" aria-label="Repost or share${o.reposts.length ? ` — reposted ${o.reposts.length} ${o.reposts.length === 1 ? 'time' : 'times'}` : ''}"><svg class="i"><use href="#i-repost"/></svg><span class="act-count">${o.reposts.length || ''}</span></button>` : ''}
+            ${o.kind === 'entry' && window.diaryNoteShare && window.diaryNoteShare.send ? `<button class="act send-btn" data-action="post-send" data-id="${esc(o.id)}" aria-label="Send to a friend"><svg class="i"><use href="#i-send"/></svg></button>` : ''}
             ${o.kind === 'entry' ? '' : o.canRepost ? (() => {
                 const on = o.reposts.some(r => r.user_id === me);
                 return `<button class="act repost-btn" data-action="repost" data-id="${esc(o.id)}" aria-pressed="${on}" aria-label="${on ? 'Undo repost' : 'Repost to your friends'}"><svg class="i"><use href="#i-repost"/></svg><span class="act-count">${o.reposts.length || ''}</span></button>`;
@@ -4442,6 +4485,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const key = `${o.kind}:${o.id}`;
         s.rendered.set(key, o);
         if (s.detail === key) scheduleDetailRepaint();
+        const snd = soundOf(o.audio);
+        const timeBelow = o.kind === 'entry'; // Feed posts end with their time, like Instagram; group posts keep it up top
+        const timeHTML = `<button type="button" class="post-time" data-action="post-open" data-key="${esc(key)}" title="${esc(fullDate(o.createdAt))} — open post">${timeAgo(o.createdAt)}</button>`;
+        const lic = snd && snd.licenseUrl ? ` · <a class="pm-lic" href="${esc(snd.licenseUrl)}" target="_blank" rel="noopener noreferrer">♪ ${esc(snd.licenseName || 'Creative Commons')}${snd.provider ? ` · ${esc(snd.provider)}` : ''}</a>` : '';
 
         return `
             <article class="post ig${postVariant(o, photos) ? ` is-${postVariant(o, photos)}` : ''}" data-post="${key}" data-search="${esc(`${profile.display_name} ${profile.username} ${o.title || ''} ${o.body || ''}`.toLowerCase())}">
@@ -4451,16 +4498,19 @@ document.addEventListener('DOMContentLoaded', () => {
                     <button type="button" class="post-av" data-profile="${esc(o.author)}" aria-label="${esc(profile.display_name)}’s profile">${avatar(person, 'md')}</button>
                     <div class="post-who">
                         <strong><button type="button" class="name-link" data-profile="${esc(o.author)}">${name}</button>${tick(o.author)}${o.badge ? ` <span class="post-badge">${o.badge}</span>` : ''}</strong>
-                        <span class="muted">@${esc(profile.username)} · ${o.audience === 'public' ? '<svg class="i aud" aria-label="Everyone can see this"><use href="#i-globe"/></svg> · ' : ''}<button type="button" class="post-time" data-action="post-open" data-key="${esc(key)}" title="${esc(fullDate(o.createdAt))} — open post">${timeAgo(o.createdAt)}</button>${o.mood ? ` · ${MOOD_EMOJI[o.mood] || ''}` : ''}</span>
+                        ${snd ? `<span class="muted post-sub">${soundLineHTML(snd)}</span>`
+                            : timeBelow ? `<span class="muted post-sub">@${esc(profile.username)}${o.audience === 'public' ? ' · <svg class="i aud" aria-label="Everyone can see this"><use href="#i-globe"/></svg>' : ''}${o.mood ? ` · ${MOOD_EMOJI[o.mood] || ''}` : ''}</span>`
+                            : `<span class="muted">@${esc(profile.username)} · ${o.audience === 'public' ? '<svg class="i aud" aria-label="Everyone can see this"><use href="#i-globe"/></svg> · ' : ''}${timeHTML}${o.mood ? ` · ${MOOD_EMOJI[o.mood] || ''}` : ''}</span>`}
                     </div>
                     <button class="more-btn" data-action="post-menu" data-kind="${o.kind}" data-id="${esc(o.id)}" aria-label="Post options"><svg class="i"><use href="#i-more"/></svg></button>
                 </header>
-                ${photos.length ? postMediaHTML(o, photos) : postVariant(o, photos) === 'note' ? noteCardHTML(o) : postVariant(o, photos) === 'playnote' ? playnoteCardHTML(o) : postCaptionHTML(o, photos, false)}
-                ${audioCardHTML(o.audio)}
+                ${photos.length ? postMediaHTML(o, photos, snd ? mediaSoundHTML(o.audio, snd) : '') : postVariant(o, photos) === 'note' ? noteCardHTML(o) : postVariant(o, photos) === 'playnote' ? playnoteCardHTML(o) : postCaptionHTML(o, photos, false)}
+                ${photos.length && snd ? '' : audioCardHTML(o.audio)}
                 ${o.bodyExtra || ''}
                 <div class="post-actions">${postActionsHTML(o)}</div>
                 <div class="react-sum-row" data-react-sum>${reactSummaryHTML(o.kind, o.id, o.likes)}</div>
                 ${photos.length ? postCaptionHTML(o, photos, false) : ''}
+                ${timeBelow ? `<p class="post-when">${timeHTML}${snd && o.audience === 'public' ? ' · <svg class="i aud" aria-label="Everyone can see this"><use href="#i-globe"/></svg>' : ''}${snd && o.mood ? ` · ${MOOD_EMOJI[o.mood] || ''}` : ''}${photos.length ? lic : ''}</p>` : ''}
                 ${o.extraHTML || ''}
                 ${commentsBlock(o.kind, o.id, o.commentCount, o.canComment)}
             </article>`;
@@ -4910,7 +4960,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Double-tap / double-click a photo to like it
     content.addEventListener('dblclick', e => {
         const media = e.target.closest('.post-media');
-        if (!media) return;
+        if (!media || e.target.closest('.media-sound')) return;
         e.preventDefault();
         clearTimeout(s.photoTap);
         const burst = media.querySelector('.burst');
@@ -5260,6 +5310,121 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (e.key === 'l' && current) { e.preventDefault(); current.querySelector('.like-btn')?.click(); }
     });
 
+    // ---------- Sound page + previews ----------
+    function openSound(id) {
+        if (!id) return;
+        if (window.diaryAudioLib) window.diaryAudioLib.stop();
+        closePost();
+        app.setView('sound', { soundId: String(id) });
+    }
+    // "Use this sound": the composer opens with it chosen
+    async function useSound(m) {
+        if (!window.diaryAudioLib) return;
+        if (app.state.view !== 'feed') app.setView('feed');
+        const picked = await window.diaryAudioLib.open({ track: m });
+        if (!picked) return;
+        if (s.feedDraft.audio && s.feedDraft.audio.file) URL.revokeObjectURL(s.feedDraft.audio.preview);
+        s.feedDraft.audio = { ...picked, preview: picked.file ? URL.createObjectURL(picked.file) : (picked.music && picked.music.src) || '' };
+        s.composerEngaged = true;
+        app.render();
+        renderFeedAudio();
+        const box = $('feed-text');
+        if (box) { box.scrollIntoView({ block: 'center', behavior: 'smooth' }); box.focus({ preventScroll: true }); }
+        app.showToast('Sound added — add a photo and a caption, then post');
+    }
+
+    // Your post as it will look, with its sound playing, before you publish
+    let previewDlg = null;
+    function openDraftPreview() {
+        const d = s.feedDraft;
+        const m = d.audio && d.audio.music ? soundRecord(d.audio.music) : null;
+        const text = ($('feed-text') || {}).value || '';
+        if (!previewDlg) {
+            previewDlg = document.createElement('dialog');
+            previewDlg.className = 'draft-preview';
+            previewDlg.setAttribute('aria-labelledby', 'dp-h');
+            document.body.append(previewDlg);
+        }
+        let player = null;
+        const stop = () => {
+            if (player) { player.stop(); player = null; }
+            const b = previewDlg.querySelector('.media-sound');
+            if (b) { b.classList.remove('playing'); b.setAttribute('aria-pressed', 'false'); }
+        };
+        const play = () => {
+            if (!d.audio) return;
+            stop();
+            player = soundPlayer(m || {}, d.audio.preview);
+            const b = previewDlg.querySelector('.media-sound');
+            player.play().then(() => { if (b) { b.classList.add('playing'); b.setAttribute('aria-pressed', 'true'); } }).catch(() => {});
+        };
+        const photos = d.photos;
+        previewDlg.innerHTML = `
+            <div class="dp-card">
+                <header class="dp-head"><h3 id="dp-h">Preview</h3><button type="button" class="icon-btn" data-dp="close" aria-label="Back to editing"><svg class="i"><use href="#i-close"/></svg></button></header>
+                <article class="post ig dp-post">
+                    <header class="post-head">
+                        <span class="post-av">${avatar(s.profile, 'md')}</span>
+                        <div class="post-who">
+                            <strong>${esc(s.profile.display_name)}${tick(s.profile.id)}</strong>
+                            <span class="muted post-sub">${m ? `<span class="post-sound"><svg class="i"><use href="#i-music"/></svg><span class="ps-text">${esc(m.artist)} · ${esc(m.title)}</span></span>` : `@${esc(s.profile.username)}`}</span>
+                        </div>
+                    </header>
+                    ${photos.length ? `<div class="post-media"><div class="carousel dp-carousel" data-count="${photos.length}">${photos.map((p, i) => `<span class="slide"><img src="${p.preview}" alt="Photo ${i + 1} of ${photos.length}"></span>`).join('')}</div>
+                        ${d.audio ? '<button type="button" class="media-sound" data-dp="sound" aria-pressed="false" aria-label="Sound on or off"><svg class="i pm-i-play"><use href="#i-volume-off"/></svg><svg class="i pm-i-pause"><use href="#i-volume"/></svg></button>' : ''}</div>` : ''}
+                    <div class="post-actions dp-actions" aria-hidden="true"><span class="act"><svg class="i"><use href="#i-thumb"/></svg></span><span class="act"><svg class="i"><use href="#i-chat"/></svg></span><span class="act"><svg class="i"><use href="#i-repost"/></svg></span><span class="act"><svg class="i"><use href="#i-send"/></svg></span><span class="act save-btn"><svg class="i"><use href="#i-bookmark"/></svg></span></div>
+                    ${text.trim() ? `<div class="post-caption"><strong class="cap-name">${esc(s.profile.display_name)}</strong> <span class="post-text">${linkTags(esc(text.trim()))}</span></div>` : ''}
+                    <p class="post-when"><span class="post-time">Just now</span> · ${s.feedAudience === 'public' ? 'Everyone' : 'Friends'}</p>
+                </article>
+                <footer class="dp-foot">
+                    <button type="button" class="ghost-btn" data-dp="close">Keep editing</button>
+                    <button type="button" class="primary-btn" data-dp="publish">Post</button>
+                </footer>
+            </div>`;
+        previewDlg.onclick = e => {
+            if (e.target === previewDlg) return previewDlg.close();
+            const el = e.target.closest('[data-dp]');
+            if (!el) return;
+            const what = el.dataset.dp;
+            if (what === 'close') previewDlg.close();
+            else if (what === 'sound') { if (player) stop(); else play(); }
+            else if (what === 'publish') {
+                previewDlg.close();
+                const post = $('feed-post-btn');
+                if (post) post.click();
+            }
+        };
+        previewDlg.onclose = stop;
+        if (window.diaryAudioLib) window.diaryAudioLib.stop();
+        previewDlg.showModal();
+        play(); // opened by a tap, so the sound may start straight away
+    }
+
+    // With sound turned on, a photo's sound plays while it's mostly on screen
+    let soundWatch = null;
+    function watchPostSounds() {
+        if (soundWatch) soundWatch.disconnect();
+        const media = [...content.querySelectorAll('.post-media .media-sound')].map(b => b.closest('.post-media'));
+        if (window.diaryAudioLib && window.diaryAudioLib.adopt) window.diaryAudioLib.adopt(content);
+        if (!media.length || !('IntersectionObserver' in window)) return;
+        soundWatch = new IntersectionObserver(entries => {
+            entries.forEach(entry => {
+                const b = entry.target.querySelector('.media-sound');
+                if (!b) return;
+                const playing = b.classList.contains('playing');
+                if (entry.intersectionRatio >= 0.7 && s.soundOn && !playing && !document.querySelector('.media-sound.playing')) b.click();
+                else if (entry.intersectionRatio < 0.3 && playing && window.diaryAudioLib) window.diaryAudioLib.stop();
+            });
+        }, { threshold: [0, 0.3, 0.7] });
+        media.forEach(m => soundWatch.observe(m));
+    }
+    const afterSounds = app.hooks.afterRender;
+    app.hooks.afterRender = (viewName, how) => {
+        if (afterSounds) afterSounds(viewName, how);
+        if (viewName === 'feed' || viewName === 'profile' || viewName === 'sound') watchPostSounds();
+        else if (soundWatch) { soundWatch.disconnect(); soundWatch = null; if (window.diaryAudioLib) window.diaryAudioLib.stop(); }
+    };
+
     window.diarySocial.internals = {
         client, state: s, esc, avatar, avatarUrl, timeAgo, gate, extFor, randomId, uploadImage, hydrateStorage,
         renderPost, commentCount, openComments, repaintComments, MOOD_EMOJI: () => MOOD_EMOJI,
@@ -5275,6 +5440,7 @@ document.addEventListener('DOMContentLoaded', () => {
         isHidden: (kind, id) => s.hidden.has(`${kind}:${id}`),
         // Open a feed post in the post view from anywhere (Explore, notifications, links), even if its card isn't on screen
         startProgress: opts => startProgress(opts),
+        soundOf, soundLineHTML, soundPlayer, soundRecord, openSound, useSound,
         uploadWithProgress: (bucket, path, body, type, onProgress) => uploadWithProgress(bucket, path, body, type, onProgress),
         openEntry(id, opts) {
             const p = findPost('entry', id);
@@ -5825,6 +5991,15 @@ document.addEventListener('DOMContentLoaded', () => {
         'repost': el => toggleRepost(el.dataset.id),
         'post-retry': () => { const u = s.upload; if (u && u.retry) u.retry(); },
         'post-discard': () => { const u = s.upload; if (u && u.discard) u.discard(); else { s.upload = null; paintProgress(); } },
+        'sound-open': el => openSound(el.dataset.id),
+        'post-send': el => {
+            const post = findPost('entry', el.dataset.id);
+            if (!post || !window.diaryNoteShare) return;
+            const name = post.author === s.profile.id ? 'you' : ((post.author_profile && post.author_profile.display_name) || 'a friend');
+            const text = [post.title, post.body].filter(x => x && String(x).trim()).join('\n\n');
+            window.diaryNoteShare.send({ title: post.title || `A post from ${name}`, text: `${text}\n\n${location.origin}/#/post/${post.id}`.slice(0, 4000), color: post.color });
+        },
+        'feed-preview': () => openDraftPreview(),
         'post-music': async el => {
             let music = null;
             try { music = JSON.parse(el.dataset.music || 'null'); } catch (e) {}
@@ -5835,7 +6010,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 url = data && data.signedUrl;
             }
             if (!url) return app.showToast('Couldn’t load that audio');
-            window.diaryAudioLib.playPost(el, music, url);
+            await window.diaryAudioLib.playPost(el, music, url);
+            // Turning a photo's sound on keeps sound on while you scroll (like Instagram); off turns it off
+            if (el.classList.contains('media-sound')) s.soundOn = el.classList.contains('playing');
         },
         'post-share': el => openPostShare(el, el.dataset.id),
         'feed-more': () => { s.feedShown = (s.feedShown || FEED_PAGE) + FEED_PAGE; app.render(); },

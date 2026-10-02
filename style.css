@@ -15283,3 +15283,121 @@ body[data-view="feed"] .feed-v2 .post.ig .post-music { margin: 8px 0 2px; }
 @media (prefers-reduced-motion: reduce) { .al-spin { animation: none; } }
 .pm-lic { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .al-card .search.al-search { order: 0; }
+
+/* ---------- Sounds on posts: "♪ Artist · Title" under the creator, the speaker on the photo ---------- */
+.post-sub { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.post-sound {
+    display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%;
+    padding: 2px 0; border: 0; background: none; color: var(--text); font: inherit; font-size: 0.78rem; font-weight: 600;
+    cursor: pointer; touch-action: manipulation;
+}
+.post-sound .i { flex: none; width: 13px; height: 13px; }
+.post-sound .ps-text { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (hover: hover) and (pointer: fine) { button.post-sound:hover .ps-text { text-decoration: underline; } }
+.post-sound:focus-visible, .pm-title:focus-visible, .media-sound:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.post-head .post-sound { position: relative; }
+.post-head button.post-sound::after { content: ''; position: absolute; inset: -10px -4px; }
+
+.media-sound {
+    position: absolute; right: 12px; bottom: 12px; z-index: 2;
+    display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%;
+    background: rgba(18, 18, 22, 0.72); color: #fff; cursor: pointer; touch-action: manipulation;
+    transition: transform 120ms ease-out, background 120ms;
+}
+.media-sound::after { content: ''; position: absolute; inset: -8px; }
+.media-sound .i { width: 16px; height: 16px; }
+.media-sound .pm-i-pause, .media-sound.playing .pm-i-play { display: none; }
+.media-sound.playing .pm-i-pause { display: block; }
+.media-sound:active { transform: scale(0.92); }
+.post-media:has(.dots) .media-sound { bottom: 28px; }
+
+.pm-title { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+@media (hover: hover) and (pointer: fine) { .pm-title:hover { text-decoration: underline; } }
+
+/* The post ends with its time (and the licence when the sound needs crediting) */
+.post-when { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 0; padding: 6px 16px 2px; color: var(--text-muted); font-size: 0.72rem; letter-spacing: 0.01em; }
+.post-when .post-time { font-size: inherit; }
+.post-when .aud { width: 12px; height: 12px; }
+.post-when .pm-lic { color: inherit; }
+body[data-view="feed"] .feed-v2 .post.ig .post-when { padding: 6px 4px 2px; }
+
+/* Counts sit beside the icons; the like's word gives way to its number */
+.post.ig .post-actions .like-btn .act-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.post.ig .post-actions .like-btn.reacted .act-count { color: var(--text); }
+.react-sum-text b { font-weight: 750; color: var(--text); }
+.react-sum-text { color: var(--text-muted); }
+
+/* ---------- Composer: the chosen sound ---------- */
+.pc-audio { flex-wrap: wrap; }
+.pc-audio .pc-audio-btns { display: inline-flex; gap: 6px; }
+.pc-audio .pc-audio-btns .chip { min-height: 32px; padding: 0 12px; font-size: 0.8rem; }
+@media (max-width: 480px) { .pc-audio .pc-audio-btns { order: 5; flex-basis: 100%; padding-left: 46px; } }
+
+/* ---------- Preview before posting ---------- */
+.draft-preview { width: min(480px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 0; border: 0; border-radius: 20px; background: var(--surface); color: var(--text); box-shadow: var(--shadow-lg); overflow: hidden; }
+.draft-preview::backdrop { background: rgba(8, 8, 12, 0.6); }
+.dp-card { display: flex; flex-direction: column; max-height: calc(100dvh - 24px); }
+.dp-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 10px 10px 18px; border-bottom: 1px solid var(--border); }
+.dp-head h3 { margin: 0; font-size: 1rem; }
+.dp-post { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin: 0; border: 0 !important; border-radius: 0; box-shadow: none !important; }
+.dp-post .post-head { padding: 12px 14px; }
+.dp-post .post-media { border-radius: 0; }
+.dp-carousel .slide { flex: 0 0 100%; scroll-snap-align: start; display: block; }
+.dp-carousel img { display: block; width: 100%; max-height: 60dvh; object-fit: cover; }
+.dp-actions { padding: 6px 8px 0; pointer-events: none; }
+.dp-actions .act { display: inline-grid; place-items: center; min-width: 40px; min-height: 40px; color: var(--text); }
+.dp-post .post-caption { padding: 4px 16px 0; }
+.dp-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--border); }
+
+/* ---------- Reel sheet: the chosen sound ---------- */
+.mc-audio-chip { gap: 8px; padding: 4px; border-radius: 14px; }
+.mc-audio-chip .al-cover { width: 36px; height: 36px; border-radius: 8px; padding-bottom: 7px; }
+.mc-audio-chip .al-cover.gen i { width: 3px; }
+.mc-audio-chip .mc-audio-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+.mc-audio-chip .mc-audio-text strong, .mc-audio-chip .mc-audio-text small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mc-audio-chip .mc-audio-text small { font-weight: 500; opacity: 0.8; }
+.mc-audio-chip .mc-hear { flex: none; min-height: 30px; padding: 0 10px; font-size: 0.78rem; gap: 4px; }
+.reel-sound { margin: 6px 0 0; }
+.reel-sound .post-sound { color: #fff; font-size: 0.82rem; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5); }
+
+/* ---------- Sound page ---------- */
+.snd-page { max-width: 760px; margin: 0 auto; padding: 0 0 32px; }
+.snd-top { display: flex; align-items: center; padding: 4px 0 8px; }
+.snd-hero { display: flex; gap: 20px; align-items: flex-end; padding: 8px 0 24px; border-bottom: 1px solid var(--border); }
+.snd-cover .al-cover.big { width: 148px; height: 148px; border-radius: 18px; padding: 0 22px 26px; gap: 6px; box-shadow: var(--shadow); }
+.snd-cover .al-cover.big.gen i { width: 9px; }
+.snd-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.snd-kicker { display: inline-flex; align-items: center; gap: 6px; margin: 0; color: var(--text-muted); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.snd-kicker .i { width: 14px; height: 14px; }
+.snd-info h1 { margin: 0; font-size: clamp(1.5rem, 4vw, 2.1rem); line-height: 1.1; letter-spacing: -0.02em; overflow-wrap: anywhere; }
+.snd-artist { margin: 0; font-size: 1rem; font-weight: 650; }
+.snd-meta, .snd-lic { margin: 0; color: var(--text-muted); font-size: 0.85rem; }
+.snd-lic a { color: inherit; }
+.snd-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.snd-play { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 18px; border: 1px solid var(--border-strong); border-radius: 999px; background: var(--surface); color: var(--text); font: inherit; font-weight: 700; cursor: pointer; touch-action: manipulation; }
+.snd-play .i, .snd-use .i { width: 16px; height: 16px; }
+.snd-play[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.snd-use { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; border-radius: 999px; }
+.snd-sub { margin: 20px 0 12px; font-size: 1rem; }
+.snd-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; }
+.snd-tile { position: relative; aspect-ratio: 3 / 4; padding: 0; border: 0; border-radius: 4px; overflow: hidden; background: var(--input); color: var(--text); cursor: pointer; }
+.snd-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.snd-tile.skel { animation: snd-pulse 1.2s ease-in-out infinite alternate; }
+@keyframes snd-pulse { to { opacity: 0.55; } }
+.snd-tile.text { display: flex; align-items: center; padding: 12px; text-align: left; background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.snd-tile-text { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; font-size: 0.82rem; line-height: 1.35; }
+.snd-tile-n { position: absolute; left: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 4px; color: #fff; font-size: 0.75rem; font-weight: 700; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6); }
+.snd-tile.text .snd-tile-n { color: var(--text-muted); text-shadow: none; }
+.snd-tile-n .i { width: 13px; height: 13px; }
+.snd-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.snd-hero .sk-line { display: block; height: 14px; border-radius: 6px; background: var(--input); }
+@media (max-width: 560px) {
+    .snd-hero { flex-direction: column; align-items: flex-start; gap: 14px; }
+    .snd-cover .al-cover.big { width: 112px; height: 112px; padding: 0 16px 20px; }
+    .snd-actions { width: 100%; }
+    .snd-actions > * { flex: 1; justify-content: center; }
+}
+@media (prefers-reduced-motion: reduce) { .snd-tile.skel { animation: none; } .media-sound { transition: none; } }
+.snd-use { white-space: nowrap; }
+.snd-page { padding-top: 8px; }
+.dp-post .post-caption { padding: 6px 16px 0 !important; }

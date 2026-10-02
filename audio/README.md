@@ -44,3 +44,19 @@ The "Add audio" picker on posts and reels reads its catalogue from these sources
 ```
 
 The Supabase table can use the same names, or `audio_id`, `artist_name`, `cover_url`, `preview_url` and `audio_url`. Each track also needs an `active` column for it to appear.
+
+## The sound record on a post or reel
+
+Each post stores its sound in `diary_shared_entries.audio.music`. Each reel stores it in `diary_reels.music`. A sound page (`#/sound/<audioId>`) finds every post and reel by `audioId`.
+
+| Field | Meaning |
+|---|---|
+| `audioId` | The track's stable ID (`id` on older posts) |
+| `title`, `artist` | Shown as "♪ Artist · Title" under the creator's name |
+| `coverArt` | Artwork URL (also `cover`) |
+| `audioUrl` | The licensed stream (also `src`). Cordial Sounds ship as a rendered clip instead |
+| `genre` | Its category (also `category`) |
+| `startTime`, `endTime`, `duration` | The part used, in seconds (also `start` and `length`) |
+| `volume` | 0.1 to 1 |
+| `licenseUrl`, `licenseName`, `provider`, `shareurl` | Credit, required for Creative Commons tracks |
+| `createdAt` | When it was chosen |

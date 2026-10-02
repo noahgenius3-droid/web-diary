@@ -284,9 +284,48 @@ document.addEventListener('DOMContentLoaded', () => {
     document.body.append(dlg);
     let P = null; // { tracks, cat, q, sel, start, length, volume, resolve, playing }
 
-    function open() {
+    // The sound record a post or reel stores. Older posts saved id / cover / start / length only; the aliases
+    // (audioId, coverArt, audioUrl, genre, startTime, endTime, duration, createdAt) are filled in from those.
+    function record(m) {
+        if (!m || typeof m !== 'object') return null;
+        const start = Number(m.startTime != null ? m.startTime : m.start) || 0;
+        const length = Number(m.length != null ? m.length : m.duration) || 30;
+        return {
+            ...m,
+            id: m.id || m.audioId, audioId: m.audioId || m.id,
+            cover: m.cover || m.coverArt || null, coverArt: m.coverArt || m.cover || null,
+            audioUrl: m.audioUrl || m.src || null,
+            genre: m.genre || m.category || null, category: m.category || m.genre || null,
+            start, startTime: start, length, duration: length, endTime: start + length
+        };
+    }
+    // A post's sound back as a picker track, so "Use this sound" can start from it
+    function trackFromMusic(m) {
+        m = record(m);
+        if (!m) return null;
+        const own = CORDIAL.find(t => t.id === m.audioId);
+        if (own) return own;
+        if (!m.src) return null;
+        return {
+            id: m.audioId, title: m.title, artist: m.artist, cover: m.cover, preview: m.src, src: m.src,
+            duration: Number(m.trackDuration) || Math.max(m.endTime, 30), category: m.genre ? [String(m.genre).toLowerCase()] : [], source: 'licensed',
+            licenseUrl: m.licenseUrl || null, licenseName: m.licenseName || null, shareurl: m.shareurl || null, provider: m.provider || null
+        };
+    }
+
+    function open(opts = {}) {
         return new Promise(async resolve => {
             P = { tracks: CORDIAL, remote: [], loadingRemote: true, cat: 'all', q: '', sel: null, start: 0, length: 30, volume: 0.8, resolve, playing: null };
+            const pre = opts.track ? trackFromMusic(opts.track) : null;
+            if (pre) {
+                P.sel = pre;
+                P.length = Math.min(30, pre.duration);
+                P.start = Math.max(0, Math.min(Number(opts.track.start) || 0, pre.duration - P.length));
+                paintEdit();
+                if (!dlg.open) dlg.showModal();
+                P.tracks = await catalogue();
+                return;
+            }
             paintBrowse();
             if (!dlg.open) dlg.showModal();
             P.tracks = await catalogue();
@@ -329,7 +368,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const hasLicensed = P.remote.length > 0 || remote.ready || P.tracks.some(t => t.source === 'licensed');
         dlg.innerHTML = `
             <div class="al-card">
-                <header class="al-head"><h3 id="al-h">Add audio</h3><button type="button" class="icon-btn" data-al="close" aria-label="Close">${ic('i-close')}</button></header>
+                <header class="al-head"><h3 id="al-h">Add sound</h3><button type="button" class="icon-btn" data-al="close" aria-label="Close">${ic('i-close')}</button></header>
                 <label class="search al-search">${ic('i-search')}<input type="search" id="al-q" placeholder="Search songs, artists and genres" value="${esc(P.q)}" autocomplete="off" aria-label="Search audio"></label>
                 <div class="al-cats" role="tablist" aria-label="Categories">${CATEGORIES.map(([k, l]) => `<button type="button" role="tab" class="al-cat" aria-selected="${P.cat === k}" data-al="cat" data-k="${k}">${l}</button>`).join('')}</div>
                 <ul class="al-list">${list.length ? list.map(t => `
@@ -357,7 +396,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <span class="al-window" aria-hidden="true"><i style="left:${(P.start / t.duration) * 100}%;width:${(P.length / t.duration) * 100}%"></i></span></label>
                 <div class="al-field"><span>Length</span><div class="al-seg" role="radiogroup" aria-label="Length">${[15, 30, 60].filter(n => n <= maxLen || n === 15).map(n => `<button type="button" role="radio" aria-checked="${P.length === n}" data-al="len" data-n="${n}">${n}s</button>`).join('')}</div></div>
                 <label class="al-field"><span>Volume <b id="al-vol-v">${Math.round(P.volume * 100)}%</b></span><input type="range" id="al-vol" min="10" max="100" step="5" value="${Math.round(P.volume * 100)}"></label>
-                <button type="button" class="primary-btn al-use" data-al="use">${ic('i-check')}Use this audio</button>
+                <button type="button" class="primary-btn al-use" data-al="use">${ic('i-check')}Use this sound</button>
             </div>`;
     }
     dlg.addEventListener('input', e => {
@@ -405,7 +444,7 @@ document.addEventListener('DOMContentLoaded', () => {
             P.start = 0;
             P.length = Math.min(30, P.sel.duration);
             paintEdit();
-        } else if (what === 'back') { stopAll(); P.playing = null; P.sel = null; paintBrowse(); }
+        } else if (what === 'back') { stopAll(); P.playing = null; P.sel = null; paintBrowse(); if (!P.remote.length) refreshRemote(); }
         else if (what === 'len') { P.length = Number(el.dataset.n); paintEdit(); }
         else if (what === 'preview-sel') {
             if (P.playing === 'sel') { stopAll(); P.playing = null; repaintPlay(); }
@@ -415,7 +454,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const t = P.sel;
             el.disabled = true;
             el.innerHTML = 'Preparing…';
-            const music = { id: t.id, title: t.title, artist: t.artist, cover: t.cover || null, category: catLabel(t) || null, source: t.source, style: t.style || null, start: Math.round(P.start), length: P.length, volume: P.volume, ...(t.licenseUrl ? { licenseUrl: t.licenseUrl, licenseName: t.licenseName, shareurl: t.shareurl, provider: t.provider } : {}) };
+            const music = record({ id: t.id, title: t.title, artist: t.artist, cover: t.cover || null, category: catLabel(t) || null, source: t.source, style: t.style || null, start: Math.round(P.start), length: P.length, volume: P.volume, trackDuration: Math.round(t.duration) || null, createdAt: new Date().toISOString(), ...(t.licenseUrl ? { licenseUrl: t.licenseUrl, licenseName: t.licenseName, shareurl: t.shareurl, provider: t.provider } : {}) });
             try {
                 if (t.source === 'cordial') {
                     // Original instrumentals are rendered into a short clip that travels with the post
@@ -424,11 +463,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     finish({ file, duration: P.length, name: `${t.title} · ${t.artist}`, music });
                 } else {
                     // Licensed music is streamed from its source, never copied
-                    finish({ file: null, duration: P.length, name: `${t.title} · ${t.artist}`, music: { ...music, src: t.src } });
+                    finish({ file: null, duration: P.length, name: `${t.title} · ${t.artist}`, music: { ...music, src: t.src, audioUrl: t.src } });
                 }
             } catch (err) {
                 el.disabled = false;
-                el.innerHTML = `${ic('i-check')}Use this audio`;
+                el.innerHTML = `${ic('i-check')}Use this sound`;
                 app.showToast('Couldn’t prepare that audio on this device');
             }
         }
@@ -444,14 +483,24 @@ document.addEventListener('DOMContentLoaded', () => {
         a.volume = Math.max(0.05, Math.min(1, music.volume || 0.8));
         const fromRef = music.source === 'licensed';
         if (fromRef) a.currentTime = music.start || 0;
-        const setIcon = playing => { btn.classList.toggle('playing', playing); btn.setAttribute('aria-pressed', String(playing)); };
+        const now = { btn, a, key: (btn.closest('[data-post]') || {}).dataset ? btn.closest('[data-post]').dataset.post : null };
+        const setIcon = playing => { now.btn.classList.toggle('playing', playing); now.btn.setAttribute('aria-pressed', String(playing)); };
         const timer = fromRef ? setTimeout(() => a.pause(), (music.length || 30) * 1000) : null;
         a.onended = a.onpause = () => { clearTimeout(timer); setIcon(false); if (postPlaying && postPlaying.a === a) postPlaying = null; };
         setIcon(true);
-        postPlaying = { btn, a };
+        postPlaying = now;
         player = { a, stop: () => { a.onpause = a.onended = null; a.pause(); clearTimeout(timer); setIcon(false); postPlaying = null; } };
         try { await a.play(); } catch (e) { setIcon(false); app.showToast('Couldn’t play that audio'); }
     }
+    // After the page redraws, the playing post's new button takes over (the sound carries on)
+    function adopt(rootEl) {
+        if (!postPlaying || postPlaying.btn.isConnected || !postPlaying.key) return;
+        const b = rootEl.querySelector(`[data-post="${CSS.escape(postPlaying.key)}"] :is(.media-sound, .pm-play)`);
+        if (!b) return;
+        postPlaying.btn = b;
+        b.classList.add('playing');
+        b.setAttribute('aria-pressed', 'true');
+    }
 
-    window.diaryAudioLib = { open, playPost, stop: stopAll, catalogue, renderCordial, wavFrom, coverHTML, fetchAudio, categories: CATEGORIES };
+    window.diaryAudioLib = { open, playPost, stop: stopAll, catalogue, renderCordial, wavFrom, coverHTML, fetchAudio, record, trackFromMusic, adopt, categories: CATEGORIES };
 });
