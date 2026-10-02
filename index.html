@@ -18,11 +18,11 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,400..600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=144">
-    <link rel="stylesheet" href="photoedit.css?v=144">
-    <link rel="stylesheet" href="speak.css?v=144">
-    <link rel="stylesheet" href="zoom.css?v=144">
-    <link rel="stylesheet" href="location.css?v=144">
+    <link rel="stylesheet" href="style.css?v=145">
+    <link rel="stylesheet" href="photoedit.css?v=145">
+    <link rel="stylesheet" href="speak.css?v=145">
+    <link rel="stylesheet" href="zoom.css?v=145">
+    <link rel="stylesheet" href="location.css?v=145">
     <script>
         // Apply saved theme before paint to avoid a flash
         try {
@@ -70,7 +70,7 @@
         </div>
         <span class="sp-progress"><i></i></span>
     </div>
-    <script>window.__splashAt = performance.now();</script>
+    <script>window.__splashAt = performance.now(); window.__fromRing = /[?&]ring=/.test(location.search);</script>
 
     <!-- Icon sprite -->
     <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -595,17 +595,18 @@
     </div>
 
     <!-- Incoming call -->
-    <section class="call-incoming" id="call-incoming" role="alertdialog" aria-label="Incoming call" hidden>
+    <section class="call-incoming" id="call-incoming" role="alertdialog" aria-modal="true" aria-labelledby="incoming-name" aria-describedby="incoming-sub" hidden>
         <div class="incoming-card">
+            <p class="incoming-kicker" id="incoming-kicker">Cordial</p>
             <span class="incoming-avatar" id="incoming-avatar"></span>
             <strong id="incoming-name"></strong>
             <small id="incoming-sub">Voice call…</small>
             <small class="incoming-waiting" id="incoming-waiting" hidden></small>
             <div class="incoming-actions">
-                <button class="round-btn decline" id="incoming-decline" aria-label="Decline"><svg class="i"><use href="#i-phone-off"/></svg></button>
-                <button class="round-btn accept" id="incoming-accept" aria-label="Answer"><svg class="i"><use href="#i-phone"/></svg></button>
-                <button class="round-btn accept video" id="incoming-video" aria-label="Answer with video" hidden><svg class="i"><use href="#i-video"/></svg></button>
-                <button class="round-btn hold" id="incoming-hold" aria-label="Put your current call on hold and answer" title="Hold & answer" hidden><svg class="i"><use href="#i-clock"/></svg></button>
+                <span class="inc-act"><button class="round-btn decline" id="incoming-decline" aria-label="Decline"><svg class="i"><use href="#i-phone-off"/></svg></button><span aria-hidden="true">Decline</span></span>
+                <span class="inc-act"><button class="round-btn hold" id="incoming-hold" aria-label="Put your current call on hold and answer" title="Hold & answer" hidden><svg class="i"><use href="#i-clock"/></svg></button><span aria-hidden="true" class="inc-hold-label">Hold &amp; accept</span></span>
+                <span class="inc-act"><button class="round-btn accept video" id="incoming-video" aria-label="Accept with video" hidden><svg class="i"><use href="#i-video"/></svg></button><span aria-hidden="true" class="inc-video-label">Video</span></span>
+                <span class="inc-act"><button class="round-btn accept" id="incoming-accept" aria-label="Accept"><svg class="i"><use href="#i-phone"/></svg></button><span aria-hidden="true">Accept</span></span>
             </div>
         </div>
     </section>
@@ -828,69 +829,69 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
-    <script src="config.js?v=144"></script>
-    <script src="rich.js?v=144"></script>
-    <script src="media.js?v=144"></script>
-    <script src="wallpaper.js?v=144"></script>
-    <script src="dilute.js?v=144"></script>
-    <script src="script.js?v=144"></script>
-    <script src="social.js?v=144"></script>
-    <script src="sync.js?v=144"></script>
-    <script src="stories.js?v=144"></script>
-    <script src="library.js?v=144"></script>
-    <script src="market.js?v=144"></script>
-    <script src="community.js?v=144"></script>
-    <script src="groupchat.js?v=144"></script>
-    <script src="live.js?v=144"></script>
-    <script src="explore.js?v=144"></script>
-    <script src="call.js?v=144"></script>
-    <script src="profile.js?v=144"></script>
-    <script src="invite.js?v=144"></script>
-    <script src="mention.js?v=144"></script>
-    <script src="spaces.js?v=144"></script>
-    <script src="notemedia.js?v=144"></script>
-    <script src="noteshare.js?v=144"></script>
-    <script src="noteslides.js?v=144"></script>
-    <script src="audiolib.js?v=144"></script>
-    <script src="sound.js?v=144"></script>
-    <script src="mediaeditor.js?v=144"></script>
-    <script src="support.js?v=144"></script>
-    <script src="helpline.js?v=144"></script>
-    <script src="schedule.js?v=144"></script>
-    <script src="play.js?v=144"></script>
-    <script src="games.js?v=144"></script>
-    <script src="chattools.js?v=144"></script>
-    <script src="safety.js?v=144"></script>
-    <script src="notify.js?v=144"></script>
-    <script src="settings.js?v=144"></script>
-    <script src="transcribe.js?v=144"></script>
-    <script src="ai.js?v=144"></script>
-    <script src="photoedit.js?v=144"></script>
-    <script src="speak.js?v=144"></script>
-    <script src="zoom.js?v=144"></script>
-    <script src="location.js?v=144"></script>
+    <script src="config.js?v=145"></script>
+    <script src="rich.js?v=145"></script>
+    <script src="media.js?v=145"></script>
+    <script src="wallpaper.js?v=145"></script>
+    <script src="dilute.js?v=145"></script>
+    <script src="script.js?v=145"></script>
+    <script src="social.js?v=145"></script>
+    <script src="sync.js?v=145"></script>
+    <script src="stories.js?v=145"></script>
+    <script src="library.js?v=145"></script>
+    <script src="market.js?v=145"></script>
+    <script src="community.js?v=145"></script>
+    <script src="groupchat.js?v=145"></script>
+    <script src="live.js?v=145"></script>
+    <script src="explore.js?v=145"></script>
+    <script src="call.js?v=145"></script>
+    <script src="profile.js?v=145"></script>
+    <script src="invite.js?v=145"></script>
+    <script src="mention.js?v=145"></script>
+    <script src="spaces.js?v=145"></script>
+    <script src="notemedia.js?v=145"></script>
+    <script src="noteshare.js?v=145"></script>
+    <script src="noteslides.js?v=145"></script>
+    <script src="audiolib.js?v=145"></script>
+    <script src="sound.js?v=145"></script>
+    <script src="mediaeditor.js?v=145"></script>
+    <script src="support.js?v=145"></script>
+    <script src="helpline.js?v=145"></script>
+    <script src="schedule.js?v=145"></script>
+    <script src="play.js?v=145"></script>
+    <script src="games.js?v=145"></script>
+    <script src="chattools.js?v=145"></script>
+    <script src="safety.js?v=145"></script>
+    <script src="notify.js?v=145"></script>
+    <script src="settings.js?v=145"></script>
+    <script src="transcribe.js?v=145"></script>
+    <script src="ai.js?v=145"></script>
+    <script src="photoedit.js?v=145"></script>
+    <script src="speak.js?v=145"></script>
+    <script src="zoom.js?v=145"></script>
+    <script src="location.js?v=145"></script>
     <script>
-        // Lift the splash once the first screen is drawn — after its intro has had time to play, never longer than 3s
+        // Lift the splash as soon as the first screen is drawn: at least a moment (no flash), never more than a second.
+        // Opened from a call alert: straight to the ringing screen.
         (function () {
             var el = document.getElementById('splash');
             if (!el) return;
-            var reduce = document.documentElement.dataset.motion === 'reduce' || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             var done = false;
             function lift() {
                 if (done) return;
                 done = true;
                 el.classList.add('out');
-                setTimeout(function () { el.remove(); }, reduce ? 220 : 620);
+                setTimeout(function () { el.remove(); }, 220);
             }
+            if (window.__fromRing) return lift();
             function ready() {
-                // Count from when the splash first painted, so a slow network never cuts the intro short
-                // The splash plays for 2 seconds
-                var wait = Math.max(0, (window.__splashAt || 0) + 2000 - performance.now());
+                // The app's scripts have run and drawn their first screen by now; wait for that frame to paint
+                var wait = Math.max(0, (window.__splashAt || 0) + 350 - performance.now());
                 requestAnimationFrame(function () { setTimeout(lift, wait); });
             }
             if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready);
             else ready();
-            setTimeout(lift, 3000);
+            setTimeout(lift, Math.max(0, (window.__splashAt || 0) + 1000 - performance.now()));
         })();
     </script>
 </body>

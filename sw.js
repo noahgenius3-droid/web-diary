@@ -8,7 +8,7 @@
 // imported while the worker installs, so this happens here, once.
 try { self.window = self; importScripts('/config.js'); } catch (e) { /* calls can still be declined in the app */ }
 
-const CACHE = 'cordial-shell-v117';
+const CACHE = 'cordial-shell-v118';
 const SHELL = [
     '/', '/index.html', '/manifest.webmanifest',
     '/style.css', '/photoedit.css',
@@ -133,11 +133,10 @@ self.addEventListener('push', event => {
     event.waitUntil((async () => {
         const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
         const inFront = windows.some(w => w.focused && w.visibilityState === 'visible');
-        if (inFront && data.type !== 'missed_call') {
-            // Let the open app know (it may want to refresh), without a system alert
-            windows.forEach(w => w.postMessage({ type: 'push', data }));
-            return;
-        }
+        // An open Cordial always hears about it (a ring, a cancelled or missed call), in front or not
+        windows.forEach(w => w.postMessage({ type: 'push', data }));
+        // In front, the app shows it itself (a missed call still gets its alert)
+        if (inFront && data.type !== 'missed_call') return;
         const call = data.type === 'call';
         await self.registration.showNotification(data.title || 'Cordial', {
             body: data.body || '',

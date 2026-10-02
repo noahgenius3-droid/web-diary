@@ -16197,3 +16197,46 @@ body:not(.has-back) .st-up { display: grid; }
     :root:not([data-theme="light"]) .mcard:not(.has-photo):not(.new-note) .mcard-tags span { background: color-mix(in srgb, var(--card) 22%, transparent); color: var(--text); }
     :root:not([data-theme="light"]) .mcard:not(.has-photo):not(.new-note) .mcard-edit { background: color-mix(in srgb, var(--text) 9%, transparent); color: var(--text); }
 }
+
+/* ---------- Incoming call: a calling screen, not a Cordial page ---------- */
+.call-incoming { z-index: 9000; background: rgba(6, 7, 12, 0.82); }
+.incoming-card { gap: 4px; width: min(380px, 100%); padding: 28px 24px 30px; background: linear-gradient(180deg, #171a24 0%, #0d0f15 100%); box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.7); }
+.incoming-kicker { margin: 0 0 18px; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(255, 255, 255, 0.55); }
+.incoming-avatar .avatar.xl { width: 112px; height: 112px; font-size: 2.2rem; }
+.incoming-card strong#incoming-name { margin-top: 18px; font-size: 1.6rem; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; overflow-wrap: anywhere; }
+.incoming-card #incoming-sub { font-size: 1rem; opacity: 0.75; }
+.incoming-card .incoming-actions { display: flex; justify-content: space-around; align-items: flex-start; gap: 20px; width: 100%; margin-top: 36px; }
+.inc-act { display: grid; justify-items: center; gap: 8px; font-size: 0.85rem; font-weight: 600; color: rgba(255, 255, 255, 0.85); }
+.inc-act:has(> button[hidden]) { display: none; }
+.call-incoming .round-btn { width: 72px; height: 72px; touch-action: manipulation; }
+.call-incoming .round-btn .i { width: 30px; height: 30px; }
+.call-incoming .round-btn:disabled { opacity: 0.55; }
+.call-incoming .round-btn:focus-visible { outline: 3px solid #fff; outline-offset: 4px; }
+.call-incoming .round-btn.accept:not(.video) { animation: inc-nudge 1.6s ease-in-out infinite; }
+@keyframes inc-nudge { 0%, 70%, 100% { transform: none; } 80% { transform: translateY(-4px); } 90% { transform: translateY(1px); } }
+/* Phones: the whole screen is the call — big targets in the thumb zone */
+@media (max-width: 600px) {
+    .call-incoming { padding: 0; place-items: stretch; background: #0b0d13; }
+    .incoming-card {
+        width: 100%; min-height: 100%; border-radius: 0; justify-content: flex-start; background: radial-gradient(120% 70% at 50% 0%, #252a3a 0%, #0b0d13 70%);
+        padding: calc(env(safe-area-inset-top, 0px) + 56px) 28px calc(env(safe-area-inset-bottom, 0px) + 48px);
+    }
+    .incoming-card .incoming-actions { margin-top: auto; }
+    .call-incoming .round-btn { width: 76px; height: 76px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .call-incoming .round-btn.accept, .incoming-avatar .avatar.xl, .incoming-card { animation: none !important; }
+}
+body.is-ringing { overflow: hidden; }
+
+/* ---------- Splash: logo, name, gone in about a second ---------- */
+.splash .sp-orb, .splash .sp-tag, .splash .sp-ring { display: none !important; }
+.splash .sp-mark, .splash .sp-word span, .splash .sp-draw, .splash .sp-heart { opacity: 1 !important; transform: none !important; filter: none !important; stroke-dashoffset: 0 !important; animation: none !important; }
+.splash .sp-center { animation: sp-quick-in 240ms ease-out both; }
+@keyframes sp-quick-in { from { opacity: 0; transform: scale(0.96); } }
+.splash .sp-progress i { animation-duration: 900ms !important; }
+.splash.out { animation: none !important; opacity: 0; transition: opacity 200ms ease-out; }
+.splash.out .sp-center { animation: none !important; transform: scale(1.03); transition: transform 200ms ease-out; }
+/* The caller's face stays fully visible; a soft ring ripples out from it instead of a fade */
+.call-incoming .incoming-avatar .avatar.xl { opacity: 1; animation: inc-ripple 1.8s ease-out infinite; box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.28); }
+@keyframes inc-ripple { 70%, 100% { box-shadow: 0 0 0 22px rgba(255, 255, 255, 0); } }

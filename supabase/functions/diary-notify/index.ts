@@ -3,8 +3,11 @@
 // service worker for the lock-screen "Decline" button (with the ring's signed token instead).
 //   { action: "message", id }                  alert the recipient of a direct message you just sent
 //   { action: "ring", callee, topic, video }   ring someone: an alert with Answer / Decline
-//   { action: "missed", ring }                 nobody answered: "Missed call" replaces the ringing alert
-//   { action: "decline", ring }                declined from the alert: tells the caller straight away
+//   { action: "missed", ring }                 nobody answered in time: "Missed call" replaces the ringing alert
+//   { action: "cancel", ring }                 the caller hung up first: "Call cancelled" replaces it (no missed call)
+//   { action: "decline", ring }                declined (from the alert or the app): tells the caller straight away
+// A ring is a signed token { i: id, c: caller, e: callee, t: topic, v: video, x: rings until, n: name, a: avatar };
+// every alert and realtime event carries its id, so phones can ignore anything about an older ring.
 // Everything is checked here, never trusted from the caller: who sent the message, blocks, deleted accounts,
 // "who can call you", muted chats and the person's alert choices.
 import webpush from "npm:web-push@3.6.7";
@@ -38,7 +41,7 @@ async function hmac(secret: string, text: string) {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   return b64url(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`ring:${text}`))));
 }
-type Ring = { i: string; c: string; e: string; t: string; v: boolean; x: number };
+type Ring = { i: string; c: string; e: string; t: string; v: boolean; x: number; n?: string; a?: string | null };
 async function signRing(secret: string, r: Ring) {
   const body = b64url(new TextEncoder().encode(JSON.stringify(r)));
   return `${body}.${await hmac(secret, body)}`;
@@ -77,6 +80,15 @@ async function mutedFor(user: string): Promise<string[]> {
 }
 const profileOf = async (id: string) =>
   (await admin.from("diary_profiles").select("display_name, username, avatar_path").eq("id", id).maybeSingle()).data;
+
+// deno-lint-ignore no-explicit-any
+async function broadcast(user: string, event: string, payload: any) {
+  await fetch(`${URL_}/realtime/v1/api/broadcast`, {
+    method: "POST",
+    headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ messages: [{ topic: `diary_ring:${user}`, event, payload, private: true }] }),
+  }).catch(() => {});
+}
 
 // deno-lint-ignore no-explicit-any
 async function deliver(user: string, payload: any, ttl: number, urgency: "normal" | "high") {
@@ -159,21 +171,21 @@ async function onRing(me: string, input: { callee?: string; topic?: string; vide
   const allow = presence.data?.allow_calls || "friends";
   if (allow === "nobody" || !(await areFriends(me, callee))) return json({ ok: false, reason: "not-allowed" }, 403);
 
-  const ring: Ring = { i: crypto.randomUUID(), c: me, e: callee, t: topic, v: !!input.video, x: Date.now() + 45000 };
+  const name = who.display_name || (who.username ? `@${who.username}` : "Someone");
+  const ring: Ring = { i: crypto.randomUUID(), c: me, e: callee, t: topic, v: !!input.video, x: Date.now() + 45000, n: name.slice(0, 60), a: who.avatar_path || null };
   const token = await signRing(secret, ring);
   let sent = 0;
   if (!muted.includes("calls")) {
-    const name = who.display_name || (who.username ? `@${who.username}` : "Someone");
     sent = await deliver(callee, {
-      type: "call",
-      title: `${name} is calling`, body: ring.v ? "Cordial video call" : "Cordial voice call",
+      type: "call", ring: ring.i,
+      title: ring.v ? "Incoming video call" : "Incoming call", body: `${name} is calling you`,
       url: `/?ring=${encodeURIComponent(token)}`, tag: `call-${ring.i}`, icon: avatarUrl(who.avatar_path),
       requireInteraction: true, renotify: true, vibrate: [600, 300, 600, 300, 600],
-      actions: [{ action: "answer", title: "Answer" }, { action: "decline", title: "Decline" }],
+      actions: [{ action: "answer", title: "Accept" }, { action: "decline", title: "Decline" }],
       decline: { invite: ring.i, token },
     }, 45, "high");
   }
-  return json({ ok: true, ring: token, sent });
+  return json({ ok: true, ring: token, id: ring.i, exp: ring.x, sent });
 }
 
 async function onMissed(me: string, token: string, secret: string) {
@@ -186,11 +198,12 @@ async function onMissed(me: string, token: string, secret: string) {
   if (count) return json({ ok: true, skipped: "already" });
   const { data: row } = await admin.from("diary_notifications")
     .insert({ user_id: r.e, actor: me, type: "missed_call", data: { video: r.v, ring: r.i } }).select("id").maybeSingle();
+  await broadcast(r.e, "cancel", { from: me, id: r.i, missed: true }); // an open app stops ringing now
   if (!row) return json({ ok: true, skipped: "muted" }); // their choices filtered it out
   const who = await profileOf(me);
   const name = who?.display_name || "Someone";
   const sent = await deliver(r.e, {
-    type: "missed_call",
+    type: "missed_call", ring: r.i,
     title: `Missed ${r.v ? "video call" : "call"} from ${name}`, body: "Tap to call back",
     url: `/#/messages/chat/${me}`, tag: `call-${r.i}`, // replaces the ringing alert
     icon: avatarUrl(who?.avatar_path), renotify: false,
@@ -198,17 +211,29 @@ async function onMissed(me: string, token: string, secret: string) {
   return json({ ok: true, sent });
 }
 
+async function onCancel(me: string, token: string, secret: string) {
+  const r = await readRing(secret, token);
+  if (!r || r.c !== me) return json({ ok: false, reason: "bad-ring" }, 403);
+  if (Date.now() > r.x + 120000) return json({ ok: true, skipped: "old" });
+  await broadcast(r.e, "cancel", { from: me, id: r.i });
+  const sent = await deliver(r.e, {
+    type: "call_ended", ring: r.i,
+    title: "Call cancelled", body: `${r.n || "They"} cancelled the call`,
+    url: `/#/messages/chat/${me}`, tag: `call-${r.i}`, renotify: false, // replaces the ringing alert
+  }, 60, "high");
+  return json({ ok: true, sent });
+}
+
 async function onDecline(token: string, secret: string) {
   const r = await readRing(secret, token);
   if (!r) return json({ ok: false, reason: "bad-ring" }, 403);
   if (Date.now() > r.x + 30000) return json({ ok: true, skipped: "old" });
-  // Same message the open app sends when you tap Decline on the ringing screen
-  const res = await fetch(`${URL_}/realtime/v1/api/broadcast`, {
-    method: "POST",
-    headers: { apikey: SERVICE, Authorization: `Bearer ${SERVICE}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ messages: [{ topic: `diary_ring:${r.c}`, event: "decline", payload: { from: r.e }, private: true }] }),
-  });
-  return json({ ok: res.ok });
+  // Same message the open app sends when you tap Decline on the ringing screen; your other devices stop ringing
+  await Promise.all([
+    broadcast(r.c, "decline", { from: r.e, id: r.i }),
+    broadcast(r.e, "handled", { id: r.i }),
+  ]);
+  return json({ ok: true });
 }
 
 Deno.serve(async (req) => {
@@ -229,6 +254,7 @@ Deno.serve(async (req) => {
     if (action === "message" && /^\d+$/.test(String(input.id || ""))) return await onMessage(me, String(input.id));
     if (action === "ring") return await onRing(me, input, cfg.trigger_secret);
     if (action === "missed") return await onMissed(me, String(input.ring || ""), cfg.trigger_secret);
+    if (action === "cancel") return await onCancel(me, String(input.ring || ""), cfg.trigger_secret);
   } catch (e) {
     console.error(action, String(e).slice(0, 300));
     return json({ ok: false, reason: "error" }, 500);

@@ -219,41 +219,48 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Ringing ----------
-    // The ring as Cordial's alert server signed it: { i: ring id, c: caller, e: callee, t: topic, v: video, x: rings until }
+    // A one-to-one ring has one id (from Cordial's alert server, signed with when it started and when it stops
+    // ringing). Every event names that id, so an old or repeated event can never change a newer call, and a ring
+    // that has ended stays ended:
+    //   ringing → answered | declined | cancelled (the caller hung up) | missed (nobody answered in time)
+    // Opening Cordial from the alert is none of these: the call keeps ringing until one of them happens.
+    const endedRings = new Set();   // ring ids that are over, whatever arrives later
+    const GRACE = 3000;             // the caller's own timeout decides "missed"; we wait a little past it
+
+    // The ring as the server signed it: { i: id, c: caller, e: callee, t: topic, v: video, x: rings until, n: name, a: avatar }
     function readRing(token) {
         try {
             const r = JSON.parse(decodeURIComponent(escape(atob(token.split('.')[0].replace(/-/g, '+').replace(/_/g, '/')))));
-            return r && r.c && r.t ? r : null;
+            return r && r.i && r.c && r.t ? r : null;
         } catch (e) { return null; }
     }
 
-    // Opened from a call alert (/?ring=<signed ring>, with &answer=1 from the Answer button): ring here if it still is
+    // Opened from a call alert (/?ring=…, with &answer=1 from its Answer button): show the ringing screen straight
+    // away, before anything else loads, and keep it ringing until the call is answered, declined, cancelled or times out
     async function openFromAlert(token, answerNow) {
         const r = readRing(token);
-        if (!r) return;
-        for (let i = 0; i < 40 && !me(); i++) await new Promise(res => setTimeout(res, 250)); // wait for sign-in
-        if (!me() || me() !== r.e) return;
-        const known = (s.friends || []).find(f => f.id === r.c);
-        const who = known || (await client.from('diary_profiles').select('id, display_name, avatar_path').eq('id', r.c).maybeSingle()).data || {};
-        const missed = () => app.showToast(`Missed call from ${who.display_name || 'someone'}`);
-        if (Date.now() > r.x) return missed();
-        if (call && call.topic === r.t) return;
-        if (!(await stillRinging(r.c, r.t))) return missed();
-        onRing({ from: r.c, name: who.display_name || 'Someone', avatar_path: who.avatar_path || null, topic: r.t, video: !!r.v, srv: true });
+        if (!r || endedRings.has(r.i)) return;
+        if (call && (call.ringId === r.i || call.topic === r.t)) return;      // already on it
+        if (incoming && incoming.id === r.i) {                              // already ringing here: just answer if asked
+            if (answerNow) answer(false);
+            return;
+        }
+        if (Date.now() > r.x + GRACE) return app.showToast(`Missed call from ${r.n || 'someone'}`);
+        onRing({ id: r.i, ring: token, exp: r.x, from: r.c, name: r.n || 'Someone', avatar_path: r.a || null, topic: r.t, video: !!r.v, srv: true });
         if (answerNow) answer(false);
+        // Signed in as someone else on this device: this call isn't for this account
+        for (let i = 0; i < 40 && !me(); i++) await new Promise(res => setTimeout(res, 250));
+        if (me() && me() !== r.e && incoming && incoming.id === r.i) return dismissIncoming('gone');
+        confirmRinging(r.i);
     }
-    // Ask the caller "still ringing?" over realtime; they answer within a moment if they are
-    const pongs = new Map(); // topic -> resolve
-    async function stillRinging(caller, topic) {
+
+    // Ask the caller whether this ring is still going. Only a clear "no" ends it here; silence (an old app,
+    // a slow network) never does — the ring's own expiry decides "missed".
+    async function confirmRinging(id) {
+        const p = incoming;
+        if (!p || p.id !== id || p.group) return;
         for (let i = 0; i < 20 && !(ringChannel && ringChannel.state === 'joined'); i++) await new Promise(r => setTimeout(r, 250));
-        const answered = new Promise(resolve => {
-            pongs.set(topic, resolve);
-            setTimeout(() => resolve(false), 3000);
-        });
-        ring(caller, 'ping', { from: me(), topic }).catch(() => {});
-        const ok = await answered;
-        pongs.delete(topic);
-        return ok;
+        if (incoming && incoming.id === id) ring(p.from, 'ping', { from: me(), topic: p.topic, id }).catch(() => {});
     }
 
     function ringFromUrl(href) {
@@ -263,12 +270,27 @@ document.addEventListener('DOMContentLoaded', () => {
         openFromAlert(token, url.searchParams.get('answer') === '1');
         return true;
     }
-    if (ringFromUrl(location.href)) history.replaceState(history.state, '', location.pathname + location.hash);
-    // Cordial already open: the service worker asks it to go to the alert's address
+    // Opened from a call alert: handle it once the rest of this file has loaded (the ringtone lives further down)
+    if (/[?&]ring=/.test(location.search)) {
+        const href = location.href;
+        window.history.replaceState(window.history.state, '', location.pathname + location.hash); // (`history` in this file is the call log)
+        setTimeout(() => ringFromUrl(href), 0);
+    }
     if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', e => {
         const d = e.data || {};
+        // Cordial already open: the service worker asks it to go to the alert's address
         if (d.type === 'open-url' && d.url && ringFromUrl(d.url) && e.ports && e.ports[0]) e.ports[0].postMessage('ok');
+        // A push arrived while Cordial is open: the server's word on a ring (ringing, cancelled, missed)
+        if (d.type === 'push' && d.data) {
+            const x = d.data;
+            if (x.type === 'call' && x.url) ringFromUrl(x.url);
+            else if ((x.type === 'call_ended' || x.type === 'missed_call') && x.ring && incoming && incoming.id === x.ring) {
+                dismissIncoming(x.type === 'missed_call' ? 'missed-server' : 'cancelled');
+            }
+        }
     });
+    // Back online while it rings: check it's still going
+    window.addEventListener('online', () => { if (incoming && incoming.id) confirmRinging(incoming.id); });
 
     setInterval(() => {
         const id = me();
@@ -279,23 +301,31 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }, 1500);
 
+    // Does an event belong to the ring on screen? (events without an id come from older apps: match the person)
+    const sameRing = (p, payload) => !!p && (payload.id ? p.id === payload.id : p.from === payload.from);
+
     function listenForRings(id) {
         if (ringChannel) client.removeChannel(ringChannel);
         ringChannel = client.channel(`diary_ring:${id}`, { config: { private: true } })
             .on('broadcast', { event: 'ring' }, ({ payload }) => onRing(payload))
             .on('broadcast', { event: 'ping' }, ({ payload }) => {
-                // They opened Cordial from our call alert: tell them we're still calling
-                if (call && call.ringing === payload.from && call.topic === payload.topic) ring(payload.from, 'pong', { topic: payload.topic }).catch(() => {});
+                // They opened Cordial from our call alert: say whether we're still calling them
+                const still = !!(call && call.ringing === payload.from && (payload.id ? call.ringId === payload.id : call.topic === payload.topic));
+                ring(payload.from, 'pong', { topic: payload.topic, id: payload.id || null, ringing: still }).catch(() => {});
             })
             .on('broadcast', { event: 'pong' }, ({ payload }) => {
-                const resolve = pongs.get(payload.topic);
-                if (resolve) resolve(true);
+                if (payload.ringing === false && incoming && (payload.id ? incoming.id === payload.id : incoming.topic === payload.topic)) dismissIncoming('cancelled');
             })
             .on('broadcast', { event: 'cancel' }, ({ payload }) => {
-                if (incoming && incoming.from === payload.from) dismissIncoming(true);
+                if (sameRing(incoming, payload)) dismissIncoming(payload.missed ? 'missed' : 'cancelled');
+            })
+            // Answered or declined on another of our own devices: stop ringing here
+            .on('broadcast', { event: 'handled' }, ({ payload }) => {
+                if (payload.id) endedRings.add(payload.id);
+                if (incoming && incoming.id && incoming.id === payload.id) dismissIncoming('elsewhere');
             })
             .on('broadcast', { event: 'decline' }, ({ payload }) => {
-                if (call && call.ringing === payload.from) {
+                if (call && call.ringing === payload.from && (!payload.id || !call.ringId || call.ringId === payload.id) && !call.endStatus) {
                     call.endStatus = payload.busy ? 'busy' : 'declined';
                     paintPanel(payload.busy ? `${call.title} is on another call` : `${call.title} declined`);
                     setTimeout(() => leave(false), 1400);
@@ -321,28 +351,35 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function onRing(p) {
         if (!p || !p.topic || !p.from) return;
-        if (call && call.topic === p.topic) return; // already in that call
-        if (incoming && incoming.from === p.from && !p.group) dismissIncoming(true); // they called again: the new ring replaces the old one
+        if (p.id && endedRings.has(p.id)) return;                       // a late copy of a ring that's over
+        if (call && (call.topic === p.topic || (p.id && call.ringId === p.id))) return; // already in that call
+        if (incoming && p.id && incoming.id === p.id) return;           // the same ring twice (realtime + alert)
+        if (incoming && incoming.from === p.from && !p.group) dismissIncoming('replaced'); // they called again: the new ring replaces the old one
         if (incoming) { // already ringing with someone else: they get "busy"
             if (p.group) return; // a group call carries on without us; the banner still shows it
-            ring(p.from, 'decline', { from: me(), busy: true });
+            ring(p.from, 'decline', { from: me(), busy: true, id: p.id || null });
             logCall({ direction: 'in', status: 'busy', peer: p.group ? null : p.from, communityId: communityOf(p.topic), title: p.group || p.name, video: p.video });
             return;
         }
-        incoming = { ...p, waiting: !!call, timer: setTimeout(() => dismissIncoming(true), RING_TIMEOUT) };
+        // Ring until the server's expiry (plus a little, so the caller's "missed" arrives first), not 45s from now
+        const left = p.exp ? Math.max(1000, p.exp + GRACE - Date.now()) : RING_TIMEOUT;
+        incoming = { ...p, waiting: !!call, timer: setTimeout(() => dismissIncoming('missed'), left) };
         $('incoming-avatar').innerHTML = avatar({ id: p.from, display_name: p.name, avatar_path: p.avatar_path }, 'xl');
         $('incoming-name').textContent = p.group ? `${p.emoji || '📞'} ${p.group}` : (p.name || 'Someone');
         $('incoming-sub').textContent = p.group
             ? `${p.name} is inviting you to the group ${p.video ? 'video ' : ''}call`
-            : p.video ? 'Cordial video call…' : 'Cordial voice call…';
+            : p.video ? 'Incoming video call' : 'Incoming voice call';
         $('incoming-video').hidden = !p.video || !!call;
         // Already on a call: answer by ending it, or put it on hold
         $('incoming-hold').hidden = !call;
-        $('incoming-accept').setAttribute('title', call ? 'End current call & answer' : 'Answer');
+        $('incoming-accept').setAttribute('title', call ? 'End current call & answer' : 'Accept');
         $('incoming-waiting').hidden = !call;
         if (call) $('incoming-waiting').textContent = `You’re on a call with ${call.title}`;
-        $('incoming-accept').setAttribute('aria-label', p.video ? 'Answer with voice only' : 'Answer');
+        $('incoming-accept').setAttribute('aria-label', p.video ? 'Accept with voice only' : 'Accept');
+        $('call-incoming').querySelectorAll('button').forEach(b => { b.disabled = false; });
         $('call-incoming').hidden = false;
+        document.body.classList.add('is-ringing');
+        $('incoming-accept').focus({ preventScroll: true });
         // Do not disturb: the call shows, quietly
         const dnd = I.statusOf && s.myStatus === 'dnd';
         if (call) tone([880, 660], 0.2, 0.15, 0.1);
@@ -352,24 +389,45 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function dismissIncoming(missed) {
+    // How the ring ended here: 'missed' (timed out), 'missed-server' (the server already recorded it),
+    // 'cancelled' (the caller hung up), 'elsewhere' (handled on another of your devices), 'replaced', 'gone', or
+    // false (answered / declined from this screen)
+    function dismissIncoming(how) {
         if (!incoming) return;
-        clearTimeout(incoming.timer);
-        if (missed) {
-            const from = incoming.group ? null : incoming.from;
-            if (!incoming.srv && from && window.diaryNotify) window.diaryNotify.logMissedCall(from);
-            app.showToast(`Missed ${incoming.group ? `${incoming.group} call` : incoming.video ? 'video call' : 'call'} from ${incoming.name}`);
-            logCall({ direction: 'in', status: 'missed', peer: incoming.group ? null : incoming.from, communityId: communityOf(incoming.topic), title: incoming.group || incoming.name, video: incoming.video });
+        const p = incoming;
+        clearTimeout(p.timer);
+        if (p.id) endedRings.add(p.id);
+        const what = p.group ? `${p.group} call` : p.video ? 'video call' : 'call';
+        if (how === 'missed' || how === 'missed-server') {
+            const from = p.group ? null : p.from;
+            // The server records missed one-to-one calls itself (when the caller's ring went through it)
+            if (!p.srv && from && window.diaryNotify) window.diaryNotify.logMissedCall(from);
+            app.showToast(`Missed ${what} from ${p.name}`);
+            logCall({ direction: 'in', status: 'missed', peer: p.group ? null : p.from, communityId: communityOf(p.topic), title: p.group || p.name, video: p.video });
+        } else if (how === 'cancelled') {
+            app.showToast(`${p.name} cancelled the ${what}`);
+            logCall({ direction: 'in', status: 'cancelled', peer: p.group ? null : p.from, communityId: communityOf(p.topic), title: p.group || p.name, video: p.video });
+        } else if (how === 'elsewhere') {
+            app.showToast('Answered on another device');
         }
         incoming = null;
         $('call-incoming').hidden = true;
+        document.body.classList.remove('is-ringing');
         stopRingtone();
     }
 
+    // Answer once: a second tap (or a second Answer from an alert) does nothing
     async function answer(withVideo, holdCurrent = false) {
-        if (!incoming) return;
+        if (!incoming || incoming.answering) return;
         const p = incoming;
+        p.answering = true;
+        $('call-incoming').querySelectorAll('button').forEach(b => { b.disabled = true; });
+        // Opened from an alert before sign-in finished: wait for it, then answer
+        for (let i = 0; i < 40 && !me(); i++) await new Promise(r => setTimeout(r, 250));
+        if (incoming !== p) return;
+        if (!me()) { p.answering = false; $('call-incoming').querySelectorAll('button').forEach(b => { b.disabled = false; }); return app.showToast('Sign in to answer'); }
         dismissIncoming(false);
+        if (p.id && !p.group) ring(me(), 'handled', { id: p.id }).catch(() => {}); // your other devices stop ringing
         if (call) {
             if (holdCurrent) hold();
             else leave(true);
@@ -382,10 +440,18 @@ document.addEventListener('DOMContentLoaded', () => {
     $('incoming-accept').addEventListener('click', () => answer(false));
     $('incoming-video').addEventListener('click', () => answer(true));
     $('incoming-hold').addEventListener('click', () => answer(false, true));
+    // Decline once
     $('incoming-decline').addEventListener('click', () => {
-        if (!incoming) return;
-        if (!incoming.group) ring(incoming.from, 'decline', { from: me() });
-        logCall({ direction: 'in', status: 'declined', peer: incoming.group ? null : incoming.from, communityId: communityOf(incoming.topic), title: incoming.group || incoming.name, video: incoming.video });
+        if (!incoming || incoming.answering || incoming.declining) return;
+        const p = incoming;
+        p.declining = true;
+        if (!p.group) {
+            ring(p.from, 'decline', { from: me(), id: p.id || null }).catch(() => {});
+            // Through the server too, so the caller hears it even if this realtime message is lost
+            if (p.ring && I.alertServer) I.alertServer('decline', { ring: p.ring });
+            if (p.id) ring(me(), 'handled', { id: p.id }).catch(() => {});
+        }
+        logCall({ direction: 'in', status: 'declined', peer: p.group ? null : p.from, communityId: communityOf(p.topic), title: p.group || p.name, video: p.video });
         dismissIncoming(false);
     });
 
@@ -405,15 +471,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 setTimeout(() => leave(true), 1400);
             }
         }, RING_TIMEOUT);
-        // The server-side ring: reaches their phone as an alert even when Cordial is closed there
+        // The server-side ring: an id for this ring, and an alert on their phone even when Cordial is closed there
         const placed = call;
         const server = I && I.alertServer
             ? await Promise.race([I.alertServer('ring', { callee: person.id, topic: call.topic, video: !!opts.video }), new Promise(r => setTimeout(() => r(null), 2500))])
             : null;
         if (call !== placed) return; // hung up while we were reaching the server
-        if (server && server.ok) call.serverRing = server.ring;
+        if (server && server.ok) Object.assign(call, { serverRing: server.ring, ringId: server.id, ringExp: server.exp });
         try {
-            await ring(person.id, 'ring', { from: me(), name: s.profile.display_name, avatar_path: s.profile.avatar_path || null, topic: call.topic, video: !!opts.video, srv: !!call.serverRing });
+            await ring(person.id, 'ring', {
+                from: me(), name: s.profile.display_name, avatar_path: s.profile.avatar_path || null, topic: call.topic, video: !!opts.video,
+                srv: !!call.serverRing, id: call.ringId || null, exp: call.ringExp || null, ring: call.serverRing || null
+            });
         } catch (e) {
             app.showToast('Couldn’t reach them right now');
             leave(false);
@@ -754,9 +823,13 @@ document.addEventListener('DOMContentLoaded', () => {
         clearInterval(c.stats);
         clearTimeout(c.ringTimer);
         stopRingback();
-        if (notify && c.ringing) ring(c.ringing, 'cancel', { from: me() }).catch(() => {});
-        // Nobody answered (or we gave up): the server records the missed call and swaps their ringing alert for it
-        if (c.ringing && !c.started && c.serverRing && !['declined', 'busy'].includes(c.endStatus) && I.alertServer) I.alertServer('missed', { ring: c.serverRing });
+        // Still ringing when we stop: nobody answered in time (missed), or we hung up first (cancelled)
+        const timedOut = c.endStatus === 'no_answer';
+        if (notify && c.ringing) ring(c.ringing, 'cancel', { from: me(), id: c.ringId || null, missed: timedOut }).catch(() => {});
+        if (c.ringing && !c.started && c.serverRing && !['declined', 'busy'].includes(c.endStatus) && I.alertServer) {
+            // The server records a missed call (or tells their phone it was cancelled) and swaps their ringing alert for it
+            I.alertServer(timedOut ? 'missed' : 'cancel', { ring: c.serverRing });
+        }
         c.peers.forEach(p => { p.pc.close(); if (p.audio) p.audio.remove(); });
         c.local.getTracks().forEach(t => t.stop());
         if (c.cam) c.cam.stop();
