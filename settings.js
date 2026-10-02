@@ -519,6 +519,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${row('i-trash', 'Clear this device', 'Remove notes, photos and settings stored in this browser', go('st-clear', 'Clear', true))}
                 </section>
 
+                ${signedIn() ? `<section class="st-card">
+                    <h3>Help</h3>
+                    ${row('i-chat', 'Help & support', 'Ask Cordial for help with your account, rewards, safety or a bug — and see our replies', go('open-support', 'Get help'))}
+                </section>` : ''}
+
                 ${signedIn() ? followSection() : ''}
 
                 ${signedIn() ? `

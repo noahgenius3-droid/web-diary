@@ -33,8 +33,15 @@ document.addEventListener('DOMContentLoaded', () => {
         paintAdminNav();
     }
     async function checkSuspended() {
+        // The Command Center's account status when it's installed; the original suspension table otherwise
+        const acc = await client.rpc('diary_my_account');
+        if (!acc.error && acc.data) {
+            const a = acc.data;
+            S.suspended = a.status && a.status !== 'active' ? { status: a.status, until: a.ends_at, reason: a.reason, message: a.message, scope: a.scope || [], appeal: a.appeal } : null;
+            return paintSuspended();
+        }
         const { data } = await client.from('diary_suspensions').select('until, reason').eq('user_id', me()).maybeSingle();
-        S.suspended = data && (!data.until || Date.parse(data.until) > Date.now()) ? data : null;
+        S.suspended = data && (!data.until || Date.parse(data.until) > Date.now()) ? { status: 'suspended', ...data } : null;
         paintSuspended();
     }
 
@@ -49,7 +56,14 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.innerHTML = '<svg class="i"><use href="#i-shield"/></svg>Moderation';
             btn.addEventListener('click', () => app.setView('admin'));
             settings.before(btn);
-        } else if (!S.admin && btn) btn.remove();
+            // The founder's Command Center (a separate admin site; access is checked there on the server)
+            const cc = document.createElement('a');
+            cc.className = 'nav-item';
+            cc.href = '/command/';
+            cc.dataset.cc = '1';
+            cc.innerHTML = '<svg class="i"><use href="#i-activity"/></svg>Command Center';
+            settings.before(cc);
+        } else if (!S.admin && btn) { btn.remove(); document.querySelector('.nav-item[data-cc]')?.remove(); }
     }
 
     // A clear notice when your account is suspended (you can still read)
@@ -64,8 +78,14 @@ document.addEventListener('DOMContentLoaded', () => {
             const col = document.querySelector('.main-col');
             if (col) col.insertBefore(bar, $('content'));
         }
-        const until = S.suspended.until ? `until ${new Date(S.suspended.until).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}` : 'until a moderator lifts it';
-        bar.innerHTML = `<svg class="i"><use href="#i-shield"/></svg><span><strong>Your account is limited ${esc(until)}.</strong> You can read, but not post or message. Reason: ${esc(S.suspended.reason || 'a breach of the community rules')}.</span>`;
+        const x = S.suspended;
+        const until = x.until ? `until ${new Date(x.until).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}` : 'until a moderator lifts it';
+        const SC = { platform: 'everything', messaging: 'messaging', comments: 'commenting', interactions: 'likes and follows', posting: 'posting' };
+        const what = x.status === 'deactivated' ? '<strong>Your account is deactivated.</strong> You can’t post, comment or message.'
+            : x.status === 'blocked' ? `<strong>${esc((x.scope || []).map(s => SC[s] || s).join(', ').replace(/^./, c => c.toUpperCase()))} switched off ${esc(until)}.</strong>`
+            : `<strong>Your account is limited ${esc(until)}.</strong> You can read, but not post or message.`;
+        bar.className = `suspended-bar ${x.status || 'suspended'}`;
+        bar.innerHTML = `<svg class="i"><use href="#i-shield"/></svg><span>${what} Reason: ${esc(x.reason || 'a breach of the community rules')}.${x.message ? ` ${esc(x.message)}` : ''}</span>${window.diarySupport ? `<button type="button" class="chip" data-action="open-support">${x.appeal === 'open' ? 'Appeal sent' : 'Appeal or get help'}</button>` : ''}`;
     }
 
     // ---------- Block ----------
