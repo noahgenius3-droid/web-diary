@@ -1091,6 +1091,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Messages ----------
+    // Cordial's alert server reaches the other person's phone even when Cordial is closed there
+    function alertServer(action, params) {
+        if (!s.session) return Promise.resolve(null);
+        return client.functions.invoke('diary-notify', { body: { action, ...params } })
+            .then(({ data }) => data || null, () => null);
+    }
+    const alertMessage = m => { if (m && m.id) alertServer('message', { id: m.id }); };
+
     async function loadRecent() {
         const { data, error } = await client.from('diary_messages')
             .select('id, sender, recipient, body, attachments, created_at, read_at, delivered_at, vanish, deleted_at, edited_at')
@@ -1181,6 +1189,7 @@ document.addEventListener('DOMContentLoaded', () => {
             window.LiveLocation.stop(att.id);
             return app.showToast('Couldn’t share your location — try again');
         }
+        alertMessage(data);
         (s.threads[friendId] = s.threads[friendId] || []).push(data);
         s.last[friendId] = data;
         appendMessage(data);
@@ -1355,6 +1364,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 .insert({ recipient: friendId, body: html.slice(0, 20000), attachments: uploaded, client_id: randomId(), ...(replyTo ? { reply_to: replyTo } : {}) })
                 .select().single();
             if (error) throw error;
+            alertMessage(data);
             items.forEach(p => p.preview && URL.revokeObjectURL(p.preview));
             (s.threads[friendId] = s.threads[friendId] || []).push(data);
             s.last[friendId] = data;
@@ -2311,6 +2321,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function sendAttachmentOnly(friendId, attachments) {
         const { data, error } = await client.from('diary_messages').insert({ recipient: friendId, body: '', attachments, client_id: randomId() }).select().single();
         if (error) return app.showToast(/block/i.test(error.message || '') ? 'You can’t message this person' : 'Couldn’t send that');
+        alertMessage(data);
         (s.threads[friendId] = s.threads[friendId] || []).push(data);
         s.last[friendId] = data;
         appendMessage(data);
@@ -2471,6 +2482,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return false;
         }
         writeOutbox(readOutbox().filter(x => x.client_id !== temp.client_id));
+        alertMessage(data);
         const list = s.threads[temp.recipient] || [];
         const i = list.findIndex(x => x.id === temp.id || x.client_id === temp.client_id);
         if (i > -1) list[i] = data;
@@ -5481,6 +5493,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     window.diarySocial.internals = {
+        alertServer,
         client, state: s, esc, avatar, avatarUrl, timeAgo, gate, extFor, randomId, uploadImage, hydrateStorage,
         renderPost, commentCount, openComments, repaintComments, MOOD_EMOJI: () => MOOD_EMOJI,
         respond, loadFriends, loadThread, openChat, focusPost, commentsBlock, addComment, deleteComment, toggleSaved, postsFor,

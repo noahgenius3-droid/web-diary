@@ -274,7 +274,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Every page is a browser history entry (#/feed, #/community/<id> …), so Back / Forward and the phone's
     // back gesture move between pages. Open sheets and dialogs share one extra entry on top: Back closes the
     // top one instead of leaving the page.
-    const ROUTE_KEYS = { community: 'communityId', folder: 'folderId', profile: 'profileId', post: 'postId', sound: 'soundId' };
+    const ROUTE_KEYS = { community: 'communityId', folder: 'folderId', profile: 'profileId', post: 'postId', sound: 'soundId', settings: 'settingsPage' };
     const ROOT_VIEWS = ['home', 'feed', 'explore', 'communities', 'messages'];
     const routeListeners = [];
     let ignorePops = 0;
@@ -299,7 +299,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const r = { app: true, view: parts[0] };
         const key = ROUTE_KEYS[r.view];
         if (key) {
-            if (!parts[1]) return null;
+            if (!parts[1]) return r.view === 'settings' ? r : null; // Settings' pages are optional
             r[key] = parts[1];
         }
         const c = parts.indexOf('chat');
@@ -324,7 +324,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const motionOK = () => document.documentElement.dataset.motion !== 'reduce' && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     function setView(view, extra = {}, opts = {}) {
-        const changed = view !== state.view;
+        if (view === 'settings' && !('settingsPage' in extra)) extra = { ...extra, settingsPage: '' }; // Settings opens on its menu
+        const changed = view !== state.view || (view === 'settings' && (extra.settingsPage || '') !== (state.settingsPage || ''));
         Object.assign(state, { view }, extra);
         const paint = () => {
             render();
@@ -480,7 +481,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!r) return;
         routeListeners.forEach(fn => fn(r));
         const key = ROUTE_KEYS[r.view];
-        const same = r.view === state.view && (!key || String(state[key]) === String(r[key]));
+        const same = r.view === state.view && (!key || String(state[key] || '') === String(r[key] || ''));
         if (!same) setView(r.view, key ? { [key]: r[key] } : {}, { fromHistory: true });
         else paintBack();
     });
@@ -837,6 +838,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function setTitle(text) {
         pageTitle.textContent = text;
+        pageTitle.classList.toggle('long-title', text.length > 10); // longer names step down a size so they fit beside the icons
         document.title = text === 'Cordial' ? 'Cordial' : `${text} · Cordial`;
     }
 

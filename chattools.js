@@ -307,7 +307,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!text.trim() && !atts.length) return false;
             if (kind === 'dm') {
                 const body = source.kind === 'dm' ? Rich.sanitize(source.body || '') : Rich.textToHTML(text);
-                const { error } = await client.from('diary_messages').insert({ recipient: id, body: text.trim() ? body : '', attachments: atts, forwarded: true, client_id: randomId() });
+                const { data, error } = await client.from('diary_messages').insert({ recipient: id, body: text.trim() ? body : '', attachments: atts, forwarded: true, client_id: randomId() }).select('id').single();
+                if (!error && I.alertServer) I.alertServer('message', { id: data.id });
                 return !error;
             }
             const { error } = await client.from('diary_community_messages').insert({ community_id: id, body: text.slice(0, 4000), attachments: atts, forwarded: true, client_id: randomId() });

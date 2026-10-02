@@ -529,7 +529,7 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (what === 'invite') {
             app.setView('invite');
         } else if (what === 'privacy') {
-            app.setView('settings');
+            app.setView('settings', { settingsPage: 'privacy' });
         } else if (what === 'interest') {
             app.setView('explore');
             setTimeout(() => {

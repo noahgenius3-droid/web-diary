@@ -214,7 +214,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 else app.setView('profile', { profileId: x.actor });
                 break;
             case 'new_login':
-                app.setView('settings');
+                app.setView('settings', { settingsPage: 'security' });
                 break;
             case 'mention':
             case 'reply':
@@ -290,7 +290,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 app.setView('feed');
                 break;
             case 'verification_update':
-                app.setView('settings');
+                app.setView('settings', { settingsPage: 'privacy' });
                 break;
             case 'support_reply':
                 if (window.diarySupport) window.diarySupport.open(d.ticket || null);

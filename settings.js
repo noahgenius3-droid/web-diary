@@ -117,7 +117,7 @@ document.addEventListener('DOMContentLoaded', () => {
         NP.muted = new Set((data && data.muted) || []);
         let local = '1';
         try { local = localStorage.getItem('diaryPreviews') || '1'; } catch (e) {}
-        NP.previews = NP.v2 ? !data || data.show_previews !== false : local !== '0';
+        NP.previews = NP.v2 ? !data || data.show_previews !== false : !NP.muted.has('nopreview') && local !== '0';
         NP.loading = false;
         if (app.state.view === 'settings') app.render();
     }
@@ -388,7 +388,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Page ----------
     app.views.settings = () => {
-        app.setTitle('Settings');
         const theme = read('diaryTheme', 'system');
         const accent = root.dataset.accent || 'indigo';
         const size = root.dataset.text || 'default';
@@ -426,146 +425,170 @@ document.addEventListener('DOMContentLoaded', () => {
             </label>`;
         const go = (action, label, danger = false) => `<button class="st-btn${danger ? ' danger' : ''}" data-action="${action}">${label}</button>`;
 
+        const sub = app.state.settingsPage || '';
+        const PAGES = {
+            status: 'Your status', notifications: 'Notifications', appearance: 'Appearance', privacy: 'Privacy',
+            security: 'Security', data: 'Your data', followers: 'Followers'
+        };
+        const page = PAGES[sub] && (signedIn() || ['appearance', 'notifications', 'data', 'security'].includes(sub)) ? sub : '';
+        app.setTitle(page ? PAGES[page] : 'Settings');
+        const card = (title, body, note = '') => body.trim() ? `<section class="st-card">${title ? `<h3>${title}</h3>` : ''}${body}</section>${note ? `<p class="st-note">${note}</p>` : ''}` : '';
+
+        // ---------- Pages ----------
+        const statusPage = () => card('', `
+            <div class="st-status">${STATUSES.map(([k, l]) => `<button type="button" class="chip${presence.status === k ? ' on' : ''}" data-action="st-status" data-value="${k}" aria-pressed="${presence.status === k}">${l}</button>`).join('')}
+                ${presence.status ? '<button type="button" class="chip" data-action="st-status" data-value="">Clear</button>' : ''}</div>
+`, presence.status === 'dnd' ? 'Calls and messages arrive quietly until you clear it.' : 'Friends see this next to your name. Do not disturb silences message sounds and calls.');
+
+        const appearancePage = () => card('', `
+            ${row('i-moon', 'Theme', '', seg('theme', [['system', 'Auto'], ['light', 'Light'], ['dark', 'Dark']], theme))}
+            <div class="st-row st-col">
+                <span class="st-ic"><svg class="i"><use href="#i-sparkle"/></svg></span>
+                <span class="st-text"><strong>Accent colour</strong><small>${esc((ACCENTS.find(a => a[0] === accent) || ACCENTS[0])[1])}</small></span>
+                <div class="st-swatches" role="radiogroup" aria-label="Accent colour">
+                    ${ACCENTS.map(([v, l, c]) => `<button type="button" class="st-swatch" role="radio" aria-checked="${accent === v}" aria-label="${l}" style="--sw:${c}" data-action="st-set" data-setting="accent" data-value="${v}"></button>`).join('')}
+                </div>
+            </div>
+            <div class="st-row st-col">
+                <span class="st-ic"><svg class="i"><use href="#i-palette"/></svg></span>
+                <span class="st-text"><strong>Background</strong><small>${esc((BACKGROUNDS.find(b => b[0] === bg) || BACKGROUNDS[0])[1])}${bg === 'midnight' ? ' · shows in dark mode' : ''}</small></span>
+                <div class="st-swatches st-bg" role="radiogroup" aria-label="App background">
+                    ${BACKGROUNDS.map(([v, l, light, dark]) => `<button type="button" class="st-swatch st-bgswatch" role="radio" aria-checked="${bg === v}" aria-label="${l}" style="--l:${light};--d:${dark}" data-action="st-set" data-setting="bg" data-value="${v}"></button>`).join('')}
+                </div>
+            </div>
+            ${row('i-type', 'Text size', '', seg('text', SIZES, size))}
+            ${row('i-play', 'Reduce motion', '', toggle('st-motion', motion, 'Reduce motion'))}
+            ${window.Speak && window.Speak.supported ? row('i-volume', 'Read-aloud voice', '', seg('speakvoice', [['female', 'Female'], ['male', 'Male']], window.Speak.getPrefs().voice)) : ''}`, 'Reduce motion turns off slides, bounces and confetti.');
+
+        const notificationsPage = () => {
+            const push = !!(window.diaryNotify && window.diaryNotify.pushSupported && window.diaryNotify.pushSupported());
+            const state = alerts === 'on' ? (push ? 'On — even when Cordial is closed' : 'On while Cordial is open')
+                : alerts === 'blocked' ? 'Blocked in your browser settings'
+                : alerts === 'unavailable' ? (/iPhone|iPad/.test(navigator.userAgent) ? 'Add Cordial to your Home Screen first' : 'Not available in this browser')
+                : 'Off';
+            const master = `<div class="nt-master${alerts === 'on' ? ' on' : ''}">
+                    <span class="st-ic"><svg class="i"><use href="#i-bell"/></svg></span>
+                    <span class="st-text"><strong>Alerts on this device</strong><small id="nt-state" aria-live="polite">${state}</small></span>
+                    ${alerts === 'blocked' || alerts === 'unavailable' ? '<span class="nt-off">Off</span>' : toggle('st-alerts', alerts === 'on', 'Alerts on this device')}
+                </div>
+                ${alerts === 'blocked' ? `<div class="nt-help" role="note"><strong>To turn them back on</strong>
+                    <span>${/iPhone|iPad/.test(navigator.userAgent) ? 'Open iPhone Settings → Notifications → Cordial, and allow notifications.' : /Android/.test(navigator.userAgent) ? 'Tap the icon next to the address bar → Permissions → Notifications → Allow.' : 'Click the lock icon next to the address bar → Notifications → Allow, then reload.'}</span>
+                    <button class="st-btn" data-action="st-reload">Reload</button></div>` : ''}`;
+            let cats = '';
+            if (signedIn()) {
+                if (!NP.muted) { loadNotifPrefs(); cats = '<p class="muted small st-pad">Loading…</p>'; }
+                else {
+                    const sw = (cat, title) => `<label class="st-switch share-toggle" aria-label="${title}"><input type="checkbox" data-action="st-notif" data-cat="${cat}"${NP.muted.has(cat) ? '' : ' checked'}><span class="switch" aria-hidden="true"></span></label>`;
+                    const line = ([cat, icon, title]) => `<div class="nt-row"><span class="nt-ic"><svg class="i"><use href="#${icon}"/></svg></span><span class="nt-text"><strong>${title}</strong></span>${sw(cat, title)}</div>`;
+                    cats = `<div class="nt-cats${alerts === 'on' ? '' : ' dim'}">
+                        ${NOTIF_MAIN.map(line).join('')}
+                        <details class="nt-more"><summary>More</summary>
+                            <div class="nt-row"><span class="nt-ic"><svg class="i"><use href="#i-eye"/></svg></span><span class="nt-text"><strong>Message previews</strong><small>Show the message text in alerts</small></span>
+                                <label class="st-switch share-toggle" aria-label="Message previews"><input type="checkbox" data-action="st-previews"${NP.previews ? ' checked' : ''}><span class="switch" aria-hidden="true"></span></label></div>
+                            ${NOTIF_MORE.map(line).join('')}
+                        </details>
+                    </div>`;
+                }
+            }
+            return card('', master, alerts === 'on' && push ? 'Calls ring and messages arrive even when Cordial is closed.' : '')
+                + (cats ? card('Alert me about', cats, 'Your choices apply on all your devices. Alerts about new sign-ins are always on.') : '');
+        };
+
+        const privacyPage = () => card('Activity', `
+                ${row('i-user', 'Online status', '', seg('presence-online', PRESENCE, presence.show_online))}
+                ${row('i-history', 'Last seen', '', seg('presence-last', PRESENCE, presence.show_last_seen))}
+                ${row('i-checks', 'Read receipts', '', toggle('st-receipts', presence.read_receipts !== false, 'Read receipts'))}`, 'If you hide your last seen or read receipts, you won’t see other people’s either.')
+            + card('Profile', `
+                ${row('i-image', 'Profile photo', '', seg('privacy-photo', WHO2, presence.photo_visibility || 'everyone'))}
+                ${row('i-info', 'Profile details', 'Bio, location, interests', seg('privacy-profile', WHO2, presence.profile_visibility || 'everyone'))}
+                ${row('i-chart', 'Your numbers', 'Posts, followers, reactions', seg('privacy-stats', [['everyone', 'Everyone'], ['friends', 'Friends'], ['nobody', 'Only me']], presence.stats_visibility || 'everyone'))}
+                ${verificationRow()}`, 'People who can’t see your photo see your initials.')
+            + card('Contact', `
+                ${row('i-phone', 'Who can call you', '', seg('privacy-calls', [['friends', 'Friends'], ['nobody', 'No one']], presence.allow_calls || 'friends'))}
+                ${row('i-search', 'Find me by email', '', seg('privacy-email', [['off', 'Off'], ['on', 'On']], presence.email_search === true || presence.email_search === 'on' ? 'on' : 'off'))}
+                <details class="st-fold st-blocked">
+                    <summary><span class="st-ic"><svg class="i"><use href="#i-block"/></svg></span><span class="st-text"><strong>Blocked people</strong><small>${SEC.blocked === null ? 'Loading…' : SEC.blocked.length ? `${SEC.blocked.length} blocked` : 'No one'}</small></span></summary>
+                    ${(SEC.blocked || []).length ? `<div class="st-list">${SEC.blocked.map(p => `<div class="st-person">${I.avatar(p, 'sm')}<span>${esc(p.display_name)}<small>@${esc(p.username)}</small></span><button type="button" class="st-btn" data-action="st-unblock" data-id="${esc(p.id)}">Unblock</button></div>`).join('')}</div>` : '<p class="muted small st-pad">Block someone from their profile or a chat.</p>'}
+                </details>`, 'Email search only finds you by your exact address.');
+
+        const securityPage = () => card('', `
+                ${row('i-lock', 'Private notes PIN', pinSet ? 'On' : 'Off', go('st-pin', pinSet ? 'Change' : 'Set PIN'))}
+                ${signedIn() ? row('i-shield', 'Two-step verification', (SEC.factors || []).length ? 'On' : 'Off', (SEC.factors || []).length ? go('st-mfa-off', 'Turn off') : go('st-mfa-on', 'Turn on')) : ''}
+                ${signedIn() ? row('i-lock', 'Password', '', go('st-password', 'Change')) : ''}`)
+            + (signedIn() ? card('Devices', `
+                <div class="st-list">${(SEC.devices || []).map(d => `<div class="st-person"><span class="st-dev-ic"><svg class="i"><use href="#i-grid"/></svg></span><span>${esc(d.label || 'A device')}${I.deviceId && d.device_id === I.deviceId() ? ' <b class="st-this">This device</b>' : ''}<small>Active ${esc(I.timeAgo(d.last_seen))}</small></span>${I.deviceId && d.device_id === I.deviceId() ? '' : `<button type="button" class="st-btn" data-action="st-forget-device" data-id="${esc(d.id)}">Remove</button>`}</div>`).join('') || '<p class="muted small">Loading…</p>'}</div>
+                <div class="st-row st-end"><button type="button" class="st-btn" data-action="st-signout-others">Sign out of other devices</button></div>`, 'You get an alert whenever a new device signs in.')
+            + card('', row('i-logout', 'Sign out', '', go('st-signout', 'Sign out')), 'Your notes stay on this device when you sign out.')
+            + `<section class="st-card st-danger">
+                ${row('i-trash', 'Delete account', 'Removes everything you shared, for good', go('st-delete', 'Delete', true))}
+            </section>` : '');
+
+        const dataPage = () => card('', `
+                ${window.diaryBackup ? (signedIn()
+                    ? row('i-refresh', 'Backup', `<span id="st-backup-sub">${esc(backupText())}</span>`, go('st-backup', 'Back up now'))
+                    : row('i-lock', 'Back up your notes', 'Sign in to keep them on every device', go('sign-in', 'Sign in'))) : ''}
+                ${row('i-download', 'Export your notes', '', go('st-export', 'Export'))}
+                ${signedIn() ? row('i-lock', 'Chat backup', 'A passphrase-locked copy', `<span class="st-two">${go('st-chat-backup', 'Back up')}${go('st-chat-open', 'Open')}</span>`) : ''}`)
+            + card('This device', `
+                ${row('i-archive', 'Storage', `<span id="st-storage">${esc(storageText || 'Checking…')}</span>`, '')}
+                ${row('i-refresh', 'Reload the app', 'Get the latest version', go('st-reload', 'Reload'))}
+                ${row('i-trash', 'Clear this device', '', go('st-clear', 'Clear', true))}`, 'Clearing removes the notes, photos and settings stored in this browser.');
+
+        if (page) {
+            const body = { status: statusPage, appearance: appearancePage, notifications: notificationsPage, privacy: privacyPage,
+                security: securityPage, data: dataPage, followers: followSection }[page]();
+            return `<div class="settings st-page">
+                <button type="button" class="st-up" data-action="st-page" data-page="" aria-label="Back to settings"><svg class="i"><use href="#i-back"/></svg></button>
+                ${body}
+            </div>`;
+        }
+
+        // ---------- Menu ----------
+        if (signedIn() && !F.loaded) loadFollowLists();
+        const link = (to, icon, tone, title, value, action = 'st-page') => `
+            <button type="button" class="st-row st-link" data-action="${action}" data-page="${to}">
+                <span class="st-tile" style="--tile:var(--tile-${tone})" aria-hidden="true"><svg class="i"><use href="#${icon}"/></svg></span>
+                <span class="st-label">${title}</span>
+                ${value ? `<span class="st-val">${esc(value)}</span>` : ''}
+                <svg class="i st-chev" aria-hidden="true"><use href="#i-right"/></svg>
+            </button>`;
+        const statusName = presence.status ? (STATUSES.find(x => x[0] === presence.status) || ['', ''])[1].replace(/^\S+\s/, '') : '';
+        const themeName = { system: 'Auto', light: 'Light', dark: 'Dark' }[theme] || 'Auto';
+        const alertName = alerts === 'on' ? 'On' : alerts === 'blocked' ? 'Blocked' : alerts === 'unavailable' ? 'Unavailable' : 'Off';
         return `
-            <div class="settings">
-                <section class="st-card st-profile">
-                    ${p ? `
+            <div class="settings st-home">
+                ${p ? `<section class="st-card st-me">
                         <button class="st-avatar" data-action="change-avatar" aria-label="Change profile photo">
-                            ${I.avatar(p, 'xl')}<span class="photo-badge" aria-hidden="true"><svg class="i"><use href="#i-camera"/></svg></span>
+                            ${I.avatar(p, 'lg')}<span class="photo-badge" aria-hidden="true"><svg class="i"><use href="#i-camera"/></svg></span>
                         </button>
                         <div class="st-who">
                             <strong>${esc(p.display_name)}</strong>
-                            <small>@${esc(p.username)}</small>
+                            <small>@${esc(p.username)}${p.avatar_path ? ` · <button type="button" class="st-textbtn" data-action="st-remove-photo">Remove photo</button>` : ''}</small>
                         </div>
-                        <div class="st-profile-actions">
-                            ${go('st-rename', 'Edit name')}
-                            ${p.avatar_path ? go('st-remove-photo', 'Remove photo') : ''}
-                        </div>` : `
-                        <div class="st-who"><strong>You’re not signed in</strong><small>Your notes stay on this device. Sign in to share with friends.</small></div>
-                        <button class="primary-btn" data-action="sign-in">Sign in or create an account</button>`}
-                </section>
-
-                ${signedIn() ? `<section class="st-card">
-                    <h3>Your status</h3>
-                    <div class="st-status">${STATUSES.map(([k, l]) => `<button type="button" class="chip${presence.status === k ? ' on' : ''}" data-action="st-status" data-value="${k}" aria-pressed="${presence.status === k}">${l}</button>`).join('')}
-                        ${presence.status ? '<button type="button" class="chip" data-action="st-status" data-value="">Clear</button>' : ''}</div>
-                    <p class="muted small">${presence.status ? `${esc((STATUSES.find(x => x[0] === presence.status) || ['', ''])[1])}${presence.status_text ? ` · “${esc(presence.status_text)}”` : ''}${presence.status_until ? ` · until ${esc(new Date(presence.status_until).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }))}` : ''}${presence.status === 'dnd' ? ' — calls and messages arrive quietly' : ''}` : 'Let friends know if you’re busy. Do not disturb silences message sounds and incoming calls.'}</p>
-                </section>` : ''}
-
-                <section class="st-card">
-                    <h3>Appearance</h3>
-                    ${row('i-moon', 'Theme', 'Follow your phone, or choose one', seg('theme', [['system', 'Auto'], ['light', 'Light'], ['dark', 'Dark']], theme))}
-                    <div class="st-row">
-                        <span class="st-ic"><svg class="i"><use href="#i-sparkle"/></svg></span>
-                        <span class="st-text"><strong>Accent colour</strong><small>${esc((ACCENTS.find(a => a[0] === accent) || ACCENTS[0])[1])}</small></span>
-                        <div class="st-swatches" role="radiogroup" aria-label="Accent colour">
-                            ${ACCENTS.map(([v, l, c]) => `<button type="button" class="st-swatch" role="radio" aria-checked="${accent === v}" aria-label="${l}" style="--sw:${c}" data-action="st-set" data-setting="accent" data-value="${v}"></button>`).join('')}
-                        </div>
-                    </div>
-                    <div class="st-row">
-                        <span class="st-ic"><svg class="i"><use href="#i-palette"/></svg></span>
-                        <span class="st-text"><strong>Background</strong><small>${esc((BACKGROUNDS.find(b => b[0] === bg) || BACKGROUNDS[0])[1])}${bg === 'midnight' ? ' · shows in dark mode' : ''}</small></span>
-                        <div class="st-swatches st-bg" role="radiogroup" aria-label="App background">
-                            ${BACKGROUNDS.map(([v, l, light, dark]) => `<button type="button" class="st-swatch st-bgswatch" role="radio" aria-checked="${bg === v}" aria-label="${l}" style="--l:${light};--d:${dark}" data-action="st-set" data-setting="bg" data-value="${v}"></button>`).join('')}
-                        </div>
-                    </div>
-                    ${row('i-edit', 'Text size', 'Applies across the app', seg('text', SIZES, size))}
-                    ${window.Speak && window.Speak.supported ? row('i-volume', 'Read-aloud voice', 'Used when you tap Listen on a note or post', seg('speakvoice', [['female', 'Female'], ['male', 'Male']], window.Speak.getPrefs().voice)) : ''}
-                    ${row('i-play', 'Reduce motion', 'Calmer screens: no slides, bounces or confetti', toggle('st-motion', motion, 'Reduce motion'))}
-                </section>
-
-                <section class="st-card">
-                    <h3>Notifications</h3>
-                    ${(() => {
-                        const push = !!(window.diaryNotify && window.diaryNotify.pushSupported && window.diaryNotify.pushSupported());
-                        const state = alerts === 'on'
-                            ? (push ? (NP.v2 ? 'You’re receiving alerts for calls, messages and other activity based on your choices below — even when Cordial is closed.'
-                                    : 'You’re getting alerts based on your choices below. Friend requests, followers, new posts, likes, comments and live arrive even when Cordial is closed; messages and calls while it’s open.')
-                                : 'Alerts work while Cordial is open. This browser can’t receive them when it’s closed.')
-                            : alerts === 'blocked' ? 'Notifications are blocked for Cordial on this device.'
-                            : alerts === 'unavailable' ? 'Not available in this browser — on iPhone, add Cordial to your Home Screen first, then open it from there.'
-                            : NP.v2 ? 'Alerts on this device are off. Turn them on to get calls, messages, new posts and more — even when Cordial is closed.'
-                            : 'Alerts on this device are off. Turn them on to get friend requests, new posts, likes and more — even when Cordial is closed.';
-                        return `<div class="nt-master${alerts === 'on' ? ' on' : ''}">
-                            <span class="st-ic"><svg class="i"><use href="#i-bell"/></svg></span>
-                            <span class="st-text"><strong>Alerts on this device</strong><small id="nt-state" aria-live="polite">${state}</small></span>
-                            ${alerts === 'blocked' || alerts === 'unavailable' ? '<span class="nt-off">Off</span>' : toggle('st-alerts', alerts === 'on', 'Alerts on this device')}
-                        </div>
-                        ${alerts === 'blocked' ? `<div class="nt-help" role="note"><strong>To turn them back on</strong>
-                            <span>${/iPhone|iPad/.test(navigator.userAgent) ? 'Open iPhone Settings → Notifications → Cordial, and allow notifications.' : /Android/.test(navigator.userAgent) ? 'Tap the lock or settings icon next to the address bar → Permissions → Notifications → Allow. (Installed app: Android Settings → Apps → Cordial → Notifications.)' : 'Click the lock icon next to the address bar → Notifications → Allow, then reload Cordial.'}</span>
-                            <button class="st-btn" data-action="st-reload">I’ve allowed them — reload</button></div>` : ''}`;
-                    })()}
-                    ${signedIn() ? (() => {
-                        if (!NP.muted) { loadNotifPrefs(); return '<p class="muted small st-pad">Loading your notification choices…</p>'; }
-                        const sw = (cat, title) => `<label class="st-switch share-toggle" aria-label="${title}"><input type="checkbox" data-action="st-notif" data-cat="${cat}"${NP.muted.has(cat) ? '' : ' checked'}><span class="switch" aria-hidden="true"></span></label>`;
-                        const line = ([cat, icon, title, sub]) => `<div class="nt-row"><span class="nt-ic"><svg class="i"><use href="#${icon}"/></svg></span><span class="nt-text"><strong>${title}</strong><small>${sub}</small></span>${sw(cat, title)}</div>`;
-                        return `<div class="nt-cats${alerts === 'on' ? '' : ' dim'}">
-                            <h4 class="nt-h">Alert me about</h4>
-                            ${NOTIF_MAIN.map(line).join('')}
-                            <details class="nt-more"><summary>More notification settings</summary>
-                                <div class="nt-row"><span class="nt-ic"><svg class="i"><use href="#i-eye"/></svg></span><span class="nt-text"><strong>Message previews</strong><small>Show what a message says in the alert, not just who it’s from</small></span>
-                                    <label class="st-switch share-toggle" aria-label="Message previews"><input type="checkbox" data-action="st-previews"${NP.previews ? ' checked' : ''}><span class="switch" aria-hidden="true"></span></label></div>
-                                ${NOTIF_MORE.map(line).join('')}
-                            </details>
-                            <p class="muted small nt-foot">${alerts === 'on' ? 'These choices also apply to your other devices.' : 'Your choices are saved and apply once alerts are on.'} New sign-ins to your account are always shown.</p>
-                        </div>`;
-                    })() : ''}
-                </section>
-
-                <section class="st-card">
-                    <h3>Privacy & security</h3>
-                    ${row('i-lock', 'Private notes PIN', pinSet ? 'On — private notes need your PIN' : 'Off — protect private notes on this device', go('st-pin', pinSet ? 'Change' : 'Set PIN'))}
-                    ${signedIn() ? row('i-user', 'Who sees when you’re online', 'The green dot and “Active now”', seg('presence-online', PRESENCE, presence.show_online)) : ''}
-                    ${signedIn() ? row('i-history', 'Who sees your last seen', presence.show_last_seen === 'nobody' ? 'Hidden — and you won’t see other people’s last seen either' : '“Last seen 5 min ago” when you’re away', seg('presence-last', PRESENCE, presence.show_last_seen)) : ''}
-                    ${signedIn() ? row('i-checks', 'Read receipts', presence.read_receipts === false ? 'Off — people won’t see when you’ve read their messages, and you won’t see theirs' : 'On — blue ticks when a message has been read', toggle('st-receipts', presence.read_receipts !== false, 'Read receipts')) : ''}
-                    ${signedIn() ? row('i-phone', 'Who can call you', presence.allow_calls === 'nobody' ? 'No one — calls are blocked' : 'Your friends', seg('privacy-calls', [['friends', 'Friends'], ['nobody', 'No one']], presence.allow_calls || 'friends')) : ''}
-                    ${signedIn() ? row('i-image', 'Who sees your profile photo', 'Everyone else sees your initials', seg('privacy-photo', WHO2, presence.photo_visibility || 'everyone')) : ''}
-                    ${signedIn() ? verificationRow() : ''}
-                    ${signedIn() ? row('i-user', 'Who sees your profile details', 'Your bio, location, interests and when you joined', seg('privacy-profile', WHO2, presence.profile_visibility || 'everyone')) : ''}
-                    ${signedIn() ? row('i-chart', 'Who sees your numbers', 'Posts, followers, following and reactions — and your follower lists', seg('privacy-stats', [['everyone', 'Everyone'], ['friends', 'Friends'], ['nobody', 'Only me']], presence.stats_visibility || 'everyone')) : ''}
-                    ${signedIn() ? row('i-search', 'Let people find me by email', 'Only someone who types your exact email address', seg('privacy-email', [['off', 'Off'], ['on', 'On']], presence.email_search === true || presence.email_search === 'on' ? 'on' : 'off')) : ''}
-                    ${signedIn() ? row('i-bell', 'Message previews in alerts', read('diaryPreviews', '1') === '1' ? 'Alerts show what the message says' : 'Alerts only say who it’s from', toggle('st-previews', read('diaryPreviews', '1') === '1', 'Message previews')) : ''}
-                    ${signedIn() ? `<div class="st-row st-col">
-                        <span class="st-ic"><svg class="i"><use href="#i-block"/></svg></span>
-                        <span class="st-text"><strong>Blocked people</strong><small>${SEC.blocked === null ? 'Loading…' : SEC.blocked.length ? `${SEC.blocked.length} blocked` : 'No one — block someone from their profile or chat'}</small></span>
-                        ${(SEC.blocked || []).length ? `<div class="st-list">${SEC.blocked.map(p => `<div class="st-person">${I.avatar(p, 'sm')}<span>${esc(p.display_name)}<small>@${esc(p.username)}</small></span><button type="button" class="st-btn" data-action="st-unblock" data-id="${esc(p.id)}">Unblock</button></div>`).join('')}</div>` : ''}
-                    </div>` : ''}
-                    ${signedIn() ? row('i-shield', 'Two-step verification', (SEC.factors || []).length ? 'On — signing in needs a code from your authenticator app' : 'Off — add a code from an authenticator app when you sign in', (SEC.factors || []).length ? go('st-mfa-off', 'Turn off') : go('st-mfa-on', 'Turn on')) : ''}
-                    ${signedIn() ? `<div class="st-row st-col">
-                        <span class="st-ic"><svg class="i"><use href="#i-grid"/></svg></span>
-                        <span class="st-text"><strong>Your devices</strong><small>Where your account is signed in. You get an alert when a new one signs in.</small></span>
-                        <div class="st-list">${(SEC.devices || []).map(d => `<div class="st-person"><span class="st-dev-ic"><svg class="i"><use href="#i-grid"/></svg></span><span>${esc(d.label || 'A device')}${I.deviceId && d.device_id === I.deviceId() ? ' <b class="st-this">This device</b>' : ''}<small>Last active ${esc(I.timeAgo(d.last_seen))} · first seen ${esc(new Date(d.first_seen).toLocaleDateString())}</small></span>${I.deviceId && d.device_id === I.deviceId() ? '' : `<button type="button" class="st-btn" data-action="st-forget-device" data-id="${esc(d.id)}">Remove</button>`}</div>`).join('') || '<p class="muted small">Loading…</p>'}</div>
-                        <button type="button" class="st-btn danger" data-action="st-signout-others">Sign out of all other devices</button>
-                    </div>` : ''}
-                    ${signedIn() ? row('i-lock', 'Password', 'Change the password you sign in with', go('st-password', 'Change')) : ''}
-                    ${signedIn() ? row('i-logout', 'Sign out', 'Your notes stay on this device', go('st-signout', 'Sign out')) : ''}
-                </section>
-
-                <section class="st-card">
-                    <h3>Your data</h3>
-                    ${window.diaryBackup ? (signedIn()
-                        ? row('i-refresh', 'Backup', `<span id="st-backup-sub">${esc(backupText())}</span>`, go('st-backup', 'Back up now'))
-                        : row('i-lock', 'Back up your notes', 'Sign in and your notes are saved to your account, so they come back on any device', go('sign-in', 'Sign in'))) : ''}
-                    ${row('i-download', 'Export your notes', 'Download everything as a file', go('st-export', 'Export'))}
-                    ${signedIn() ? row('i-lock', 'Chat backup', 'An extra, passphrase-locked copy of your chats (they’re already kept in your account)', `<span class="st-two">${go('st-chat-backup', 'Back up')}${go('st-chat-open', 'Open')}</span>`) : ''}
-                    ${row('i-archive', 'Storage', `<span id="st-storage">${esc(storageText || 'Checking…')}</span>`, '')}
-                    ${row('i-refresh', 'Reload the app', 'Get the latest version of Cordial', go('st-reload', 'Reload'))}
-                    ${row('i-trash', 'Clear this device', 'Remove notes, photos and settings stored in this browser', go('st-clear', 'Clear', true))}
-                </section>
-
-                ${signedIn() ? `<section class="st-card">
-                    <h3>Help</h3>
-                    ${row('i-chat', 'Help & support', 'Ask Cordial for help with your account, rewards, safety or a bug — and see our replies', go('open-support', 'Get help'))}
-                </section>` : ''}
-
-                ${signedIn() ? followSection() : ''}
-
-                ${signedIn() ? `
-                    <section class="st-card st-danger">
-                        <h3>Account</h3>
-                        ${row('i-trash', 'Delete account', 'Permanently remove your profile, posts, messages and everything you shared', go('st-delete', 'Delete', true))}
-                    </section>` : ''}
-
+                        <button type="button" class="st-btn" data-action="st-rename">Edit</button>
+                    </section>` : `<section class="st-card st-me st-guest">
+                        <div class="st-who"><strong>You’re not signed in</strong><small>Your notes stay on this device.</small></div>
+                        <button class="primary-btn" data-action="sign-in">Sign in</button>
+                    </section>`}
+                <label class="st-search">
+                    <svg class="i" aria-hidden="true"><use href="#i-search"/></svg>
+                    <input type="search" id="st-q" placeholder="Search settings" aria-label="Search settings" autocomplete="off" enterkeyhint="search">
+                </label>
+                <section class="st-card st-menu" id="st-results" hidden aria-live="polite"></section>
+                <div class="st-groups" id="st-groups">
+                    <section class="st-card st-menu">
+                        ${signedIn() ? link('status', 'i-smile', 'amber', 'Status', statusName) : ''}
+                        ${link('notifications', 'i-bell', 'red', 'Notifications', alertName)}
+                        ${link('appearance', 'i-palette', 'accent', 'Appearance', themeName)}
+                    </section>
+                    <section class="st-card st-menu">
+                        ${signedIn() ? link('privacy', 'i-eye', 'blue', 'Privacy', '') : ''}
+                        ${link('security', 'i-shield', 'green', signedIn() ? 'Account & security' : 'Notes PIN', '')}
+                        ${signedIn() ? link('followers', 'i-users', 'orange', 'Followers', F.loaded ? String(F.followers.length) : '') : ''}
+                        ${link('data', 'i-archive', 'gray', 'Your data', '')}
+                    </section>
+                    ${signedIn() ? `<section class="st-card st-menu">${link('', 'i-chat', 'teal', 'Help & support', '', 'open-support')}</section>` : ''}
+                </div>
                 <p class="st-foot muted small">Cordial · your diary, your people.</p>
             </div>`;
     };
@@ -575,7 +598,24 @@ document.addEventListener('DOMContentLoaded', () => {
     app.hooks.afterRender = view => {
         if (previousAfter) previousAfter(view);
         if (view !== 'settings') F.loaded = false;
-        else I && I.hydrateStorage(document.getElementById('content'));
+        else {
+            I && I.hydrateStorage(document.getElementById('content'));
+            if (findAfter) {
+                const name = findAfter;
+                findAfter = '';
+                setTimeout(() => { // after the page has painted and scrolled to the top
+                    const hit = [...document.querySelectorAll('#content .st-text strong, #content .nt-text strong, #content .st-card h3')].find(x => x.textContent.trim() === name);
+                    const target = hit && (hit.closest('.st-row, .nt-row, .nt-master, details, .st-card') || hit);
+                    if (target) {
+                        const fold = target.closest('details') || (target.tagName === 'DETAILS' ? target : null);
+                        if (fold) fold.open = true;
+                        target.scrollIntoView({ block: 'center' });
+                        target.classList.add('st-flash');
+                        setTimeout(() => target.classList.remove('st-flash'), 1600);
+                    }
+                }, 400);
+            }
+        }
     };
 
     function backupText() {
@@ -620,7 +660,66 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Actions ----------
+    let fromMenu = false;
+    let findAfter = '';
+    const SEARCH = () => [
+        ['Status', 'status', 'busy available do not disturb dnd away'],
+        ['Alerts on this device', 'notifications', 'notifications push allow enable'],
+        ...NOTIF_MAIN.concat(NOTIF_MORE).map(([, , t, sub]) => [t, 'notifications', sub]),
+        ['Message previews', 'notifications', 'text preview hide'],
+        ['Theme', 'appearance', 'dark mode light auto night'],
+        ['Accent colour', 'appearance', 'color'],
+        ['Background', 'appearance', 'wallpaper'],
+        ['Text size', 'appearance', 'font bigger larger smaller'],
+        ['Reduce motion', 'appearance', 'animation'],
+        ['Read-aloud voice', 'appearance', 'speech listen'],
+        ['Online status', 'privacy', 'active green dot'],
+        ['Last seen', 'privacy', ''],
+        ['Read receipts', 'privacy', 'blue ticks seen'],
+        ['Profile photo', 'privacy', 'avatar picture'],
+        ['Profile details', 'privacy', 'bio location interests'],
+        ['Your numbers', 'privacy', 'followers count stats'],
+        ['Verification', 'privacy', 'verified tick badge'],
+        ['Who can call you', 'privacy', 'calls phone'],
+        ['Find me by email', 'privacy', 'search email'],
+        ['Blocked people', 'privacy', 'block unblock'],
+        ['Private notes PIN', 'security', 'lock code'],
+        ['Two-step verification', 'security', '2fa mfa authenticator code'],
+        ['Password', 'security', 'change'],
+        ['Devices', 'security', 'sessions sign out others'],
+        ['Sign out', 'security', 'log out logout'],
+        ['Delete account', 'security', 'remove close'],
+        ['Backup', 'data', 'sync save'],
+        ['Export your notes', 'data', 'download'],
+        ['Chat backup', 'data', 'messages passphrase'],
+        ['Storage', 'data', 'space'],
+        ['Reload the app', 'data', 'update refresh'],
+        ['Clear this device', 'data', 'reset'],
+        ['Followers', 'followers', 'following unfollow remove'],
+        ['Help & support', 'support', 'helpline contact bug problem']
+    ].filter(([, pg]) => signedIn() || ['notifications', 'appearance', 'security', 'data'].includes(pg));
+    const PAGE_NAMES = { status: 'Status', notifications: 'Notifications', appearance: 'Appearance', privacy: 'Privacy', security: 'Security', data: 'Your data', followers: 'Followers', support: 'Help' };
+    $('content').addEventListener('input', e => {
+        if (e.target.id !== 'st-q') return;
+        const q = e.target.value.trim().toLowerCase();
+        const out = $('st-results');
+        $('st-groups').hidden = !!q;
+        out.hidden = !q;
+        if (!q) return;
+        const hits = SEARCH().filter(([t, , k]) => `${t} ${k}`.toLowerCase().includes(q)).slice(0, 8);
+        out.innerHTML = hits.length ? hits.map(([t, pg]) => `
+            <button type="button" class="st-row st-link" data-action="${pg === 'support' ? 'open-support' : 'st-page'}" data-page="${pg}" data-find="${esc(t)}">
+                <span class="st-label">${esc(t)}</span><span class="st-val">${PAGE_NAMES[pg]}</span>
+                <svg class="i st-chev" aria-hidden="true"><use href="#i-right"/></svg>
+            </button>`).join('') : `<p class="st-none">No settings match “${esc(e.target.value.trim())}”</p>`;
+    });
     Object.assign(app.actions, {
+        'st-page': el => {
+            const to = el.dataset.page || '';
+            if (to) { fromMenu = true; findAfter = el.dataset.find || ''; return app.setView('settings', { settingsPage: to }); }
+            if (fromMenu) { fromMenu = false; return history.back(); }
+            app.setView('settings', { settingsPage: '' }, { replace: true });
+        },
         'st-verify': () => verifyDialog(),
         'st-set': el => {
             const { setting, value } = el.dataset;
@@ -739,10 +838,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const a = e.target.dataset && e.target.dataset.action;
         if (a === 'st-motion') {
             setPref('motion', 'diaryMotion', e.target.checked ? 'reduce' : 'full', 'full');
-        } else if (a === 'st-previews') {
-            write('diaryPreviews', e.target.checked ? '1' : '0');
-            app.showToast(e.target.checked ? 'Alerts show message text' : 'Alerts hide message text');
-            app.render();
         } else if (a === 'st-receipts') {
             const on = e.target.checked;
             P.settings = { ...P.settings, read_receipts: on };
@@ -756,8 +851,13 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (a === 'st-previews') {
             NP.previews = e.target.checked;
             write('diaryPreviews', NP.previews ? '1' : '0');
-            const { error } = NP.v2 ? await I.client.from('diary_notification_prefs').upsert({ muted: [...(NP.muted || [])], show_previews: NP.previews, updated_at: new Date().toISOString() }, { onConflict: 'user_id' }) : { error: null };
-            if (error) { NP.previews = !NP.previews; app.showToast('Couldn’t save that'); app.render(); }
+            if (!NP.v2 && NP.muted) NP.muted[NP.previews ? 'delete' : 'add']('nopreview'); // the alert server reads it here
+            const { error } = await I.client.from('diary_notification_prefs').upsert({ muted: [...(NP.muted || [])], ...(NP.v2 ? { show_previews: NP.previews } : {}), updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+            if (error) {
+                NP.previews = !NP.previews;
+                if (!NP.v2 && NP.muted) NP.muted[NP.previews ? 'delete' : 'add']('nopreview');
+                app.showToast('Couldn’t save that'); app.render();
+            }
             else app.showToast(NP.previews ? 'Alerts show what messages say' : 'Alerts only say who messaged you');
         } else if (a === 'st-alerts') {
             if (e.target.checked && window.diaryNotify && window.diaryNotify.enableAlerts) await window.diaryNotify.enableAlerts();

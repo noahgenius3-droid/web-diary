@@ -8,7 +8,7 @@
 // imported while the worker installs, so this happens here, once.
 try { self.window = self; importScripts('/config.js'); } catch (e) { /* calls can still be declined in the app */ }
 
-const CACHE = 'cordial-shell-v114';
+const CACHE = 'cordial-shell-v115';
 const SHELL = [
     '/', '/index.html', '/manifest.webmanifest',
     '/style.css', '/photoedit.css',
@@ -173,10 +173,10 @@ self.addEventListener('notificationclick', event => {
         event.waitUntil((async () => {
             const cfg = cordialConfig();
             if (!cfg) return;
-            await fetch(`${cfg.supabaseUrl}/rest/v1/rpc/diary_call_decline`, {
+            await fetch(`${cfg.supabaseUrl}/functions/v1/diary-notify`, {
                 method: 'POST',
-                headers: { apikey: cfg.supabaseKey, Authorization: `Bearer ${cfg.supabaseKey}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ p_invite: d.decline.invite, p_token: d.decline.token })
+                headers: { apikey: cfg.supabaseKey, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'decline', ring: d.decline.token })
             }).catch(() => {});
         })());
         return;
