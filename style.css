@@ -16457,3 +16457,38 @@ button.chip:active, .icon-btn:active, .round-btn:active, .link-btn:active, .tab-
 }
 /* In an open chat the "Never miss a call" card sits above the message box, not on it */
 body.chat-open .alert-ask { bottom: calc(92px + env(safe-area-inset-bottom, 0px)); }
+
+/* ---------- Verified by Cordial: profile badge, premium photo ring, perks sheet ---------- */
+:root { --verified: #1d9bf0; }
+:root[data-theme="dark"] { --verified: #4cb4f5; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --verified: #4cb4f5; } }
+.pf-verified {
+    display: inline-flex; align-items: center; gap: 6px; justify-self: start; min-height: 32px; margin: 2px 0 2px; padding: 0 12px 0 8px;
+    border: 0; border-radius: 999px; background: color-mix(in srgb, var(--verified) 14%, transparent); color: var(--verified);
+    font: inherit; font-size: 0.82rem; font-weight: 700; cursor: pointer; touch-action: manipulation; grid-column: 1 / -1;
+    transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1), background-color 140ms ease;
+}
+.pf-verified .i { width: 16px; height: 16px; }
+.pf-verified:active { transform: scale(0.96); }
+@media (hover: hover) and (pointer: fine) { .pf-verified:hover { background: color-mix(in srgb, var(--verified) 22%, transparent); } }
+.pf-verified:focus-visible { outline: 2px solid var(--verified); outline-offset: 2px; }
+/* Premium ring around a verified person's photo */
+.pf-photo.is-verified .avatar.xl { box-shadow: 0 0 0 3px var(--bg), 0 0 0 6px var(--verified), 0 0 0 7px color-mix(in srgb, var(--verified) 30%, transparent); }
+/* The sheet */
+.pf-vsheet .rx-card { max-width: 440px; margin-inline: auto; padding: 0 20px calc(18px + env(safe-area-inset-bottom, 0px)); overflow-y: auto; }
+.pf-vsheet .rx-head { margin-inline: -20px; }
+.pf-v-hero { display: grid; justify-items: center; gap: 10px; padding: 6px 4px 14px; text-align: center; }
+.pf-v-hero p { margin: 0; max-width: 32ch; color: var(--text-muted); line-height: 1.5; }
+.pf-v-hero b { color: var(--text); }
+.pf-v-badge { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--verified) 14%, transparent); color: var(--verified); }
+.pf-v-badge .i { width: 36px; height: 36px; }
+.pf-v-h { margin: 6px 0 8px; font-size: 0.95rem; font-weight: 800; }
+.pf-v-perks { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.pf-v-perks li { display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border); }
+.pf-v-perks li:first-child { border-top: 0; }
+.pf-v-ic { flex: none; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: color-mix(in srgb, var(--verified) 12%, transparent); color: var(--verified); }
+.pf-v-ic .i { width: 18px; height: 18px; }
+.pf-v-perks strong { display: block; font-size: 0.92rem; color: var(--text); }
+.pf-v-perks small { display: block; margin-top: 2px; font-size: 0.82rem; line-height: 1.45; color: var(--text-muted); }
+.pf-v-foot { margin: 12px 0 0; }
+.vtick { color: var(--verified); }

@@ -228,7 +228,7 @@ document.addEventListener('DOMContentLoaded', () => {
         people.pending = q;
         const { data, error } = await client.rpc('diary_search_people', { q });
         people.pending = null;
-        people.cache.set(q, error ? { error: true, list: [] } : { list: data || [] });
+        people.cache.set(q, error ? { error: true, list: [] } : { list: verifiedFirst(data || []) });
         if (people.cache.size > 40) people.cache.delete(people.cache.keys().next().value);
         paintPeople(q);
     }
@@ -2739,7 +2739,7 @@ document.addEventListener('DOMContentLoaded', () => {
         feed.sort((a, b) => b.sortAt - a.sortAt);
         s.feedLoading = false;
         s.feed = feed;
-        s.suggestions = (!suggestRes.error && Array.isArray(suggestRes.data)) ? suggestRes.data : [];
+        s.suggestions = (!suggestRes.error && Array.isArray(suggestRes.data)) ? verifiedFirst(suggestRes.data) : [];
         await loadSavedExtra();
         app.requestRender(['feed', 'explore']);
         loadPreviews(feed);
@@ -2851,6 +2851,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const { data } = await client.rpc('diary_verified_list');
         s.verified = new Map((data || []).map(r => [r.id, r.verified]));
         if (s.verified.size) app.requestRender && app.requestRender();
+    }
+    // A verified perk: verified people come first in people search and suggestions (order kept otherwise)
+    function verifiedFirst(list) {
+        const v = p => (s.verified && s.verified.has(p.id)) || p.verified ? 1 : 0;
+        return list.map((p, i) => [p, i]).sort((a, b) => v(b[0]) - v(a[0]) || a[1] - b[1]).map(x => x[0]);
     }
     function tick(id, kind) {
         const k = kind || (s.verified && s.verified.get(id));

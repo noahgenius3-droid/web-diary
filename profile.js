@@ -122,6 +122,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const since = p.created_at ? new Date(p.created_at).toLocaleDateString(undefined, { month: 'long', year: 'numeric' }) : '';
         const following = s.following && s.following.has(p.id);
         const stats = p.stats;
+        // Verification given by the Cordial team (admin): from the profile itself, or the verified list
+        const vkind = p.verified || (s.verified && s.verified.get(p.id)) || '';
         const stat = (key, one, many, n) => {
             const inner = `<b>${fmt(n)}</b> ${n === 1 ? one : many}`;
             return key ? `<button type="button" class="pf-stat" data-pf="list" data-which="${key}" aria-label="${n} ${n === 1 ? one : many} — see who">${inner}</button>` : `<span class="pf-stat">${inner}</span>`;
@@ -156,10 +158,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${mine ? `<button type="button" class="pf-cover-edit" data-pf="cover" aria-haspopup="menu"><svg class="i"><use href="#i-camera"/></svg><span>${p.cover_path ? 'Edit cover' : 'Add cover'}</span></button>` : ''}
                 </div>
                 <div class="pf-id">
-                    <div class="pf-photo${online ? ' online' : ''}">${avatar(p, 'xl')}${mine ? '<button type="button" class="pf-photo-edit" data-pf="photo" aria-label="Change profile photo"><svg class="i"><use href="#i-camera"/></svg></button>' : ''}</div>
+                    <div class="pf-photo${online ? ' online' : ''}${vkind ? ' is-verified' : ''}">${avatar(p, 'xl')}${mine ? '<button type="button" class="pf-photo-edit" data-pf="photo" aria-label="Change profile photo"><svg class="i"><use href="#i-camera"/></svg></button>' : ''}</div>
                     <div class="pf-names">
-                        <h1>${esc(p.display_name)}${I.tick ? I.tick(p.id) : ''}</h1>
+                        <h1>${esc(p.display_name)}${I.tick ? I.tick(p.id, vkind || undefined) : ''}</h1>
                         <p class="pf-handle">@${esc(p.username)}${status ? ` · <span class="pf-status${online ? ' on' : ''}" data-status="${esc(p.id)}">${esc(status)}</span>` : ''}</p>
+                        ${vkind ? `<button type="button" class="pf-verified" data-pf="verified" aria-label="Verified ${VLABEL[vkind] || 'account'} — what this means"><svg class="i" aria-hidden="true"><use href="#i-verified"/></svg><span>Verified ${VLABEL[vkind] || 'account'}</span></button>` : ''}
                     </div>
                     <div class="pf-actions">${actions}</div>
                 </div>
@@ -315,6 +318,38 @@ document.addEventListener('DOMContentLoaded', () => {
         return '';
     }
 
+    // ---------- Verified by Cordial ----------
+    const VLABEL = { person: 'public figure', organisation: 'organisation', minister: 'minister', educator: 'educator', administrator: 'administrator' };
+    function openVerified(p) {
+        const kind = p.verified || (s.verified && s.verified.get(p.id)) || '';
+        if (!kind) return;
+        const mine = p.id === me();
+        const first = esc((p.display_name || '').split(' ')[0] || 'This account');
+        const label = esc(VLABEL[kind] || 'account');
+        // The perks a verified account gets (each one is live in the app)
+        const perks = [
+            ['i-verified', 'The blue tick, everywhere', 'Next to the name on posts, comments, chats, search and the profile'],
+            ['i-user', 'A verified profile', 'A verified badge under the name and a premium ring around the photo'],
+            ['i-search', 'Found first', 'Verified people appear first in people search and “People you may know”'],
+            ['i-shield', 'Trust at a glance', 'People can see Cordial confirmed who they are before they follow, call or message']
+        ];
+        const dlg = document.createElement('dialog');
+        dlg.className = 'sheet-dialog pf-vsheet';
+        dlg.setAttribute('aria-labelledby', 'pf-v-title');
+        dlg.innerHTML = `<div class="rx-card">
+            <header class="rx-head"><h2 id="pf-v-title">Verified by Cordial</h2><button type="button" class="icon-btn" data-x="close" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button></header>
+            <div class="pf-v-hero"><span class="pf-v-badge" aria-hidden="true"><svg class="i"><use href="#i-verified"/></svg></span>
+                <p>${mine ? `You’re a verified <b>${label}</b> on Cordial.` : `Cordial confirmed this is the real ${first} — a verified <b>${label}</b>.`}</p></div>
+            <h3 class="pf-v-h">${mine ? 'Your verified perks' : 'What verification means'}</h3>
+            <ul class="pf-v-perks">${perks.map(([icon, t, d]) => `<li><span class="pf-v-ic" aria-hidden="true"><svg class="i"><use href="#${icon}"/></svg></span><span><strong>${t}</strong><small>${d}</small></span></li>`).join('')}</ul>
+            <p class="muted small pf-v-foot">Verification is given by the Cordial team to recognised people, organisations, ministers and educators.</p>
+        </div>`;
+        document.body.append(dlg);
+        dlg.showModal();
+        dlg.addEventListener('close', () => dlg.remove());
+        dlg.addEventListener('click', e => { if (e.target === dlg || e.target.closest('[data-x="close"]')) dlg.close(); });
+    }
+
     // ---------- Followers / following ----------
     async function openList(which) {
         const p = P.data;
@@ -468,6 +503,8 @@ document.addEventListener('DOMContentLoaded', () => {
             P.tab = el.dataset.tab;
             paint();
             loadTab();
+        } else if (what === 'verified') {
+            openVerified(p);
         } else if (what === 'list') {
             openList(el.dataset.which);
         } else if (what === 'edit') {
