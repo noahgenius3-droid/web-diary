@@ -5149,7 +5149,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         paintDetailNav();
         if (opts.focus === 'input') setTimeout(() => $('pv-input')?.focus(), 280);
-        else pv.querySelector('.pv-close').focus({ preventScroll: true });
+        // Keyboard and mouse users land on Back; on touch screens focus goes to the sheet so no ring shows on the arrow
+        else if (window.matchMedia('(pointer: fine)').matches) pv.querySelector('.pv-close').focus({ preventScroll: true });
+        else { shell.setAttribute('tabindex', '-1'); shell.focus({ preventScroll: true }); }
     }
 
     function closePost(fromHistory = false) {

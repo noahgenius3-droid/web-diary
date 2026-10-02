@@ -4,7 +4,7 @@
 //
 // Strategy: when online, always fetch fresh (so a new deploy shows up right away) and refresh the saved copy;
 // when the network fails, answer from the saved copy. Supabase data (posts, messages…) is never cached here.
-const CACHE = 'cordial-shell-v109';
+const CACHE = 'cordial-shell-v110';
 const SHELL = [
     '/', '/index.html', '/manifest.webmanifest',
     '/style.css', '/photoedit.css',

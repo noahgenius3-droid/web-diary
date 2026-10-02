@@ -15917,3 +15917,8 @@ dialog.pn-sheet::backdrop { background: rgba(8, 10, 20, 0.5); }
 .sp-tag span:first-child { animation: sp-line-last 6s linear 0.55s both; }
 .sp-tag span:nth-child(n+2) { display: none; }
 .sp-progress i { animation: sp-fill 1.7s linear 0.25s forwards; }
+/* The header and footer keep their full height in the post view's column (they were shrinking, so the
+   name and time spilled over the photo) */
+.pv-top, .pv-foot { flex: none; }
+.pv-shell:focus { outline: none; }
+.pv-top-who > span { align-content: center; }
