@@ -1220,5 +1220,36 @@ document.addEventListener('DOMContentLoaded', () => {
         if (t && document.getElementById('content').contains(t)) open(t.dataset.game);
     });
 
-    window.diaryGames = { open, tilesHTML, GAMES, refresh: loadToday, current: () => W, matchesHTML, openMatch, newMatch: newMatchDialog, loadMatches };
+    // For Playnote's home: the games (with today's result) and compact cards for your active matches
+    function list() {
+        if (G.today === null) loadToday();
+        return Object.entries(GAMES).filter(([k]) => !G.off.has(k)).map(([k, g]) => {
+            const t = G.today && G.today[k];
+            return { key: k, ...g, done: !!t, score: t ? Number(t.score) : null };
+        });
+    }
+    function matchCards() {
+        if (!myId() || G.off.has('wordplay')) return null;
+        if (MX.list === null) loadMatches();
+        const all = MX.list || [];
+        const active = all.filter(m => m.status === 'active').sort((a, b) => isMyTurn(b) - isMyTurn(a));
+        return {
+            loading: MX.list === null,
+            total: all.length,
+            yourTurn: active.filter(isMyTurn).length,
+            html: active.slice(0, 8).map(m => {
+                const others = m.players.filter(p => p !== myId());
+                const mine = isMyTurn(m);
+                return `
+                    <button type="button" class="pn-match${mine ? ' mine' : ''}" data-wpm="open" data-id="${esc(m.id)}" aria-label="Wordplay with ${esc(others.map(p => who(p).display_name || 'Someone').join(', '))} — ${esc(statusText(m))}">
+                        <span class="pn-avs">${others.slice(0, 3).map(p => I.avatar(who(p), 'sm')).join('')}</span>
+                        <strong>${esc(others.map(firstName).join(', '))}</strong>
+                        <small>${m.players.map(p => `${esc(p === myId() ? 'You' : firstName(p))} ${Number(m.scores[p] || 0)}`).join(' · ')}</small>
+                        <span class="pn-match-status">${esc(statusText(m))}</span>
+                    </button>`;
+            }).join('')
+        };
+    }
+
+    window.diaryGames = { open, tilesHTML, GAMES, refresh: loadToday, current: () => W, matchesHTML, openMatch, newMatch: newMatchDialog, loadMatches, list, matchCards };
 });

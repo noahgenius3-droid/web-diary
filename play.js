@@ -59,7 +59,7 @@ document.addEventListener('DOMContentLoaded', () => {
         P.qotdResults = data;
         paint();
     }
-    const paint = () => { if (app.state.view === 'play') app.requestRender ? app.requestRender('play') : app.render(); };
+    const paint = () => { if (app.state.view === 'play') app.requestRender ? app.requestRender('play') : app.render(); paintSheet(); };
 
     // ---------- The page ----------
     function statusOf(kind) {
@@ -257,104 +257,316 @@ document.addEventListener('DOMContentLoaded', () => {
             </section>`;
     }
 
-    function topicsHTML() {
+    // ---------- Home: a launchpad, not a directory ----------
+    // Top: your progress and the one thing to do next. Then rails you swipe (more for today, today's reads,
+    // games, matches, practice) and previews of the leaderboard and badges — the full versions open in a sheet.
+    const ORDER = ['daily', 'qotd', 'bible', 'brain', 'weekly'];
+    const META = { daily: '10 questions · about 3 min', weekly: '20 questions · about 6 min', bible: '5 questions · about 2 min', brain: '1 puzzle · about 1 min', qotd: '1 question · see how everyone answered' };
+
+    function progressHTML() {
         const st = P.stats || {};
-        const byCat = new Map((st.categories || []).map(c => [c.category, c]));
-        const all = Object.entries(CATS).sort(([a], [b]) => (byCat.has(b) ? 1 : 0) - (byCat.has(a) ? 1 : 0));
-        const shown = P.allTopics ? all : all.slice(0, 4);
+        const L = P.badges && P.badges.level != null ? P.badges : null;
+        const span = L ? Math.max(1, L.level_next - L.level_floor) : 1;
+        const pct = L ? Math.min(100, Math.round(100 * (L.xp - L.level_floor) / span)) : 0;
+        const stats = [
+            [`${ic('i-flame')}${fmt(st.streak || 0)}`, st.streak === 1 ? 'day streak' : 'day streak', 'streak'],
+            [fmt(st.score || 0), 'points', ''],
+            [st.answered ? `${st.accuracy ?? 0}%` : '—', 'answers right', '']
+        ];
         return `
-            <section class="pl-section" aria-labelledby="pl-practice-h">
-                <header class="pl-sec-head"><h3 id="pl-practice-h">Practice any topic</h3><p class="pl-note">As many rounds as you like</p></header>
-                <div class="pl-topics" id="pl-topics">${shown.map(([k, [icon, l]]) => {
-                    const c = byCat.get(k);
-                    const pct = c && c.answered ? Math.round(100 * c.correct / c.answered) : null;
-                    return `<button type="button" class="pl-topic" data-pl="practice" data-cat="${k}">
-                        <span class="pl-topic-ic">${ic(icon)}</span>
-                        <span class="pl-topic-text"><strong>${esc(l)}</strong><small>${pct === null ? (k === 'random' ? 'A bit of everything' : 'Not played yet') : `${pct}% right · ${c.answered} answered`}</small></span>
-                        ${pct === null ? '' : `<span class="pl-meter" style="--pct:${pct}%" aria-hidden="true"></span>`}
-                    </button>`;
-                }).join('')}</div>
-                ${all.length > 4 ? `<button type="button" class="pl-more" data-pl="topics" aria-expanded="${!!P.allTopics}" aria-controls="pl-topics">${P.allTopics ? 'Show fewer topics' : `Show all ${all.length} topics`}${ic(P.allTopics ? 'i-chevron-up' : 'i-chevron-down')}</button>` : ''}
+            <section class="pn-progress" aria-label="Your progress">
+                ${L ? `<div class="pn-level">
+                    <span class="pn-ring" style="--p:${pct}" role="img" aria-label="Level ${L.level}, ${pct}% of the way to level ${L.level + 1}"><b>${L.level}</b><small>Level</small></span>
+                    <span class="pn-level-text"><strong>${fmt(L.xp)} XP</strong><small>${fmt(Math.max(0, L.level_next - L.xp))} XP to level ${L.level + 1}</small>
+                        <span class="pn-bar" aria-hidden="true"><i style="width:${pct}%"></i></span></span>
+                </div>` : ''}
+                <ul class="pn-stats">${stats.map(([v, l, cls]) => `<li class="${cls}"><b>${v}</b><small>${l}</small></li>`).join('')}</ul>
             </section>`;
     }
 
-    function levelHTML() {
-        const L = P.badges;
-        if (!L || L.level === undefined || L.level === null) return '';
-        const span = Math.max(1, L.level_next - L.level_floor);
-        const pct = Math.min(100, Math.round(100 * (L.xp - L.level_floor) / span));
-        return `<div class="pl-level" aria-label="Level ${L.level}, ${fmt(L.xp)} XP">
-            <span class="pl-level-n">Level <b>${L.level}</b></span>
-            <span class="pl-level-bar"><i style="width:${pct}%"></i></span>
-            <span class="pl-level-xp">${fmt(L.xp)} / ${fmt(L.level_next)} XP</span></div>`;
+    function heroHTML() {
+        const next = ORDER.find(k => !statusOf(k).done);
+        const done = ORDER.filter(k => statusOf(k).done).length;
+        const dots = `<span class="pn-dots" aria-hidden="true">${ORDER.map(k => `<i${statusOf(k).done ? ' class="on"' : ''}></i>`).join('')}</span>`;
+        if (!next) {
+            return `
+                <section class="pn-hero all-done" aria-labelledby="pn-hero-h">
+                    <div class="pn-hero-text">
+                        <p class="pn-kicker">Today ${dots}<span>All ${ORDER.length} done</span></p>
+                        <h3 id="pn-hero-h">You’re done for today</h3>
+                        <p>New challenges arrive tomorrow. Keep your streak warm with a puzzle or some practice.</p>
+                        <button type="button" class="pn-cta" data-pl="scroll" data-to="pn-play-h">Play a puzzle${ic('i-arrow-right')}</button>
+                    </div>
+                    <span class="pn-hero-art done" aria-hidden="true">${ic('i-trophy')}</span>
+                </section>`;
+        }
+        const k = KINDS[next];
+        const st = statusOf(next);
+        return `
+            <section class="pn-hero g-${next}" aria-labelledby="pn-hero-h">
+                <div class="pn-hero-text">
+                    <p class="pn-kicker">Today ${dots}<span>${done ? `${done} of ${ORDER.length} done` : 'Up next'}</span></p>
+                    <h3 id="pn-hero-h">${esc(k.title)}</h3>
+                    <p>${esc(k.sub)}</p>
+                    <p class="pn-est">${esc(META[next])}</p>
+                    <button type="button" class="pn-cta" data-pl="start" data-kind="${next}">${st.started ? 'Continue' : 'Start'}${ic('i-arrow-right')}</button>
+                </div>
+                <span class="pn-hero-art" aria-hidden="true">${next === 'daily' ? LEAD_ART : ic(k.icon, 'g-glyph')}</span>
+            </section>`;
     }
-    function badgesHTML() {
+
+    // Compact cards in a row you swipe
+    function todayRail() {
+        const next = ORDER.find(k => !statusOf(k).done);
+        const rest = ORDER.filter(k => k !== next).sort((a, b) => statusOf(a).done - statusOf(b).done);
+        if (!rest.length) return '';
+        return section('pn-today-h', 'More for today', '', `<div class="pn-rail" role="list">${rest.map(kind => {
+            const k = KINDS[kind];
+            const st = statusOf(kind);
+            return `<button type="button" role="listitem" class="pn-card g-${kind}${st.done ? ' done' : ''}" data-pl="start" data-kind="${kind}" aria-label="${esc(k.title)} — ${st.done ? `done, ${esc(st.label)}` : st.started ? 'continue' : 'play'}">
+                <span class="pn-card-ic">${ic(k.icon)}</span>
+                <strong>${esc(k.title)}</strong>
+                <small>${esc(META[kind].split(' · ')[0])}</small>
+                <span class="pn-go${st.done ? ' ok' : ''}">${st.done ? `${ic('i-check')}${esc(kind === 'qotd' ? 'See answers' : st.label)}` : `${st.started ? 'Continue' : 'Play'}${ic('i-forward')}`}</span>
+            </button>`;
+        }).join('')}</div>`);
+    }
+
+    // Word, thought and poll as one row of reading cards; tap the word or the thought to read it in full
+    function readsRail() {
+        const t = P.today || {};
+        const cards = [];
+        if (t.word) {
+            cards.push(`
+                <article class="pn-read pn-word" role="listitem" aria-labelledby="pn-word-h">
+                    <h4 id="pn-word-h" class="pn-read-k">${ic('i-book')}Word of the day</h4>
+                    <button type="button" class="pn-read-body" data-pl="sheet" data-which="word" aria-label="${esc(t.word.word)}: read more">
+                        <span class="pn-word-w"><dfn>${esc(t.word.word)}</dfn><i>${esc(t.word.part || '')}</i></span>
+                        <span class="pn-read-text">${esc(t.word.meaning)}</span>
+                    </button>
+                    <div class="pn-read-foot">
+                        ${'speechSynthesis' in window ? `<button type="button" class="pn-mini" data-pl="say" data-word="${esc(t.word.word)}">${ic('i-volume')}Hear it</button>` : ''}
+                        <button type="button" class="pn-mini" data-pl="share-word">${ic('i-share')}Share</button>
+                    </div>
+                </article>`);
+        }
+        if (t.thought) {
+            cards.push(`
+                <article class="pn-read pn-thought" role="listitem" aria-labelledby="pn-thought-h">
+                    <h4 id="pn-thought-h" class="pn-read-k">${ic('i-sparkle')}Thought for today</h4>
+                    <button type="button" class="pn-read-body" data-pl="sheet" data-which="thought" aria-label="Read today’s thought">
+                        <span class="pn-quote">“${esc(t.thought.text)}”</span>
+                        <span class="pn-src">${esc(t.thought.source)}</span>
+                    </button>
+                    <div class="pn-read-foot"><button type="button" class="pn-mini" data-pl="share-thought">${ic('i-share')}Share</button></div>
+                </article>`);
+        }
+        const p = t.poll;
+        if (p && p.options) {
+            const voted = p.mine !== null && p.mine !== undefined;
+            const total = voted ? Object.values(p.counts || {}).reduce((a, b) => a + b, 0) : 0;
+            const lead = voted ? Math.max(...p.options.map((_, i) => (p.counts || {})[String(i)] || 0)) : -1;
+            cards.push(`
+                <article class="pn-read pn-poll" role="listitem" aria-labelledby="pn-poll-h">
+                    <h4 id="pn-poll-h" class="pn-read-k">${ic('i-chart')}Today’s poll${voted ? `<span>${total} ${total === 1 ? 'vote' : 'votes'}</span>` : ''}</h4>
+                    <p class="pn-poll-q">${esc(p.question)}</p>
+                    <div class="pl-poll-opts" role="group" aria-label="${esc(p.question)}">${p.options.map((o, i) => {
+                        const n = voted ? (p.counts || {})[String(i)] || 0 : 0;
+                        const pct = total ? Math.round(100 * n / total) : 0;
+                        return `<button type="button" class="pl-opt${voted ? ' voted' : ''}${p.mine === i ? ' mine' : ''}${voted && n === lead && n > 0 ? ' top' : ''}" data-pl="vote" data-i="${i}" style="--pct:${pct}%" aria-pressed="${p.mine === i}">
+                            <span>${esc(o)}${p.mine === i ? ` ${ic('i-check')}` : ''}</span>${voted ? `<b>${pct}%</b>` : ''}</button>`;
+                    }).join('')}</div>
+                </article>`);
+        }
+        if (!cards.length) return '';
+        return section('pn-reads-h', 'Today’s reads', '', `<div class="pn-rail reads" role="list">${cards.join('')}</div>`);
+    }
+
+    // One featured puzzle, the rest in a row
+    function playHTML() {
+        if (!window.diaryGames || !window.diaryGames.list) return '';
+        const games = window.diaryGames.list();
+        if (!games.length) return '';
+        const feat = games.find(g => !g.done) || games[0];
+        const rest = games.filter(g => g !== feat);
+        const played = games.filter(g => g.done).length;
+        return section('pn-play-h', 'Play', `${played} of ${games.length} puzzles today`, `
+            <button type="button" class="pn-game-feat gm-t-${feat.key}${feat.done ? ' done' : ''}" data-game="${feat.key}" aria-label="${esc(feat.title)} — ${feat.done ? `played, ${fmt(feat.score)} points` : 'play today’s puzzle'}">
+                <span class="pn-game-art">${ic(feat.icon)}</span>
+                <span class="pn-game-text"><small>${feat.done ? 'Played today' : 'Today’s puzzle'}</small><strong>${esc(feat.title)}</strong><span>${esc(feat.sub)}</span></span>
+                <span class="pn-go${feat.done ? ' ok' : ''}">${feat.done ? `${ic('i-check')}${fmt(feat.score)} pts` : `Play${ic('i-forward')}`}</span>
+            </button>
+            <div class="pn-rail games" role="list">${rest.map(g => `
+                <button type="button" role="listitem" class="pn-game gm-t-${g.key}${g.done ? ' done' : ''}" data-game="${g.key}" aria-label="${esc(g.title)} — ${g.done ? `played, ${fmt(g.score)} points` : esc(g.sub)}">
+                    <span class="pn-game-ic">${ic(g.icon)}${g.done ? `<span class="pn-tick">${ic('i-check')}</span>` : ''}</span>
+                    <strong>${esc(g.title)}</strong>
+                    <small>${g.done ? `${fmt(g.score)} pts` : esc(g.sub)}</small>
+                </button>`).join('')}</div>`);
+    }
+
+    function friendsHTML() {
+        const m = window.diaryGames && window.diaryGames.matchCards ? window.diaryGames.matchCards() : null;
+        if (!m) return '';
+        return section('pn-friends-h', 'Wordplay with friends', m.yourTurn ? `${m.yourTurn} waiting for you` : 'Take turns whenever you like', `
+            <div class="pn-rail matches" role="list">
+                <button type="button" role="listitem" class="pn-match new" data-wpm="new">
+                    <span class="pn-new-ic">${ic('i-plus')}</span>
+                    <strong>New match</strong>
+                    <small>Challenge up to three friends</small>
+                </button>
+                ${m.loading ? '<span class="pn-match skel" aria-hidden="true"></span>' : m.html}
+            </div>`, m.total ? `<button type="button" class="pn-see" data-pl="sheet" data-which="matches">See all</button>` : '');
+    }
+
+    function practiceHTML() {
+        const byCat = new Map(((P.stats || {}).categories || []).map(c => [c.category, c]));
+        return section('pn-practice-h', 'Practice any topic', 'As many rounds as you like', `<div class="pn-rail topics" role="list">${Object.entries(CATS).map(([k, [icon, l]]) => {
+            const c = byCat.get(k);
+            const pct = c && c.answered ? Math.round(100 * c.correct / c.answered) : null;
+            return `<button type="button" role="listitem" class="pn-topic" data-pl="practice" data-cat="${k}" aria-label="Practise ${esc(l)}${pct === null ? '' : ` — ${pct}% right`}">
+                <span class="pn-topic-ic">${ic(icon)}</span><span><strong>${esc(l)}</strong><small>${pct === null ? 'Not played yet' : `${pct}% right`}</small></span>
+            </button>`;
+        }).join('')}</div>`);
+    }
+
+    // Where you stand and who's around you; the full boards open in a sheet
+    function boardPreviewHTML() {
+        const b = P.board;
+        const B = BOARDS[b.kind];
+        let body;
+        if (b.rows === null || b.loading) body = '<div class="pn-lb-skel" aria-busy="true" aria-label="Loading"><i></i><i></i><i></i></div>';
+        else if (b.kind === 'posts') body = `<p class="pn-empty">${b.rows.length} top posts ${PERIOD_WORDS[b.period]}.</p>`;
+        else {
+            const rows = b.rows;
+            const mine = rows.find(r => r.is_me);
+            let near;
+            if (mine) {
+                const i = rows.indexOf(mine);
+                const from = Math.max(0, Math.min(i - 1, rows.length - 3));
+                near = rows.slice(from, from + 3);
+            } else near = rows.slice(0, 3);
+            const line = rows.length ? standingHTML(b, rows) : standingHTML(b, []);
+            body = `${line}${near.length ? `<ol class="pn-lb-list">${near.map(r => `
+                <li class="${r.is_me ? 'me' : ''}"><span class="pn-lb-rank">${r.rank}</span>${avatar({ id: r.user_id, display_name: r.display_name, avatar_path: r.avatar_path }, 'xs')}
+                    <span class="pn-lb-name">${esc(r.is_me ? 'You' : r.display_name)}</span><b>${fmt(r.score)}</b><small>${B.unit}</small></li>`).join('')}</ol>` : ''}`;
+        }
+        return `
+            <section class="pn-box pn-lb" aria-labelledby="pn-lb-h">
+                <header class="pn-sec-head"><h3 id="pn-lb-h">Leaderboard</h3><p>${esc(B.label)} · ${PERIOD_WORDS[b.period]}${b.scope === 'friends' ? ' · friends' : ''}</p>
+                    <button type="button" class="pn-see" data-pl="sheet" data-which="board">View</button></header>
+                <div aria-live="polite">${body}</div>
+            </section>`;
+    }
+
+    function badgePreviewHTML() {
         const L = P.badges;
         if (!L || !L.badges) return '';
-        const earned = L.badges.filter(b => b.earned_at).length;
+        const earned = L.badges.filter(b => b.earned_at);
+        const next = L.badges.filter(b => !b.earned_at);
+        const show = [...earned, ...next].slice(0, 5);
         return `
-            <section class="pl-section" aria-labelledby="pl-badges-h">
-                <header class="pl-sec-head"><h3 id="pl-badges-h">Badges</h3><p class="pl-note">${earned} of ${L.badges.length} earned</p></header>
-                <ul class="badge-grid">${L.badges.map(b => `
-                    <li class="bdg ${esc(b.tier)}${b.earned_at ? ' earned' : ''}" title="${esc(b.description)}">
-                        <span class="badge-medal">${ic(b.icon)}</span>
-                        <strong>${esc(b.name)}</strong>
-                        <small>${b.earned_at ? `Earned ${new Date(b.earned_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}` : esc(b.description)}</small>
-                    </li>`).join('')}</ul>
+            <section class="pn-box pn-badges" aria-labelledby="pn-badges-h">
+                <header class="pn-sec-head"><h3 id="pn-badges-h">Achievements</h3><p>${earned.length} of ${L.badges.length} earned</p>
+                    <button type="button" class="pn-see" data-pl="sheet" data-which="badges">View all</button></header>
+                <ul class="pn-medals">${show.map(b => `<li class="bdg ${esc(b.tier)}${b.earned_at ? ' earned' : ''}" title="${esc(b.name)} — ${esc(b.description)}"><span class="badge-medal">${ic(b.icon)}</span><span class="sr-only">${esc(b.name)}${b.earned_at ? ', earned' : ', not earned yet'}</span></li>`).join('')}</ul>
             </section>`;
     }
-
-    function mastheadHTML() {
-        const st = P.stats || {};
-        const d = new Date();
-        const date = d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
-        const first = esc((s.profile.display_name || '').split(' ')[0]);
-        const facts = [];
-        if (st.streak) facts.push(`<span class="pl-streak">${ic('i-flame')}${st.streak}-day streak</span>`);
-        if (st.score) facts.push(`${fmt(st.score)} points`);
-        if (st.accuracy !== null && st.accuracy !== undefined && st.answered) facts.push(`${st.accuracy}% of answers right`);
-        const done = ['daily', 'bible', 'brain', 'qotd'].filter(k => statusOf(k).done).length;
+    function badgesFullHTML() {
+        const L = P.badges;
+        if (!L || !L.badges) return '<p class="pn-empty">Badges couldn’t load — try again later.</p>';
+        const earned = L.badges.filter(b => b.earned_at);
+        const locked = L.badges.filter(b => !b.earned_at);
+        const grid = list => `<ul class="badge-grid">${list.map(b => `
+            <li class="bdg ${esc(b.tier)}${b.earned_at ? ' earned' : ''}">
+                <span class="badge-medal">${ic(b.icon)}</span>
+                <strong>${esc(b.name)}</strong>
+                <small>${b.earned_at ? `Earned ${new Date(b.earned_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}` : esc(b.description)}</small>
+            </li>`).join('')}</ul>`;
         return `
-            <header class="pl-mast">
-                <h2 class="pl-date">${esc(date)}</h2>
-                <p class="pl-lede">Good ${greeting()}, ${first}. ${done === 4 ? 'You’ve done all of today’s challenges — see you tomorrow.' : done ? `${done} of today’s 4 challenges done.` : 'Four short challenges are waiting for you.'}</p>
-                ${facts.length ? `<p class="pl-facts">${facts.join('<span aria-hidden="true">·</span>')}</p>` : ''}
-                ${levelHTML()}
-            </header>`;
+            ${L.level != null ? `<p class="pn-sheet-lede">Level ${L.level} · ${fmt(L.xp)} XP · ${earned.length} of ${L.badges.length} badges</p>` : ''}
+            <h4 class="pn-sheet-sub">Earned</h4>
+            ${earned.length ? grid(earned) : '<p class="pn-empty">Your first badge is close — play today’s trivia or share a post.</p>'}
+            ${locked.length ? `<h4 class="pn-sheet-sub">Still to earn</h4>${grid(locked)}` : ''}`;
     }
+
+    const section = (id, title, sub, body, action = '') => `
+        <section class="pn-sec" aria-labelledby="${id}">
+            <header class="pn-sec-head"><h3 id="${id}">${title}</h3>${sub ? `<p>${esc(sub)}</p>` : ''}${action}</header>
+            ${body}
+        </section>`;
 
     app.views.play = () => {
         app.setTitle('Playnote');
         const blocked = I.gate('Daily trivia, challenges and leaderboards — learn something every day.');
         if (blocked) return blocked;
-        if (!P.today) { load(); return '<div class="pl"><div class="pl-board-skel" aria-busy="true"><i></i><i></i><i></i></div></div>'; }
+        if (!P.today) { load(); return skeletonHTML(); }
+        const date = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+        const first = esc((s.profile.display_name || '').split(' ')[0]);
         return `
-            <div class="pl">
-                ${mastheadHTML()}
-                <section class="pl-today" aria-label="Today’s games">
-                    ${gameTile('daily', true)}
-                    <h3 class="pl-today-h">More for today</h3>
-                    <div class="pl-today-rest">
-                        ${gameTile('qotd')}
-                        ${gameTile('bible')}
-                        ${gameTile('brain')}
-                        ${gameTile('weekly')}
-                    </div>
-                </section>
-                <div class="pl-reading">
-                    ${wordPanel(P.today.word)}
-                    ${thoughtPanel(P.today.thought)}
-                    ${pollPanel(P.today.poll)}
+            <div class="pn">
+                <header class="pn-head"><p class="pn-kicker">${esc(date)}</p><h2>Good ${greeting()}, ${first}</h2></header>
+                <div class="pn-main">
+                    ${heroHTML()}
+                    ${todayRail()}
+                    ${readsRail()}
+                    ${playHTML()}
+                    ${friendsHTML()}
+                    ${practiceHTML()}
                 </div>
-                ${window.diaryGames ? `<section class="pl-section" aria-labelledby="pl-games-h">
-                    <header class="pl-sec-head"><h3 id="pl-games-h">Puzzles & games</h3><p class="pl-note">A new puzzle in each every day</p></header>
-                    <div class="gm-tiles">${window.diaryGames.tilesHTML()}</div>
-                </section>${window.diaryGames.matchesHTML ? window.diaryGames.matchesHTML() : ''}` : ''}
-                ${topicsHTML()}
-                ${boardHTML()}
-                ${badgesHTML()}
+                <aside class="pn-side" aria-label="Your progress and standings">
+                    ${progressHTML()}
+                    ${boardPreviewHTML()}
+                    ${badgePreviewHTML()}
+                </aside>
             </div>`;
     };
+    function skeletonHTML() {
+        return `<div class="pn" aria-busy="true" aria-label="Loading Playnote"><div class="pn-main"><div class="pn-skel hero"></div><div class="pn-skel-row"><i></i><i></i><i></i></div><div class="pn-skel-row"><i></i><i></i></div></div><aside class="pn-side"><div class="pn-skel"></div></aside></div>`;
+    }
+
+    // ---------- Sheets: the full leaderboard, all badges, every match, the word and the thought ----------
+    const sheet = document.createElement('dialog');
+    sheet.className = 'pn-sheet';
+    sheet.setAttribute('aria-labelledby', 'pn-sheet-h');
+    document.body.append(sheet);
+    let sheetWhich = null;
+    const SHEET_TITLES = { board: 'Leaderboards', badges: 'Achievements', matches: 'Wordplay with friends', word: 'Word of the day', thought: 'Thought for today' };
+    function sheetBody() {
+        const t = P.today || {};
+        if (sheetWhich === 'board') return boardHTML();
+        if (sheetWhich === 'badges') return badgesFullHTML();
+        if (sheetWhich === 'matches') return window.diaryGames && window.diaryGames.matchesHTML ? window.diaryGames.matchesHTML() : '';
+        if (sheetWhich === 'word' && t.word) return `<div class="pl-reading">${wordPanel(t.word)}</div>`;
+        if (sheetWhich === 'thought' && t.thought) return `<div class="pl-reading">${thoughtPanel(t.thought)}</div>`;
+        return '';
+    }
+    function paintSheet() {
+        if (!sheet.open || !sheetWhich) return;
+        const body = sheet.querySelector('.pn-sheet-body');
+        const top = body ? body.scrollTop : 0;
+        sheet.innerHTML = `
+            <div class="pn-sheet-card">
+                <div class="pn-grab" aria-hidden="true"><i></i></div>
+                <header class="pn-sheet-head"><h3 id="pn-sheet-h">${SHEET_TITLES[sheetWhich]}</h3><button type="button" class="icon-btn" data-pl="sheet-close" aria-label="Close">${ic('i-close')}</button></header>
+                <div class="pn-sheet-body">${sheetBody()}</div>
+            </div>`;
+        sheet.querySelector('.pn-sheet-body').scrollTop = top;
+        hydrateStorage(sheet);
+    }
+    function openSheet(which) {
+        sheetWhich = which;
+        if (!sheet.open) sheet.showModal();
+        paintSheet();
+        if (which === 'board' && P.board.rows === null && !P.board.loading) loadBoard();
+    }
+    sheet.addEventListener('close', () => { sheetWhich = null; sheet.innerHTML = ''; });
+    sheet.addEventListener('click', e => {
+        if (e.target === sheet) return sheet.close();
+        const w = e.target.closest('[data-wpm]');
+        if (w && window.diaryGames) { if (w.dataset.wpm === 'new') window.diaryGames.newMatch(); else window.diaryGames.openMatch(w.dataset.id); return; }
+        onClick(e);
+    });
+
     const greeting = () => { const h = new Date().getHours(); return h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening'; };
 
     // The Explore page's "Playnote" band: today's games plus the word of the day
@@ -633,20 +845,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- The page's buttons ----------
-    content.addEventListener('click', async e => {
+    content.addEventListener('click', e => { if (app.state.view === 'play') onClick(e); });
+    async function onClick(e) {
         const b = e.target.closest('[data-pl]');
-        if (!b || app.state.view !== 'play') return;
+        if (!b) return;
         const act = b.dataset.pl;
+        if (['start', 'practice', 'open-post', 'scroll-games', 'scroll'].includes(act) && sheet.open) sheet.close();
         if (act === 'start') start(b.dataset.kind);
         else if (act === 'practice') start('practice', b.dataset.cat);
+        else if (act === 'sheet') openSheet(b.dataset.which);
+        else if (act === 'sheet-close') sheet.close();
+        else if (act === 'scroll') document.getElementById(b.dataset.to)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         else if (act === 'scope' || act === 'period' || act === 'board') { P.board[act === 'board' ? 'kind' : act] = b.dataset.v; P.board.rows = null; paint(); loadBoard(); }
         else if (act === 'open-post') { app.setView('feed'); I.openEntry(b.dataset.id); }
-        else if (act === 'topics') {
-            P.allTopics = !P.allTopics;
-            paint();
-            if (!P.allTopics) setTimeout(() => document.getElementById('pl-practice-h')?.scrollIntoView({ block: 'nearest' }), 50);
-        }
-        else if (act === 'scroll-games') document.getElementById('pl-games-h')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        else if (act === 'scroll-games') document.getElementById('pn-play-h')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         else if (act === 'vote') {
             const { data, error } = await client.rpc('diary_daily_vote', { p_choice: Number(b.dataset.i) });
             if (error) return app.showToast(error.message || 'Couldn’t save your vote');
@@ -661,7 +873,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const t = P.today.thought;
             openShare(`💭 “${t.text}” — ${t.source}`);
         }
-    });
+    }
 
     // ---------- Around the app ----------
     // A slim "today" card at the top of the For you feed (until today's trivia is done)
