@@ -67,14 +67,10 @@ function message(type: string, name: string, d: any = {}, actor = "") {
       };
     case "referral_joined":
       return { title: `🎉 ${name} joined Cordial`, body: "They signed up with your invite — you're now friends. Say hi!", url: profile, tag: `ref-${d.referred}` };
-    case "reward_received": {
-      const what = d.kind === "xp" ? `${d.amount} XP` : d.kind === "coins" ? `${d.amount} coins` : d.kind === "badge" ? `the ${d.badge_name || "new"} badge` : "a special thank-you";
-      return { title: "🎁 A reward from Cordial", body: `You received ${what}${d.message ? ` — ${String(d.message).slice(0, 140)}` : ""}`, url: "/#/play", tag: `reward-${d.reward_id}` };
-    }
     case "support_reply":
-      return { title: "Cordial Support replied", body: String(d.snippet || d.subject || "Tap to read").slice(0, 200), url: "/#/settings", tag: `support-${d.ticket}` };
-    case "account_notice":
-      return { title: "An update about your account", body: String(d.message || "").slice(0, 200), url: "/#/settings", tag: "account-notice" };
+      return { title: d.ai ? "Cordial Assistant (AI) replied" : "Cordial replied to you", body: String(d.snippet || d.subject || "Tap to read").slice(0, 200), url: "/#/settings", tag: `support-${d.ticket}` };
+    case "helpline_handoff":
+      return { title: "🙋 A helpline conversation needs you", body: `${String(d.subject || "").slice(0, 100)}${d.reason ? ` — ${String(d.reason).slice(0, 100)}` : ""}`, url: "/#/admin", tag: `handoff-${d.ticket}` };
     case "announcement":
       return { title: String(d.title || "News from Cordial").slice(0, 120), body: String(d.snippet || "").slice(0, 220), url: "/#/feed", tag: `announce-${d.announcement || "cordial"}` };
     case "scheduled_published":

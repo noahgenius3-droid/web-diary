@@ -109,7 +109,7 @@ document.addEventListener('DOMContentLoaded', () => {
         friend_request: ['friend', 'i-user-plus'], friend_accepted: ['friend', 'i-user'],
         entry_like: ['like', 'i-thumb'], post_like: ['like', 'i-thumb'], post_activity: ['comment', 'i-bell'],
         scheduled_published: ['group', 'i-clock'], scheduled_failed: ['missed', 'i-alert'], trivia_rank: ['like', 'i-trophy'], badge_earned: ['like', 'i-trophy'], announcement: ['group', 'i-sparkle'], verification_update: ['friend', 'i-verified'],
-        reward_received: ['like', 'i-gift'], support_reply: ['comment', 'i-chat'], account_notice: ['missed', 'i-shield'],
+        support_reply: ['comment', 'i-chat'], helpline_handoff: ['missed', 'i-chat'],
         comment_reply: ['comment', 'i-reply'], referral_joined: ['friend', 'i-user-plus'], tagged: ['comment', 'i-user'], game_invite: ['friend', 'i-g-tiles'], game_turn: ['like', 'i-g-tiles'], game_over: ['like', 'i-trophy'],
         entry_comment: ['comment', 'i-chat'], post_comment: ['comment', 'i-chat'],
         community_post: ['group', 'i-users'], community_join: ['group', 'i-users'],
@@ -146,12 +146,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 : d.kind === 'resign' ? `${who} left your Wordplay match — your turn`
                 : `${who} played ${plain ? (d.word || 'a word') : `<strong>${esc(d.word || 'a word')}</strong>`} for ${Number(d.points || 0)} — your turn in Wordplay`;
             case 'game_over': return d.won ? `🏆 You won your Wordplay match${d.resigned ? ` — ${who} resigned` : ` with ${Number(d.score || 0)} points`}` : `Your Wordplay match with ${who} is over — you scored ${Number(d.score || 0)}`;
-            case 'reward_received': {
-                const what = d.kind === 'xp' ? `${Number(d.amount || 0).toLocaleString()} XP` : d.kind === 'coins' ? `${Number(d.amount || 0).toLocaleString()} coins` : d.kind === 'badge' ? `the ${d.badge_name || 'new'} badge` : 'a special thank-you';
-                return `🎁 Cordial sent you ${plain ? what : `<strong>${esc(what)}</strong>`}${d.message ? ` — ${plain ? d.message : esc(d.message)}` : d.reason ? ` for ${plain ? d.reason : esc(d.reason)}` : ''}`;
-            }
-            case 'support_reply': return `${plain ? 'Cordial Support' : '<strong>Cordial Support</strong>'} replied${d.subject ? ` about “${plain ? d.subject : esc(d.subject)}”` : ''}${d.snippet ? `: ${plain ? d.snippet : esc(d.snippet)}` : ''}`;
-            case 'account_notice': return plain ? (d.message || 'An update about your account') : esc(d.message || 'An update about your account');
+            case 'support_reply': return `${plain ? (d.ai ? 'Cordial Assistant (AI)' : 'Cordial') : `<strong>${d.ai ? 'Cordial Assistant (AI)' : 'Cordial'}</strong>`} replied${d.subject ? ` about “${plain ? d.subject : esc(d.subject)}”` : ''}${d.snippet ? `: ${plain ? d.snippet : esc(d.snippet)}` : ''}`;
+            case 'helpline_handoff': return `🙋 A helpline conversation needs you: ${plain ? `“${d.subject || ''}”` : `<strong>${esc(d.subject || '')}</strong>`}${d.reason ? ` — ${plain ? d.reason : esc(d.reason)}` : ''}`;
             case 'badge_earned': return `🏅 You earned the <strong>${esc(d.name || 'a new')}</strong> badge — ${esc(d.description || '')}`.replace(/<\/?strong>/g, m => (plain ? '' : m));
             case 'trivia_rank': {
                 const place = d.rank === 1 ? '🥇 You came first' : d.rank === 2 ? '🥈 You came second' : d.rank === 3 ? '🥉 You came third' : `You placed #${d.rank}`;
@@ -296,12 +292,11 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'verification_update':
                 app.setView('settings');
                 break;
-            case 'reward_received':
-                app.setView('play');
-                break;
             case 'support_reply':
-            case 'account_notice':
                 if (window.diarySupport) window.diarySupport.open(d.ticket || null);
+                break;
+            case 'helpline_handoff':
+                if (window.diaryHelpline) window.diaryHelpline.open(d.ticket);
                 break;
             case 'post_like':
             case 'post_comment':

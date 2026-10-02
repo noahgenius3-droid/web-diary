@@ -33,13 +33,6 @@ document.addEventListener('DOMContentLoaded', () => {
         paintAdminNav();
     }
     async function checkSuspended() {
-        // The Command Center's account status when it's installed; the original suspension table otherwise
-        const acc = await client.rpc('diary_my_account');
-        if (!acc.error && acc.data) {
-            const a = acc.data;
-            S.suspended = a.status && a.status !== 'active' ? { status: a.status, until: a.ends_at, reason: a.reason, message: a.message, scope: a.scope || [], appeal: a.appeal } : null;
-            return paintSuspended();
-        }
         const { data } = await client.from('diary_suspensions').select('until, reason').eq('user_id', me()).maybeSingle();
         S.suspended = data && (!data.until || Date.parse(data.until) > Date.now()) ? { status: 'suspended', ...data } : null;
         paintSuspended();
@@ -56,14 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.innerHTML = '<svg class="i"><use href="#i-shield"/></svg>Moderation';
             btn.addEventListener('click', () => app.setView('admin'));
             settings.before(btn);
-            // The founder's Command Center (a separate admin site; access is checked there on the server)
-            const cc = document.createElement('a');
-            cc.className = 'nav-item';
-            cc.href = '/command/';
-            cc.dataset.cc = '1';
-            cc.innerHTML = '<svg class="i"><use href="#i-activity"/></svg>Command Center';
-            settings.before(cc);
-        } else if (!S.admin && btn) { btn.remove(); document.querySelector('.nav-item[data-cc]')?.remove(); }
+        } else if (!S.admin && btn) btn.remove();
     }
 
     // A clear notice when your account is suspended (you can still read)
@@ -85,7 +71,7 @@ document.addEventListener('DOMContentLoaded', () => {
             : x.status === 'blocked' ? `<strong>${esc((x.scope || []).map(s => SC[s] || s).join(', ').replace(/^./, c => c.toUpperCase()))} switched off ${esc(until)}.</strong>`
             : `<strong>Your account is limited ${esc(until)}.</strong> You can read, but not post or message.`;
         bar.className = `suspended-bar ${x.status || 'suspended'}`;
-        bar.innerHTML = `<svg class="i"><use href="#i-shield"/></svg><span>${what} Reason: ${esc(x.reason || 'a breach of the community rules')}.${x.message ? ` ${esc(x.message)}` : ''}</span>${window.diarySupport ? `<button type="button" class="chip" data-action="open-support">${x.appeal === 'open' ? 'Appeal sent' : 'Appeal or get help'}</button>` : ''}`;
+        bar.innerHTML = `<svg class="i"><use href="#i-shield"/></svg><span>${what} Reason: ${esc(x.reason || 'a breach of the community rules')}.${x.message ? ` ${esc(x.message)}` : ''}</span>${window.diarySupport ? '<button type="button" class="chip" data-action="open-support">Get help</button>' : ''}`;
     }
 
     // ---------- Block ----------
@@ -497,6 +483,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     <button type="button" class="chip" data-action="adm-lift" data-id="${x.user_id}">Lift</button></div>`).join('') : '<p class="muted">No suspended accounts.</p>';
         } else if (['accounts', 'verify', 'questions', 'games', 'scheduled', 'announce'].includes(d.tab)) {
             body = extraBody(d.tab);
+        } else if (d.tab === 'helpline') {
+            body = window.diaryHelpline ? window.diaryHelpline.html() : '';
         } else if (d.tab === 'audit') {
             body = d.audit.length ? `<ol class="adm-audit">${d.audit.map(a => `<li><time>${esc(new Date(a.created_at).toLocaleString())}</time><span><b>${esc(personName(a.actor))}</b> ${esc(a.action.replace(/_/g, ' '))}${a.target_user ? ` → ${esc(personName(a.target_user))}` : ''}</span></li>`).join('')}</ol>` : '<p class="muted">No moderation actions yet.</p>';
         }
@@ -505,7 +493,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <header class="adm-head"><div><h2>Moderation</h2><p class="muted">Reports, suspended accounts and everything moderators have done.</p></div>
                     <button type="button" class="chip" data-action="adm-refresh"><svg class="i"><use href="#i-refresh"/></svg>Refresh</button></header>
                 <div class="adm-stats">${card('Accounts', st.users)}${card('Active today', st.active_today)}${card('Messages today', st.messages_today)}${card('Open reports', st.open_reports)}${card('Suspended', st.suspended)}${card('Blocks', st.blocks)}${card('Communities', st.communities)}</div>
-                <div class="tabs adm-tabs" role="tablist">${tab('reports', 'Reports', open.length)}${tab('closed', 'Handled')}${tab('accounts', 'Accounts')}${tab('verify', 'Verification', X.requests ? X.requests.filter(r => r.status === 'pending').length : 0)}${tab('questions', 'Questions')}${tab('games', 'Games')}${tab('scheduled', 'Scheduled')}${tab('announce', 'Announcements')}${tab('suspended', 'Suspended')}${tab('audit', 'Audit log')}</div>
+                <div class="tabs adm-tabs" role="tablist">${tab('reports', 'Reports', open.length)}${window.diaryHelpline ? tab('helpline', 'Helpline') : ''}${tab('closed', 'Handled')}${tab('accounts', 'Accounts')}${tab('verify', 'Verification', X.requests ? X.requests.filter(r => r.status === 'pending').length : 0)}${tab('questions', 'Questions')}${tab('games', 'Games')}${tab('scheduled', 'Scheduled')}${tab('announce', 'Announcements')}${tab('suspended', 'Suspended')}${tab('audit', 'Audit log')}</div>
                 <div class="adm-body">${body}</div>
             </div>`;
     };
@@ -513,7 +501,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     Object.assign(app.actions, {
         'adm-tab': el => { S.dash.tab = el.dataset.tab; app.render(); },
-        'adm-refresh': () => { S.dash.reports = null; Object.assign(X, { users: null, requests: null, questions: null, games: null, scheduled: null, announcements: null }); app.render(); },
+        'adm-refresh': () => { S.dash.reports = null; if (window.diaryHelpline) window.diaryHelpline.refresh(); Object.assign(X, { users: null, requests: null, questions: null, games: null, scheduled: null, announcements: null }); app.render(); },
         'adm-act': async el => {
             const act = el.dataset.act;
             const label = { dismiss: 'Dismiss this report?', warn: 'Mark as reviewed?', remove: 'Remove the reported content?', suspend_7d: 'Suspend this account for 7 days?', suspend_30d: 'Suspend this account for 30 days?', suspend: 'Suspend this account until you lift it?' }[act];
@@ -541,5 +529,6 @@ document.addEventListener('DOMContentLoaded', () => {
         ...(S.admin ? [{ label: 'Moderation', icon: 'i-shield', onClick: () => app.setView('admin') }] : [])
     ];
 
-    window.diarySafety = { isBlocked, block, unblock, report, blockedList, isAdmin: () => S.admin, refreshBlocks: loadBlocks };
+    window.diarySafety = { isBlocked, block, unblock, report, blockedList, isAdmin: () => S.admin, refreshBlocks: loadBlocks,
+        showTab: tabName => { S.dash.tab = tabName; if (app.state.view === 'admin') app.render(); else app.setView('admin'); } };
 });
