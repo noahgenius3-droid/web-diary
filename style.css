@@ -16336,3 +16336,45 @@ body.is-ringing { overflow: hidden; }
 @media (max-width: 480px) {
     .notes-home .nh-today .nh-stats { flex-wrap: nowrap; gap: 10px; overflow: hidden; white-space: nowrap; font-size: 0.82rem; }
 }
+
+/* ---------- Elevation: three layered, neutral shadow strengths (beautiful-shadows) ----------
+   sm: controls, pills, quiet surfaces · md (--shadow): cards, panels, popovers · lg: dialogs and sheets.
+   Each carries its own hairline ring, so a surface declares elevation once — no extra border. */
+:root {
+    --shadow-sm: 0 2px 3px -1px rgba(0, 0, 0, 0.1), 0 1px 0 0 rgba(25, 28, 33, 0.02), 0 0 0 1px rgba(25, 28, 33, 0.08);
+    --shadow: 0 0 0 1px rgba(0, 0, 0, 0.06), 0 1px 1px -0.5px rgba(0, 0, 0, 0.06), 0 3px 3px -1.5px rgba(0, 0, 0, 0.06), 0 6px 6px -3px rgba(0, 0, 0, 0.06), 0 12px 12px -6px rgba(0, 0, 0, 0.06), 0 24px 24px -12px rgba(0, 0, 0, 0.06);
+    --shadow-lg: 0 2.8px 2.2px rgba(0, 0, 0, 0.034), 0 6.7px 5.3px rgba(0, 0, 0, 0.048), 0 12.5px 10px rgba(0, 0, 0, 0.06), 0 22.3px 17.9px rgba(0, 0, 0, 0.072), 0 41.8px 33.4px rgba(0, 0, 0, 0.086), 0 100px 80px rgba(0, 0, 0, 0.12);
+    --shadow-lift: 0 2px 3px -1px rgba(0, 0, 0, 0.1), 0 1px 0 0 rgba(25, 28, 33, 0.02);
+}
+/* Dark: the same layers, deeper, with the hairline in light so edges still read on near-black */
+:root[data-theme="dark"] {
+    --shadow-sm: 0 2px 3px -1px rgba(0, 0, 0, 0.5), 0 1px 0 0 rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.07);
+    --shadow: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 1px 1px -0.5px rgba(0, 0, 0, 0.3), 0 3px 3px -1.5px rgba(0, 0, 0, 0.3), 0 6px 6px -3px rgba(0, 0, 0, 0.3), 0 12px 12px -6px rgba(0, 0, 0, 0.3), 0 24px 24px -12px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 2.8px 2.2px rgba(0, 0, 0, 0.17), 0 6.7px 5.3px rgba(0, 0, 0, 0.24), 0 12.5px 10px rgba(0, 0, 0, 0.3), 0 22.3px 17.9px rgba(0, 0, 0, 0.36), 0 41.8px 33.4px rgba(0, 0, 0, 0.43), 0 100px 80px rgba(0, 0, 0, 0.6);
+    --shadow-lift: 0 2px 3px -1px rgba(0, 0, 0, 0.5), 0 1px 0 0 rgba(0, 0, 0, 0.3);
+}
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --shadow-sm: 0 2px 3px -1px rgba(0, 0, 0, 0.5), 0 1px 0 0 rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.07);
+        --shadow: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 1px 1px -0.5px rgba(0, 0, 0, 0.3), 0 3px 3px -1.5px rgba(0, 0, 0, 0.3), 0 6px 6px -3px rgba(0, 0, 0, 0.3), 0 12px 12px -6px rgba(0, 0, 0, 0.3), 0 24px 24px -12px rgba(0, 0, 0, 0.3);
+        --shadow-lg: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 2.8px 2.2px rgba(0, 0, 0, 0.17), 0 6.7px 5.3px rgba(0, 0, 0, 0.24), 0 12.5px 10px rgba(0, 0, 0, 0.3), 0 22.3px 17.9px rgba(0, 0, 0, 0.36), 0 41.8px 33.4px rgba(0, 0, 0, 0.43), 0 100px 80px rgba(0, 0, 0, 0.6);
+        --shadow-lift: 0 2px 3px -1px rgba(0, 0, 0, 0.5), 0 1px 0 0 rgba(0, 0, 0, 0.3);
+    }
+}
+/* Cards and panels: md, and the ring replaces the border */
+.st-card, .cm-card, .side-box, .profile-card, .template-card, .hl-card, .feed-empty, .nh-today { border-color: transparent; box-shadow: var(--shadow); }
+.template-card:hover, .cm-card:hover { box-shadow: var(--shadow-lg); }
+/* Popovers and menus: md over content */
+.popover { border-color: transparent; box-shadow: var(--shadow); }
+/* Dialogs and sheets: the strongest lift */
+.sheet-dialog, .incoming-card { box-shadow: var(--shadow-lg); }
+/* Controls and quiet surfaces: sm */
+.nh-take-field, .inbox-search, .st-search { border-color: transparent; box-shadow: var(--shadow-sm); }
+.fab, .inbox-fab, .nh-take-mic { box-shadow: var(--shadow-sm), 0 8px 16px -8px rgba(0, 0, 0, 0.35); }
+/* Note cards keep their coloured edge (their identity) with a soft lift; hover raises to md */
+.mcard:not(.new-note) { box-shadow: var(--shadow-lift); }
+@media (hover: hover) and (pointer: fine) { .mcard[role="button"]:not(.new-note):hover { box-shadow: var(--shadow); } }
+/* Feed posts on wider screens: md; on phones they stay flat and edge to edge */
+@media (min-width: 761px) {
+    body[data-view="feed"] .post.ig { border-color: transparent; box-shadow: var(--shadow); }
+}
