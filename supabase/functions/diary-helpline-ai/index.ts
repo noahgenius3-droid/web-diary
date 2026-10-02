@@ -91,7 +91,7 @@ async function generate(system: string, messages: Msg[]): Promise<string> {
 }
 
 // Plain safety net: obvious danger words always reach a person, whatever the model says
-const DANGER = /\b(kill myself|suicid|end my life|self[- ]?harm|hurt myself|want to die|don'?t want to live|being abused|threaten(ed|ing) to (kill|hurt)|in danger)\b/i;
+const DANGER = /\b(kill(ing)? myself|suicid\w*|end(ing)? my life|self[- ]?harm\w*|hurt(ing)? myself|want to die|don'?t want to (live|be here)|being abused|threaten(ed|ing)? to (kill|hurt)|in danger)/i;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
@@ -178,6 +178,10 @@ Deno.serve(async (req) => {
   const danger = DANGER.test(last.body);
   if (!text) text = `Thanks, ${firstName}. I'm passing this to ${voice} and the team so a person can help you directly — you'll hear back here.`;
 
+  // Another reply may have landed while the model was writing (two quick messages): don't answer twice
+  const { data: latest } = await db.from("diary_support_messages").select("from_staff").eq("ticket_id", t.id).eq("internal", false)
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (latest?.from_staff) return json({ replied: false, why: "already answered" });
   await db.from("diary_support_messages").insert({ ticket_id: t.id, from_staff: true, ai: true, body: text.slice(0, 4000) });
   if (m || danger) {
     await handOver(danger ? "Possible safety concern — please check in" : (m![1] || "The member needs a person").trim(), danger ? "urgent" : (m![2] || "high").toLowerCase());

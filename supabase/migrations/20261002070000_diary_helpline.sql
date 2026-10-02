@@ -222,7 +222,8 @@ language plpgsql security definer set search_path = '' as $$
 begin
     perform private.diary_require_admin();
     update public.diary_helpline_settings set ai_enabled = p_enabled, voice_name = left(trim(coalesce(p_voice_name, 'Noah')), 60),
-        voice_notes = left(coalesce(p_voice_notes, ''), 4000), max_ai_replies = least(greatest(coalesce(p_max, 12), 1), 50), updated_at = now();
+        voice_notes = left(coalesce(p_voice_notes, ''), 4000), max_ai_replies = least(greatest(coalesce(p_max, 12), 1), 50), updated_at = now()
+    where id;
     perform private.diary_audit('helpline_settings', null, jsonb_build_object('ai_enabled', p_enabled));
 end;
 $$;
