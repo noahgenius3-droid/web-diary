@@ -16426,3 +16426,34 @@ button.chip:active, .icon-btn:active, .round-btn:active, .link-btn:active, .tab-
     button.chip:active, .icon-btn:active, .round-btn:active, .link-btn:active, .tab-item:active { transform: none; }
 }
 @keyframes pop-fade { from { opacity: 0; } }
+
+/* ---------- Profile: aligned actions, numbers as a grid, friends without clipping ---------- */
+/* Labelled actions share the row equally and never wrap; icon actions stay square */
+.pf-actions { display: flex; flex-wrap: nowrap; gap: 8px; }
+.pf-actions .pf-btn:not(.icon) { flex: 1 1 0; min-width: 0; justify-content: center; white-space: nowrap; }
+.pf-actions .pf-btn:not(.icon) span { overflow: hidden; text-overflow: ellipsis; }
+.pf-actions .pf-btn.icon { flex: none; width: 44px; justify-content: center; }
+/* Numbers: one column each, figure over label, centred and evenly spaced */
+.pf-stats { display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)) !important; gap: 0 !important; align-items: start; }
+.pf-stats .pf-stat { display: grid !important; justify-items: center; gap: 2px; padding: 4px 2px; text-align: center; font-size: 0.8rem; line-height: 1.2; }
+.pf-stats .pf-stat b { display: block; margin: 0; font-size: 1.2rem; line-height: 1.1; letter-spacing: -0.01em; }
+.pf-substats { text-align: center; }
+@media (hover: hover) and (pointer: fine) { .pf-stats button.pf-stat:hover { text-decoration: none; color: var(--text); } }
+/* Friends: a tidy grid of four, nothing cut off at the edge; names get the whole column */
+.pf-friends-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 8px; overflow: visible; padding: 2px 0 0; }
+.pf-friend { width: auto; min-width: 0; }
+.pf-friend span { max-width: 100%; text-align: center; font-size: 0.8rem; }
+@media (min-width: 761px) { .pf-friends-row { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
+
+/* ---------- Chat header on phones: photo + name left-aligned beside Back, one weight, never crowded ---------- */
+@media (max-width: 760px) {
+    .chat-pane .chat-head { grid-template-columns: auto auto minmax(0, 1fr) auto auto auto; gap: 2px; }
+    .chat-pane .chat-head .chat-who { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; margin-right: 6px; border: 0; background: none; cursor: pointer; }
+    .chat-pane .chat-head .chat-who .avatar.sm { width: 38px; height: 38px; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.4); }
+    .chat-pane .chat-head .friend-name { align-items: flex-start; text-align: left; gap: 1px; }
+    .chat-pane .chat-head .chat-who-name { text-align: left; font-size: 1.02rem; }
+    .chat-pane .chat-head .chat-who-name b, .chat-pane .chat-head .chat-who-name .name-rest { font-weight: 700; }
+    .chat-pane .chat-head .friend-name small { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+/* In an open chat the "Never miss a call" card sits above the message box, not on it */
+body.chat-open .alert-ask { bottom: calc(92px + env(safe-area-inset-bottom, 0px)); }

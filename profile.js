@@ -131,7 +131,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const btn = (act, icon, label, cls = '') => `<button type="button" class="pf-btn ${cls}" data-pf="${act}"><svg class="i"><use href="#${icon}"/></svg><span>${label}</span></button>`;
         let actions;
         if (mine) {
-            actions = btn('edit', 'i-pencil', 'Edit profile', 'primary') + btn('share', 'i-share', 'Share profile') + btn('invite', 'i-user-plus', 'Invite friends');
+            // Two equal labelled actions that never wrap, plus a compact invite (the common profile pattern)
+            actions = btn('edit', 'i-pencil', 'Edit profile', 'primary') + btn('share', 'i-share', 'Share profile')
+                + '<button type="button" class="pf-btn icon" data-pf="invite" aria-label="Invite friends" title="Invite friends"><svg class="i"><use href="#i-user-plus"/></svg></button>';
         } else if (p.blocked) {
             actions = btn('unblock', 'i-block', 'Unblock', 'primary');
         } else {
