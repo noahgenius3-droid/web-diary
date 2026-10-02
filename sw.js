@@ -8,7 +8,7 @@
 // imported while the worker installs, so this happens here, once.
 try { self.window = self; importScripts('/config.js'); } catch (e) { /* calls can still be declined in the app */ }
 
-const CACHE = 'cordial-shell-v122';
+const CACHE = 'cordial-shell-v123';
 const SHELL = [
     '/', '/index.html', '/manifest.webmanifest',
     '/style.css', '/photoedit.css',
@@ -112,9 +112,15 @@ self.addEventListener('fetch', event => {
     if (request.method !== 'GET') return;
     const url = new URL(request.url);
 
-    // Opening the app (or reloading any #/page): fresh page when online, saved page when not
+    // Opening the app (or reloading any #/page). Online, the browser loads the page itself: iPhone home-screen
+    // apps fail to open ("the server stopped responding") when a service worker answers page loads. Offline,
+    // the copy saved at install opens instead.
     if (request.mode === 'navigate') {
-        event.respondWith(networkFirst(request, '/index.html'));
+        if (self.navigator.onLine !== false) return;
+        event.respondWith((async () => {
+            const cache = await caches.open(CACHE);
+            return (await cache.match('/')) || (await cache.match('/index.html')) || Response.error();
+        })());
         return;
     }
     // The app's own files
