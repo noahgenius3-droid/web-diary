@@ -16378,3 +16378,51 @@ body.is-ringing { overflow: hidden; }
 @media (min-width: 761px) {
     body[data-view="feed"] .post.ig { border-color: transparent; box-shadow: var(--shadow); }
 }
+
+
+/* ---------- Interaction polish (emil-design-eng) ---------- */
+/* Touch screens: a tap fires :hover and leaves it stuck (cards stay lifted, swatches stay big) — hover motion
+   only where there's a real pointer; press feedback still applies */
+@media (hover: none), (pointer: coarse) {
+    .swatch:hover:not(:active),
+    button.today-card:hover:not(:active),
+    .photo-tile:hover:not(:active),
+    .create-post:hover:not(:active),
+    .story:hover:not(:active) .story-ring,
+    .post-photo:hover:not(:active) img,
+    .template-card:hover:not(:active),
+    .folder-chip:hover:not(:active),
+    .cm-card:hover:not(:active),
+    .cm-emoji-opt:hover:not(:active),
+    .profile-photo:hover:not(:active) .photo-badge,
+    button.mcard-share:hover:not(:active),
+    .call-reactions button:hover:not(:active),
+    .cover-opt:hover:not(:active),
+    .hl-card:hover:not(:active),
+    .react-emojis button:hover:not(:active),
+    .quick-reply:hover:not(:active),
+    .compose-btn:hover:not(:active),
+    .fab:hover:not(:active),
+    .g-tile:hover:not(:active) .g-go:not(.ok) .i { transform: none; }
+}
+/* Menus grow out of the button that opened them: fast, strong ease-out, from a near-full scale */
+.popover { animation: pop-from-anchor 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)) both; }
+.popover[data-side="top"] { --pop-dy: 4px; }
+@keyframes pop-from-anchor { from { opacity: 0; transform: translateY(var(--pop-dy, -4px)) scale(0.96); } }
+/* Exits are quick and start fast (ease-out), never a slow ease-in */
+.post-view.closing .pv-shell { animation-timing-function: var(--ease-out, ease-out); }
+.msg.vanishing, #content.repaint .msg.vanishing { animation-duration: 240ms !important; animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1) !important; }
+.emoji-pop.closing { animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1); }
+body.chat-open .inbox .chat-pane.leaving { animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1) !important; }
+/* Every pressable thing answers the press */
+button.chip, .icon-btn, .round-btn, .link-btn, .nh-more, .inbox-tab, .feed-tabs button, .pour button, .nh-layout button, .tab-item {
+    transition-property: transform, background-color, color, border-color, box-shadow, opacity;
+    transition-duration: 140ms;
+    transition-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+}
+button.chip:active, .icon-btn:active, .round-btn:active, .link-btn:active, .tab-item:active { transform: scale(0.96); }
+@media (prefers-reduced-motion: reduce) {
+    .popover { animation: pop-fade 120ms ease both; }
+    button.chip:active, .icon-btn:active, .round-btn:active, .link-btn:active, .tab-item:active { transform: none; }
+}
+@keyframes pop-fade { from { opacity: 0; } }

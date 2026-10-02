@@ -2825,6 +2825,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const top = r.bottom + 6 + h > window.innerHeight ? Math.max(8, r.top - h - 6) : r.bottom + 6;
         popover.style.left = `${left}px`;
         popover.style.top = `${top}px`;
+        // Grow out of the button that opened it (from above or below, wherever the menu landed)
+        const above = top < r.top;
+        popover.dataset.side = above ? 'top' : 'bottom';
+        popover.style.transformOrigin = `${Math.max(0, Math.min(w, r.left + r.width / 2 - left))}px ${above ? '100%' : '0%'}`;
         popoverAnchor = anchor;
         anchor.setAttribute('aria-expanded', 'true');
         const first = [...popover.querySelectorAll('.pop-item')].find(b => b.offsetParent !== null);
