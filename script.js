@@ -1029,7 +1029,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setTitle(folder.name);
         const list = activeNotes().filter(n => n.folderId === folder.id && matches(n) && inRange(n.createdAt, state.noteRange));
         return `
-            <button class="back-link" data-action="back"><svg class="i"><use href="#i-back"/></svg>All notes</button>
+            <button class="back-link" data-action="back" aria-label="Back to all notes" title="All notes"><svg class="i"><use href="#i-back"/></svg></button>
             <section class="section">
                 <div class="section-head">
                     <h2>${escapeHTML(folder.name)}</h2>

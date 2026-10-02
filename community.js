@@ -318,7 +318,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const tab = (key, label) => `<button class="tab" role="tab" aria-selected="${c.tab === key}" data-action="cm-tab" data-tab="${key}">${label}</button>`;
 
         return `
-            <button class="back-link" data-action="cm-back"><svg class="i"><use href="#i-back"/></svg>All communities</button>
+            <button class="back-link" data-action="cm-back" aria-label="Back to all communities" title="All communities"><svg class="i"><use href="#i-back"/></svg></button>
             <header class="cm-hero c-${esc(cm.color)}">
                 <span class="cm-hero-emoji" aria-hidden="true">${esc(cm.emoji)}</span>
                 <div class="cm-hero-text">

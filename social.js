@@ -5073,7 +5073,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return `
             <header class="pv-top">
                 <button type="button" class="pv-close pv-back" data-pv="close" aria-label="Back to ${backTo === 'Back' ? 'where you were' : backTo}" title="Back (Esc)">
-                    <svg class="i"><use href="#i-back"/></svg><span>${backTo}</span>
+                    <svg class="i"><use href="#i-back"/></svg>
                 </button>
                 <div class="pv-top-who" data-profile="${esc(o.author)}" role="button" tabindex="0" aria-label="${esc(profile.display_name)}’s profile">
                     ${avatar(person, 'sm')}

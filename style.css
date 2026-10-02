@@ -15894,3 +15894,26 @@ dialog.pn-sheet::backdrop { background: rgba(8, 10, 20, 0.5); }
 }
 .pn-mini { white-space: nowrap; }
 .pn-box .pn-sec-head p { white-space: nowrap; }
+
+/* Back is an arrow on its own (the label stays for screen readers) */
+.pv-back { width: 44px; height: 44px; padding: 0; justify-content: center; border-radius: 50%; }
+.pv-top .pv-back { width: 44px; height: 44px; }
+.back-link { display: inline-grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 1px solid var(--border); border-radius: 50%; background: var(--input); color: var(--text); cursor: pointer; }
+.back-link .i { width: 20px; height: 20px; }
+@media (hover: hover) and (pointer: fine) { .back-link:hover { border-color: var(--accent); } }
+.back-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Post view on iPhone: crisp text and a clear gap under the status bar. iOS rasterises layers marked
+   backface-visibility: hidden, which left the header soft; Safari's frosted status-bar edge also blurred
+   anything sitting right under it, so the header gets a solid top and more room. */
+.pv-shell { backface-visibility: visible; }
+@media (max-width: 719px) {
+    .post-view[open] { background: var(--surface); }
+    .pv-top { padding-top: calc(12px + env(safe-area-inset-top, 0px)); background: var(--surface); }
+}
+
+/* Splash: a 2-second show — one tagline, a quicker bar */
+.sp-tag { animation-delay: 500ms; }
+.sp-tag span:first-child { animation: sp-line-last 6s linear 0.55s both; }
+.sp-tag span:nth-child(n+2) { display: none; }
+.sp-progress i { animation: sp-fill 1.7s linear 0.25s forwards; }
