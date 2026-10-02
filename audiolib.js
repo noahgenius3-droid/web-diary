@@ -194,6 +194,51 @@ document.addEventListener('DOMContentLoaded', () => {
             category: [...cat.map(c => String(c).trim().toLowerCase()).filter(Boolean), ...flags], source: 'licensed'
         };
     }
+    // Licensed tracks from the diary-music function (Jamendo: independent artists, Creative Commons licences).
+    // Searched on the server per category / query; answers { ready: false } until its client ID is set.
+    const remote = { ready: null, cache: new Map() };
+    async function token() {
+        try {
+            const c = window.diarySocial && window.diarySocial.internals && window.diarySocial.internals.client;
+            const { data } = c ? await c.auth.getSession() : { data: null };
+            return data && data.session && data.session.access_token;
+        } catch (e) { return null; }
+    }
+    async function remoteTracks(category, q) {
+        if (remote.ready === false) return [];
+        const key = `${category}|${q}`;
+        if (remote.cache.has(key)) return remote.cache.get(key);
+        const t = await token();
+        if (!t) return [];
+        try {
+            const res = await fetch(`${cfg.supabaseUrl}/functions/v1/diary-music`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${t}`, apikey: cfg.supabaseKey, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ category, q })
+            });
+            const data = await res.json();
+            remote.ready = !!(data && data.ready);
+            const list = (data && Array.isArray(data.tracks) ? data.tracks : []).map(x => ({ ...normalise(x), licenseUrl: x.licenseUrl || null, licenseName: x.licenseName || null, shareurl: x.shareurl || null, provider: x.provider || 'Jamendo' }));
+            remote.cache.set(key, list);
+            return list;
+        } catch (e) { return []; }
+    }
+    // Audio bytes for mixing into a reel: straight from the source, or through diary-music when the browser can't
+    async function fetchAudio(music) {
+        try {
+            const res = await fetch(music.src);
+            if (res.ok) return await res.arrayBuffer();
+        } catch (e) { /* blocked: go through the server */ }
+        const t = await token();
+        const res = await fetch(`${cfg.supabaseUrl}/functions/v1/diary-music`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${t}`, apikey: cfg.supabaseKey, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stream: music.src })
+        });
+        if (!res.ok) throw new Error('music');
+        return res.arrayBuffer();
+    }
+
     async function catalogue() {
         return [...(await loadLicensed()), ...CORDIAL];
     }
@@ -241,11 +286,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function open() {
         return new Promise(async resolve => {
-            P = { tracks: CORDIAL, cat: 'all', q: '', sel: null, start: 0, length: 30, volume: 0.8, resolve, playing: null };
+            P = { tracks: CORDIAL, remote: [], loadingRemote: true, cat: 'all', q: '', sel: null, start: 0, length: 30, volume: 0.8, resolve, playing: null };
             paintBrowse();
             if (!dlg.open) dlg.showModal();
             P.tracks = await catalogue();
             if (P && !P.sel) paintBrowse();
+            refreshRemote();
         });
     }
     function finish(value) {
@@ -259,11 +305,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function listFor() {
         const q = P.q.trim().toLowerCase();
-        return P.tracks.filter(t => (P.cat === 'all' || t.category.includes(P.cat)) && (!q || `${t.title} ${t.artist} ${t.category.join(' ')}`.toLowerCase().includes(q)));
+        const local = P.tracks.filter(t => (P.cat === 'all' || t.category.includes(P.cat)) && (!q || `${t.title} ${t.artist} ${t.category.join(' ')}`.toLowerCase().includes(q)));
+        // Licensed results first (already matched on the server), then the rest
+        const seen = new Set(P.remote.map(t => t.id));
+        return [...P.remote, ...local.filter(t => !seen.has(t.id))];
+    }
+    let remoteTimer = null;
+    function refreshRemote(delay = 0) {
+        clearTimeout(remoteTimer);
+        if (!P) return;
+        const want = { cat: P.cat, q: P.q.trim() };
+        P.loadingRemote = remote.ready !== false;
+        remoteTimer = setTimeout(async () => {
+            const list = await remoteTracks(want.cat, want.q);
+            if (!P || P.cat !== want.cat || P.q.trim() !== want.q) return;
+            P.remote = list;
+            P.loadingRemote = false;
+            if (!P.sel) paintBrowse(document.activeElement && document.activeElement.id === 'al-q');
+        }, delay);
     }
     function paintBrowse(keepFocus = false) {
         const list = listFor();
-        const hasLicensed = P.tracks.some(t => t.source === 'licensed');
+        const hasLicensed = P.remote.length > 0 || remote.ready || P.tracks.some(t => t.source === 'licensed');
         dlg.innerHTML = `
             <div class="al-card">
                 <header class="al-head"><h3 id="al-h">Add audio</h3><button type="button" class="icon-btn" data-al="close" aria-label="Close">${ic('i-close')}</button></header>
@@ -271,10 +334,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="al-cats" role="tablist" aria-label="Categories">${CATEGORIES.map(([k, l]) => `<button type="button" role="tab" class="al-cat" aria-selected="${P.cat === k}" data-al="cat" data-k="${k}">${l}</button>`).join('')}</div>
                 <ul class="al-list">${list.length ? list.map(t => `
                     <li class="al-row">
-                        <button type="button" class="al-pick" data-al="pick" data-id="${esc(t.id)}">${coverHTML(t)}<span class="al-text"><strong>${esc(t.title)}</strong><small>${esc(t.artist)}${catLabel(t) ? ` · ${esc(catLabel(t))}` : ''} · ${fmt(t.duration)}</small></span></button>
+                        <button type="button" class="al-pick" data-al="pick" data-id="${esc(t.id)}">${coverHTML(t)}<span class="al-text"><strong>${esc(t.title)}</strong><small>${esc(t.artist)}${t.licenseName ? ` · <span class="al-lic">${esc(t.licenseName)}</span>` : catLabel(t) ? ` · ${esc(catLabel(t))}` : ''} · ${fmt(t.duration)}</small></span></button>
                         <button type="button" class="al-play" data-al="preview" data-id="${esc(t.id)}" aria-label="${P.playing === t.id ? 'Stop' : 'Play'} ${esc(t.title)}" aria-pressed="${P.playing === t.id}">${ic(P.playing === t.id ? 'i-pause' : 'i-play')}</button>
-                    </li>`).join('') : '<li class="al-empty">No audio matches that yet.</li>'}</ul>
-                <p class="al-note">${hasLicensed ? 'Licensed music plays from the rights holder’s catalogue.' : 'Cordial Sounds are original instrumentals made for Cordial — free to use. Music from Nigerian artists appears here once Cordial’s licensed catalogue is connected.'}</p>
+                    </li>`).join('') : (P.loadingRemote ? '' : '<li class="al-empty">No audio matches that yet.</li>')}${P.loadingRemote ? '<li class="al-loading" aria-live="polite"><span class="al-spin" aria-hidden="true"></span>Finding licensed music…</li>' : ''}</ul>
+                <p class="al-note">${hasLicensed ? 'Licensed music from independent artists via Jamendo, under Creative Commons licences — the artist and licence are credited on your post. Cordial Sounds are original instrumentals made for Cordial.' : 'Cordial Sounds are original instrumentals made for Cordial — free to use. Licensed music appears here once Cordial’s catalogue is connected.'}</p>
             </div>`;
         if (keepFocus) { const q = dlg.querySelector('#al-q'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
     }
@@ -299,7 +362,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     dlg.addEventListener('input', e => {
         if (!P) return;
-        if (e.target.id === 'al-q') { P.q = e.target.value; paintBrowse(true); }
+        if (e.target.id === 'al-q') { P.q = e.target.value; P.remote = []; paintBrowse(true); refreshRemote(450); }
         if (e.target.id === 'al-start') {
             P.start = Number(e.target.value);
             dlg.querySelector('#al-start-v').textContent = fmt(P.start);
@@ -326,9 +389,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const el = e.target.closest('[data-al]');
         if (!el || !P) return;
         const what = el.dataset.al;
-        const byId = id => P.tracks.find(t => t.id === id);
+        const byId = id => P.remote.find(t => t.id === id) || P.tracks.find(t => t.id === id);
         if (what === 'close') finish(null);
-        else if (what === 'cat') { P.cat = el.dataset.k; paintBrowse(); }
+        else if (what === 'cat') { P.cat = el.dataset.k; P.remote = []; paintBrowse(); refreshRemote(); }
         else if (what === 'preview') {
             const t = byId(el.dataset.id);
             if (P.playing === t.id) { stopAll(); P.playing = null; return paintBrowse(); }
@@ -352,7 +415,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const t = P.sel;
             el.disabled = true;
             el.innerHTML = 'Preparing…';
-            const music = { id: t.id, title: t.title, artist: t.artist, cover: t.cover || null, category: catLabel(t) || null, source: t.source, style: t.style || null, start: Math.round(P.start), length: P.length, volume: P.volume };
+            const music = { id: t.id, title: t.title, artist: t.artist, cover: t.cover || null, category: catLabel(t) || null, source: t.source, style: t.style || null, start: Math.round(P.start), length: P.length, volume: P.volume, ...(t.licenseUrl ? { licenseUrl: t.licenseUrl, licenseName: t.licenseName, shareurl: t.shareurl, provider: t.provider } : {}) };
             try {
                 if (t.source === 'cordial') {
                     // Original instrumentals are rendered into a short clip that travels with the post
@@ -390,5 +453,5 @@ document.addEventListener('DOMContentLoaded', () => {
         try { await a.play(); } catch (e) { setIcon(false); app.showToast('Couldn’t play that audio'); }
     }
 
-    window.diaryAudioLib = { open, playPost, stop: stopAll, catalogue, renderCordial, wavFrom, coverHTML, categories: CATEGORIES };
+    window.diaryAudioLib = { open, playPost, stop: stopAll, catalogue, renderCordial, wavFrom, coverHTML, fetchAudio, categories: CATEGORIES };
 });

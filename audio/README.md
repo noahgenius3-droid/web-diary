@@ -6,6 +6,8 @@ The "Add audio" picker on posts and reels reads its catalogue from these sources
 2. **`audio/catalog.json`.** This is an admin-managed list of licensed tracks. It ships empty.
 3. **A Supabase table (optional).** It has the same shape as the list, and is read when `DIARY_CONFIG.audioCatalogTable` is set in `config.js`. Only rows with `active = true` are shown.
 
+4. **Jamendo.** These are independent artists who release under Creative Commons licences. They are served by the `diary-music` edge function, which searches Jamendo by category and query and switches on when the Supabase secret `JAMENDO_CLIENT_ID` is set. The client ID is free from devportal.jamendo.com. Each post credits the artist and links to the track's licence, as Creative Commons requires. Many tracks are licensed non-commercially (BY-NC). If Cordial earns money, check each licence or take a commercial licence from Jamendo Licensing.
+
 **Only add music you hold the rights to use in Cordial.** Commercial recordings by Nigerian artists need a licence from the label, distributor or a music-licensing provider. Licensed tracks are streamed from their own URLs: Cordial stores which track and which part a post uses, never a copy of the audio.
 
 ## Track fields

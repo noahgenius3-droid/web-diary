@@ -3566,7 +3566,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return `
             <div class="post-music">
                 ${cover}
-                <span class="pm-text"><strong>${esc(m.title)}</strong><small>${esc(m.artist)}${m.category ? ` · ${esc(m.category)}` : ''}</small></span>
+                <span class="pm-text"><strong>${esc(m.title)}</strong><small>${esc(m.artist)}${m.licenseUrl ? ` · <a class="pm-lic" href="${esc(m.licenseUrl)}" target="_blank" rel="noopener noreferrer">${esc(m.licenseName || 'Creative Commons')}</a>${m.provider ? ` · ${esc(m.provider)}` : ''}` : m.category ? ` · ${esc(m.category)}` : ''}</small></span>
                 <button type="button" class="pm-play" data-action="post-music" data-path="${esc(audio.path || '')}" data-music="${esc(JSON.stringify(m))}" aria-label="Play ${esc(m.title)} by ${esc(m.artist)}" aria-pressed="false"><svg class="i pm-i-play"><use href="#i-play"/></svg><svg class="i pm-i-pause"><use href="#i-pause"/></svg></button>
             </div>`;
         }

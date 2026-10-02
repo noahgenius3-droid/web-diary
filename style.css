@@ -15274,3 +15274,12 @@ dialog.al-dlg::backdrop { background: rgba(8, 10, 20, 0.55); }
 .pm-play.playing { background: var(--accent); color: var(--on-accent); }
 body[data-view="feed"] .feed-v2 .post.ig .post-music { margin: 8px 0 2px; }
 .pc-audio .al-cover { width: 40px; height: 40px; border-radius: 9px; padding-bottom: 8px; }
+
+/* Licensed music: licence tags, loading row, credit link on posts */
+.al-lic { display: inline-block; padding: 0 6px; border-radius: 6px; background: var(--input); color: var(--text-muted); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.02em; }
+.al-loading { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 14px 8px; color: var(--text-muted); font-size: 0.86rem; }
+.al-spin { width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: al-spin 0.8s linear infinite; }
+@keyframes al-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .al-spin { animation: none; } }
+.pm-lic { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.al-card .search.al-search { order: 0; }

@@ -231,7 +231,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function musicBuffer(audioCtx, pick) {
         let bytes;
         if (pick.file) bytes = await pick.file.arrayBuffer();
-        else if (pick.music && pick.music.src) bytes = await (await fetch(pick.music.src)).arrayBuffer();
+        else if (pick.music && pick.music.src) bytes = window.diaryAudioLib ? await window.diaryAudioLib.fetchAudio(pick.music) : await (await fetch(pick.music.src)).arrayBuffer();
         if (!bytes) return null;
         return new Promise((resolve, reject) => audioCtx.decodeAudioData(bytes, resolve, reject));
     }
