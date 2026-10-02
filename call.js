@@ -590,6 +590,8 @@ document.addEventListener('DOMContentLoaded', () => {
             .on('broadcast', { event: 'signal' }, ({ payload }) => { if (call === c) onSignal(payload); })
             .on('broadcast', { event: 'react' }, ({ payload }) => { if (call === c) showReaction(payload.from, payload.emoji); })
             .on('broadcast', { event: 'control' }, ({ payload }) => { if (call === c) onControl(payload); })
+            // One-to-one: the other person hung up (a group call carries on without them)
+            .on('broadcast', { event: 'bye' }, ({ payload }) => { if (call === c && c.person && payload && payload.from !== me()) endedByOther(c); })
             .subscribe(async status => {
                 if (call !== c || c.channel !== channel) return;
                 if (status === 'SUBSCRIBED') {
@@ -658,6 +660,14 @@ document.addEventListener('DOMContentLoaded', () => {
             clearTimeout(call.ringTimer);
         }
         if (call.people.size > 1 && !call.started) call.started = Date.now();
+        // One-to-one and they've gone without saying goodbye (app closed, signal lost): end it if they don't come back
+        if (call.person && call.started && call.channelReady && !call.people.has(call.person.id)) {
+            const c = call;
+            if (!c.aloneTimer) c.aloneTimer = setTimeout(() => { c.aloneTimer = null; if (call === c && !c.people.has(c.person.id)) endedByOther(c); }, 4000);
+        } else if (call.aloneTimer) {
+            clearTimeout(call.aloneTimer);
+            call.aloneTimer = null;
+        }
         call.maxPeople = Math.max(call.maxPeople || 1, call.people.size);
         // Someone in the call is recording: everyone sees it
         const recording = [...call.people.entries()].filter(([id, m]) => id !== me() && m.rec).map(([id]) => nameOf(id));
@@ -668,6 +678,16 @@ document.addEventListener('DOMContentLoaded', () => {
             rb.innerHTML = `<svg class="i"><use href="#i-record"/></svg><span>${mine ? 'You are recording this call' : `${esc(recording.join(', '))} ${recording.length > 1 ? 'are' : 'is'} recording this call`}</span>`;
         }
         paintPanel();
+    }
+
+    // The other person ended a one-to-one call: say so, then close it here too
+    function endedByOther(c) {
+        if (call !== c || c.ending) return;
+        c.ending = true;
+        clearTimeout(c.aloneTimer);
+        stopRingback();
+        paintPanel(`${c.title} ended the call`);
+        setTimeout(() => { if (call === c) leave(false); }, 1200);
     }
 
     // Transceiver order is the same on both sides: 0 = microphone, 1 = camera, 2 = screen
@@ -838,8 +858,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (c.wake) c.wake.release().catch(() => {});
         if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
         // Leave the room in the background: the screen never waits on the network
+        clearTimeout(c.aloneTimer);
         const ch = c.channel;
         c.channel = null;
+        // One-to-one: tell the other side we've hung up, so their screen ends now rather than waiting
+        if (ch && c.person && c.channelReady) ch.send({ type: 'broadcast', event: 'bye', payload: { from: me() } }).catch(() => {});
         if (ch) {
             const gone = Promise.race([ch.untrack(), new Promise(r => setTimeout(r, 1500))]).catch(() => {}).then(() => dropChannel(ch));
             closing.set(c.topic, gone);
@@ -1424,6 +1447,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // The status line: ringing → connecting → connected (with the timer)
     function statusText() {
+        if (call.ending) return { text: `${call.title} ended the call`, state: 'ended' };
         const others = [...call.people.keys()].filter(id => id !== me());
         const connected = others.filter(id => {
             const p = call.peers.get(id);
