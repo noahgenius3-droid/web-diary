@@ -4489,7 +4489,10 @@ document.addEventListener('DOMContentLoaded', () => {
             : type ? [`No ${type} posts yet`, 'Try another kind of post, or show everything.', '<button type="button" class="chip" data-action="feed-type" data-type="all">Show everything</button>']
             : following ? ['Nobody to follow here yet', 'Follow people to see their posts in this tab.', '<button type="button" class="chip accent" data-action="go-explore-people"><svg class="i"><use href="#i-user-plus"/></svg>Find people</button>']
             : filterLabel ? ['Nothing here yet', 'There are no posts for this right now.', '<button type="button" class="chip" data-action="feed-all">Show everything</button>']
-            : ['Your Feed is waiting', 'Share something, or add friends to see what they post.', '<button type="button" class="chip accent" data-action="feed-compose"><svg class="i"><use href="#i-pencil"/></svg>Write a post</button><button type="button" class="chip" data-action="go-explore-people"><svg class="i"><use href="#i-user-plus"/></svg>Find people</button>'];
+            // One clear first step: no friends yet → find them; friends but a quiet feed → be the first to post
+            : (s.friends || []).length
+                ? ['Your Feed is quiet', 'Be the first: a moment from today, a photo, or what’s on your mind.', '<button type="button" class="primary-btn feed-empty-main" data-action="feed-compose"><svg class="i"><use href="#i-pencil"/></svg>Write your first post</button><button type="button" class="link-btn" data-action="go-explore-people">or find more people</button>']
+                : ['Your Feed starts with your people', 'Add friends to see their posts, stories and moments here.', '<button type="button" class="primary-btn feed-empty-main" data-action="go-explore-people"><svg class="i"><use href="#i-user-plus"/></svg>Find people you know</button><button type="button" class="link-btn" data-action="feed-compose">or write your first post</button>'];
         return `<div class="empty feed-empty"><p class="empty-title">${title}</p><p>${text}</p>${actions ? `<div class="feed-empty-actions">${actions}</div>` : ''}</div>`;
     }
 
@@ -5625,7 +5628,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                     <div class="hero-btns">
                         <button type="button" class="hero-btn" data-action="chat-refresh" aria-label="Refresh chats"><svg class="i"><use href="#i-refresh"/></svg></button>
-                        <button type="button" class="hero-btn" data-action="toggle-add" aria-pressed="${s.addOpen}" aria-label="Add a friend by username"><svg class="i"><use href="#i-user-plus"/></svg></button>
+                        <button type="button" class="hero-btn hero-btn-add" data-action="toggle-add" aria-pressed="${s.addOpen}" aria-label="Add a friend by username"><svg class="i"><use href="#i-user-plus"/></svg><span aria-hidden="true">Add friend</span></button>
                     </div>
                 </div>
                 ${people.length ? `

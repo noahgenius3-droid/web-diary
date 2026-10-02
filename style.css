@@ -16241,3 +16241,98 @@ body.is-ringing { overflow: hidden; }
 .call-incoming .incoming-avatar .avatar.xl { opacity: 1; animation: inc-ripple 1.8s ease-out infinite; box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.28); }
 @keyframes inc-ripple { 70%, 100% { box-shadow: 0 0 0 22px rgba(255, 255, 255, 0); } }
 .inc-act[hidden] { display: none; }
+
+/* ---------- Notes home header: calm date + greeting, one "Take a note…" way in, numbers folded into Today ---------- */
+.notes-home .nh-head { display: grid; gap: 14px; padding: 4px 2px 0; }
+.notes-home .nh-head .nh-title { margin: 0; color: var(--text); font-size: clamp(2rem, 7vw, 2.6rem); font-weight: 800; line-height: 1.02; letter-spacing: -0.03em; }
+.notes-home .nh-head .nh-title span { display: block; margin-top: 2px; color: var(--text-muted); font-weight: 600; font-size: 0.62em; letter-spacing: -0.02em; }
+.notes-home .nh-head .nh-greet { margin: -4px 0 0; max-width: 52ch; color: var(--text-muted); font-size: 0.98rem; line-height: 1.5; }
+.nh-take { display: flex; gap: 10px; align-items: stretch; }
+.nh-take-field {
+    flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; min-height: 54px; padding: 0 16px;
+    border: 1px solid var(--border); border-radius: 16px; background: var(--surface); color: var(--text-muted);
+    font: inherit; font-size: 1rem; text-align: left; cursor: text; touch-action: manipulation;
+    transition: border-color 160ms var(--ease-out, ease-out), background 160ms var(--ease-out, ease-out);
+}
+.nh-take-field > .i { width: 20px; height: 20px; color: var(--accent); flex: none; }
+.nh-take-field > span { flex: 1; min-width: 0; }
+.nh-take-field small { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 0.78rem; color: var(--text-faint, var(--text-muted)); }
+.nh-take-field small .i { width: 12px; height: 12px; }
+.nh-take-mic {
+    flex: none; width: 54px; border: 0; border-radius: 16px; display: grid; place-items: center;
+    background: var(--accent); color: var(--on-accent, #fff); cursor: pointer; touch-action: manipulation;
+    transition: transform 120ms var(--ease-out, ease-out);
+}
+.nh-take-mic .i { width: 22px; height: 22px; }
+.nh-take-field:active { background: var(--input); }
+.nh-take-mic:active { transform: scale(0.96); }
+@media (hover: hover) and (pointer: fine) {
+    .nh-take-field:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+}
+.nh-take-field:focus-visible, .nh-take-mic:focus-visible, .nh-today > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nh-today { border-radius: 14px; background: var(--input); }
+.nh-today > summary {
+    list-style: none; display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 14px; cursor: pointer;
+    font-size: 0.86rem; color: var(--text-muted); -webkit-user-select: none; user-select: none;
+}
+.nh-today > summary::-webkit-details-marker { display: none; }
+.nh-today > summary::after { content: ''; margin-left: auto; flex: none; width: 7px; height: 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg) translateY(-2px); transition: transform 160ms var(--ease-out, ease-out); }
+.nh-today[open] > summary::after { transform: rotate(-135deg) translateY(-2px); }
+.nh-today-label { flex: none; font-weight: 700; color: var(--text); }
+.notes-home .nh-today .nh-stats { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; padding: 0; font-size: inherit; color: inherit; min-width: 0; }
+.notes-home .nh-today .nh-stats > span { padding: 0; background: none; display: inline-flex; align-items: center; gap: 4px; }
+.notes-home .nh-today .nh-stats b { color: var(--text); font-weight: 700; }
+.notes-home .nh-today .nh-streak .i { width: 14px; height: 14px; color: var(--text-faint, var(--text-muted)); }
+.notes-home .nh-today .nh-streak.on .i { color: #f97316; }
+.notes-home .nh-today .nh-week { display: flex; justify-content: space-between; gap: 6px; padding: 4px 14px 14px; }
+.notes-home .nh-today .nh-day i { width: 30px; height: 30px; border-radius: 50%; border: 0; background: color-mix(in srgb, var(--text) 10%, transparent); box-shadow: none; }
+.notes-home .nh-today .nh-day.on i { background: var(--accent); }
+.notes-home .nh-today .nh-day.today i { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent); }
+.notes-home .nh-today .nh-day small { color: var(--text-muted); }
+.notes-home .nh-today .nh-day.today small { color: var(--accent); font-weight: 800; }
+@media (prefers-reduced-motion: reduce) { .nh-today > summary::after, .nh-take-field, .nh-take-mic { transition: none; } }
+@media (min-width: 900px) {
+    .notes-home .nh-head { grid-template-columns: minmax(0, 1fr) minmax(320px, 440px); grid-template-areas: "title take" "greet today"; column-gap: 32px; align-items: end; }
+    .notes-home .nh-head .nh-title { grid-area: title; }
+    .notes-home .nh-head .nh-greet { grid-area: greet; align-self: start; margin: 0; }
+    .nh-take { grid-area: take; }
+    .nh-today { grid-area: today; align-self: start; }
+}
+
+/* ---------- Chats on phones: the app's own surface, conversations first, filters as tabs ---------- */
+@media (max-width: 760px) {
+    body[data-view="messages"] .inbox-list { background: transparent; border-radius: 0; overflow: visible; }
+    body[data-view="messages"] .inbox-hero { padding: 2px 16px 4px; color: var(--text); }
+    body[data-view="messages"] .hero-top { align-items: center; }
+    body[data-view="messages"] .hero-hi { display: none; }
+    body[data-view="messages"] .inbox-hero .hero-count { margin: 0; font-size: 0.92rem; font-weight: 500; color: var(--text-muted); }
+    body[data-view="messages"] .hero-btn { width: 40px; height: 40px; background: var(--input); color: var(--text); }
+    body[data-view="messages"] .hero-btn[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+    body[data-view="messages"] .hero-btn-add { width: auto; display: inline-flex; gap: 6px; padding: 0 14px 0 12px; border-radius: 999px; font: inherit; font-size: 0.86rem; font-weight: 600; }
+    body[data-view="messages"] .hero-btn-add .i { width: 18px; height: 18px; }
+    body[data-view="messages"] .inbox-hero .hero-contacts { margin-top: 12px; }
+    body[data-view="messages"] .hero-contact { color: var(--text-muted); font-size: 0.76rem; }
+    body[data-view="messages"] .inbox-hero .hero-contact .avatar.lg { width: 52px; height: 52px; box-shadow: none; }
+    body[data-view="messages"] .inbox-sheet { margin-top: 6px; padding-top: 0; border-radius: 0; background: transparent; }
+    body[data-view="messages"] .inbox-sheet .inbox-search { margin: 4px 16px 6px; }
+    body[data-view="messages"] .inbox-sheet .inbox-tabs { gap: 20px; padding: 0 16px; margin: 0 0 4px; border-bottom: 1px solid var(--border); }
+    body[data-view="messages"] .inbox-sheet .inbox-tab { min-height: 44px; padding: 0 2px; border: 0; border-radius: 0; background: none; color: var(--text-muted); font-weight: 600; box-shadow: inset 0 -2px 0 transparent; }
+    body[data-view="messages"] .inbox-sheet .inbox-tab[aria-selected="true"] { background: none; color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+    body[data-view="messages"] .inbox-sheet .inbox-tab[aria-selected="true"] .badge { background: var(--accent); color: var(--on-accent, #fff); }
+    body[data-view="messages"] .inbox-fab { background: var(--accent); box-shadow: 0 12px 26px -10px color-mix(in srgb, var(--accent) 80%, transparent); }
+}
+
+/* ---------- Feed empty state: a focal card with one clear first step ---------- */
+.feed-empty { border: 0; border-radius: 18px; background: var(--surface); padding: 28px 22px; }
+.feed-empty .empty-title { font-size: 1.15rem; font-weight: 800; letter-spacing: -0.015em; color: var(--text); }
+.feed-empty p:not(.empty-title) { max-width: 34ch; margin-inline: auto; }
+.feed-empty-actions { flex-direction: column; align-items: center; gap: 6px; margin-top: 18px; }
+.feed-empty .feed-empty-main { min-height: 48px; padding: 0 22px; display: inline-flex; align-items: center; gap: 8px; }
+.feed-empty .feed-empty-main .i { width: 18px; height: 18px; }
+.feed-empty .link-btn { min-height: 40px; padding: 0 10px; color: var(--text-muted); font-weight: 600; }
+/* Inside "Today" the streak is plain text like the other two numbers (no pill) */
+.notes-home .nh-today .nh-stats .nh-streak, .notes-home .nh-today .nh-stats .nh-streak.on { padding: 0; border-radius: 0; background: none !important; color: inherit; box-shadow: none; }
+.notes-home .nh-today > summary { gap: 10px; }
+@media (max-width: 480px) {
+    .notes-home .nh-today .nh-stats { flex-wrap: nowrap; gap: 10px; overflow: hidden; white-space: nowrap; font-size: 0.82rem; }
+}

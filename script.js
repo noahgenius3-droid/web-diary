@@ -874,7 +874,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const list = live.filter(n => !n.pinned && inRange(n.createdAt, state.noteRange));
         const folderList = [...folders].sort((a, b) => folderActivity(b) - folderActivity(a));
         const first = (displayName() || '').split(' ')[0];
-        const friends = hooks.friendAvatars ? hooks.friendAvatars() : '';
         const now = new Date();
         const words = live.reduce((sum, n) => sum + countWords(fullText(n)), 0);
         const streak = calcStreak();
@@ -891,28 +890,34 @@ document.addEventListener('DOMContentLoaded', () => {
 
         return `
             <div class="notes-home">
-                <header class="nh-hero">
-                    <div class="nh-intro">
-                        <h2 class="nh-title">${now.toLocaleDateString(undefined, { weekday: 'long' })}<span>${now.toLocaleDateString(undefined, { day: 'numeric', month: 'long' })}</span></h2>
-                        <p class="nh-greet">${greeting()}${first ? `, ${escapeHTML(first)}` : ''}. ${escapeHTML(dailyLine())}</p>
-                        <p class="nh-stats">
-                            <span><b>${live.length.toLocaleString()}</b> ${live.length === 1 ? 'entry' : 'entries'}</span>
-                            <span><b>${words.toLocaleString()}</b> words</span>
-                            <span class="nh-streak${streak ? ' on' : ''}"><svg class="i"><use href="#i-flame"/></svg><span><b>${streak}</b>-day streak</span></span>
-                        </p>
+                <header class="nh-head">
+                    <h2 class="nh-title">${now.toLocaleDateString(undefined, { weekday: 'long' })}<span>${now.toLocaleDateString(undefined, { day: 'numeric', month: 'long' })}</span></h2>
+                    <p class="nh-greet">${greeting()}${first ? `, ${escapeHTML(first)}` : ''}. ${escapeHTML(dailyLine())}</p>
+                    <!-- One way in: start writing (or speak) right here -->
+                    <div class="nh-take">
+                        <button type="button" class="nh-take-field" data-action="new-note">
+                            <svg class="i" aria-hidden="true"><use href="#i-pencil"/></svg><span>Take a note…</span>
+                            <small title="Only you can read your notes unless you share one"><svg class="i" aria-hidden="true"><use href="#i-lock"/></svg>Private</small>
+                        </button>
+                        <button type="button" class="nh-take-mic" data-action="template" data-id="voice" aria-label="Record a voice note" title="Voice note"><svg class="i"><use href="#i-mic"/></svg></button>
                     </div>
-                    <div class="nh-week" role="img" aria-label="Days you wrote this week: ${week.filter(w => w.on).length} of 7">
-                        ${week.map(w => `
-                            <span class="nh-day${w.on ? ' on' : ''}${w.today ? ' today' : ''}">
-                                <i></i><small>${w.d.toLocaleDateString(undefined, { weekday: 'narrow' })}</small>
-                            </span>`).join('')}
-                    </div>
-                    <div class="nh-actions">
-                        <button class="primary-btn nh-write" data-action="new-note"><svg class="i"><use href="#i-plus"/></svg>New note</button>
-                        <button class="nh-voice" data-action="template" data-id="voice"><svg class="i"><use href="#i-wave"/></svg>Voice note</button>
-                        <span class="nh-private" title="Only you can read your notes unless you share one"><svg class="i"><use href="#i-lock"/></svg>Private diary</span>
-                        ${friends ? `<span class="nh-friends">${friends}</span>` : ''}
-                    </div>
+                    <!-- Your numbers and this week, one tap away -->
+                    <details class="nh-today">
+                        <summary>
+                            <span class="nh-today-label">Today</span>
+                            <span class="nh-stats">
+                                <span><b>${live.length.toLocaleString()}</b> ${live.length === 1 ? 'entry' : 'entries'}</span>
+                                <span><b>${words.toLocaleString()}</b> words</span>
+                                <span class="nh-streak${streak ? ' on' : ''}"><svg class="i" aria-hidden="true"><use href="#i-flame"/></svg><span><b>${streak}</b>-day streak</span></span>
+                            </span>
+                        </summary>
+                        <div class="nh-week" role="img" aria-label="Days you wrote this week: ${week.filter(w => w.on).length} of 7">
+                            ${week.map(w => `
+                                <span class="nh-day${w.on ? ' on' : ''}${w.today ? ' today' : ''}">
+                                    <i></i><small>${w.d.toLocaleDateString(undefined, { weekday: 'narrow' })}</small>
+                                </span>`).join('')}
+                        </div>
+                    </details>
                 </header>
 
                 ${pinned.length ? `
