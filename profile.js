@@ -27,13 +27,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function load(id) {
         const token = ++P.token;
-        Object.assign(P, { id, data: null, loading: true, error: false, posts: null, reposts: null, activity: null, trivia: undefined, tab: 'posts', friends: null });
-        const [{ data, error }, fr] = await Promise.all([
+        Object.assign(P, { id, data: null, loading: true, error: false, posts: null, reposts: null, activity: null, trivia: undefined, tab: 'posts' });
+        const [{ data, error }] = await Promise.all([
             client.rpc('diary_profile_full', { p_id: id }),
-            client.rpc('diary_friends_list', { p_user: id, p_limit: 12 }),
             I.refreshPresence ? I.refreshPresence([id]) : null
         ]);
-        P.friends = (fr && fr.data) || [];
         if (token !== P.token) return;
         P.loading = false;
         P.error = !!error;
@@ -182,8 +180,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${stat('following', 'following', 'following', stats.following)}
                 </div>
                 ${stats.reactions || stats.reposts ? `<p class="pf-substats">${[stats.reactions ? `${fmt(stats.reactions)} ${stats.reactions === 1 ? 'reaction' : 'reactions'} on their posts` : '', stats.reposts ? `${fmt(stats.reposts)} ${stats.reposts === 1 ? 'repost' : 'reposts'}` : ''].filter(Boolean).join(' · ')}</p>` : ''}
-                ${newcomerHTML(p)}
-                ${friendsStrip(p)}` : p.blocked ? '' : '<p class="pf-private muted small"><svg class="i"><use href="#i-lock"/></svg>Their numbers and follower lists are private.</p>'}
+                ${newcomerHTML(p)}` : p.blocked ? '' : '<p class="pf-private muted small"><svg class="i"><use href="#i-lock"/></svg>Their numbers and follower lists are private.</p>'}
             </header>`;
     }
 
@@ -224,23 +221,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         <span class="pf-step-label">${x.label}</span>
                         ${x.done ? '<span class="sr-only">Done</span>' : `<button type="button" class="link-btn accent" data-pf="${x.act}">${x.act === 'invite' ? 'Invite' : x.act === 'go-feed' ? 'Post' : x.act === 'photo' ? 'Add' : 'Write'}</button>`}
                     </li>`).join('')}</ul>
-            </section>`;
-    }
-
-    function friendsStrip(p) {
-        const list = (P.friends || []).slice(0, 8);
-        if (!list.length) return '';
-        const total = (p.stats && p.stats.friends) || list.length;
-        const mutual = (P.friends || []).filter(x => x.friend && x.id !== me()).length;
-        return `
-            <section class="pf-friends" aria-label="Friends">
-                <header><h2>Friends <span>${fmt(total)}</span></h2>
-                    ${p.id !== me() && mutual ? `<small>${mutual} mutual</small>` : ''}
-                    <button type="button" class="link-btn accent" data-pf="list" data-which="friends">See all</button></header>
-                <div class="pf-friends-row">${list.map(x => `
-                    <button type="button" class="pf-friend" data-profile="${esc(x.id)}" aria-label="${esc(x.display_name)}’s profile">
-                        ${avatar(x, 'lg')}<span>${esc(x.id === me() ? 'You' : String(x.display_name || '').split(' ')[0])}</span>${x.friend && x.id !== me() && p.id !== me() ? '<i class="pf-mutual" aria-label="Mutual friend"></i>' : ''}
-                    </button>`).join('')}</div>
             </section>`;
     }
 
