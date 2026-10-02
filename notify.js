@@ -369,8 +369,11 @@ document.addEventListener('DOMContentLoaded', () => {
         $('notif-alerts').innerHTML = alerts === 'ask' ? `
             <div class="notif-optin">
                 <svg class="i"><use href="#i-bell"/></svg>
-                <span><strong>Get alerts on this device</strong><small>Messages from friends, likes, comments and group calls</small></span>
+                <span><strong>Get alerts on this device</strong><small>Calls, messages, new posts and more — even when Cordial is closed</small></span>
                 <button class="chip accent" data-n-act="enable-alerts">Turn on</button>
+            </div>` : alerts === 'blocked' ? `
+            <div class="notif-optin quiet">
+                <span><small>Notifications are blocked for Cordial in this browser — allow them in your browser or phone settings (Settings → Notifications explains how)</small></span>
             </div>` : alerts === 'on' ? `
             <div class="notif-optin quiet">
                 <span><small>Device alerts are on</small></span>
@@ -578,8 +581,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Device alerts ----------
+    // 'on' · 'ask' (off, or never asked) · 'blocked' (the browser/OS refused) · 'unavailable' (no alerts in this browser)
     function alertStatus() {
-        if (!canAlert || Notification.permission === 'denied') return 'unavailable';
+        if (!canAlert) return 'unavailable';
+        if (Notification.permission === 'denied') return 'blocked';
         let on = false;
         try { on = localStorage.getItem('diaryAlerts') === '1'; } catch (e) {}
         return on && Notification.permission === 'granted' ? 'on' : 'ask';
@@ -594,7 +599,7 @@ document.addEventListener('DOMContentLoaded', () => {
             try { localStorage.setItem('diaryAlerts', '1'); } catch (e) {}
             const pushed = await subscribePush();
             showLocal('Cordial alerts are on', pushed
-                ? 'You’ll get friend requests and new followers here — even when Cordial is closed.'
+                ? 'You’ll get calls, messages and other activity here — even when Cordial is closed.'
                 : 'You’ll hear from friends and groups here while Cordial is open.');
         } else {
             app.showToast('Alerts were blocked — you can allow them in your browser settings');
@@ -619,7 +624,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Push (alerts while Cordial is closed) ----------
-    const PUSH_TYPES = new Set(['friend_request', 'friend_accepted', 'new_follower', 'live_started', 'mention', 'reply', 'new_login', 'call_started']);
+    const PUSH_TYPES = new Set(['friend_request', 'friend_accepted', 'new_follower', 'live_started', 'mention', 'reply', 'new_login', 'call_started',
+        'post_activity', 'comment_reply', 'tagged', 'announcement', 'space_live', 'entry_like', 'entry_reaction', 'post_like', 'reel_like', 'new_post',
+        'entry_comment', 'post_comment', 'reel_comment', 'missed_call', 'game_invite', 'game_turn', 'game_over', 'referral_joined', 'scheduled_published',
+        'scheduled_failed', 'support_reply', 'helpline_handoff']);
     const pushKey = () => (window.DIARY_CONFIG || {}).pushPublicKey;
     const pushSupported = () => canAlert && 'serviceWorker' in navigator && 'PushManager' in window && !!pushKey();
     const swReady = () => ('serviceWorker' in navigator && navigator.serviceWorker.controller !== undefined)
@@ -644,10 +652,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(pushKey()) });
             }
             const j = sub.toJSON();
+            const ua = navigator.userAgent;
+            const platform = /iPhone|iPad|iPod/.test(ua) ? 'ios' : /Android/.test(ua) ? 'android' : /Mac/.test(ua) ? 'macos' : /Windows/.test(ua) ? 'windows' : /Linux/.test(ua) ? 'linux' : 'other';
+            const browser = /Edg\//.test(ua) ? 'edge' : /OPR\//.test(ua) ? 'opera' : /SamsungBrowser/.test(ua) ? 'samsung' : /Firefox\//.test(ua) ? 'firefox' : /Chrome\//.test(ua) ? 'chrome' : /Safari\//.test(ua) ? 'safari' : 'other';
+            const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
             const { error } = await client.rpc('diary_save_push_subscription', {
-                p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_user_agent: navigator.userAgent.slice(0, 300)
+                p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_user_agent: ua.slice(0, 300),
+                p_device_id: I.deviceId ? I.deviceId() : null, p_platform: platform, p_browser: `${browser}${standalone ? '-app' : ''}`,
+                p_app_version: (document.querySelector('script[src^="notify.js"]') || {}).src ? new URL(document.querySelector('script[src^="notify.js"]').src).searchParams.get('v') : null,
+                p_permission: Notification.permission
             });
-            return !error;
+            if (error) {
+                // Older server: save the subscription the original way so alerts keep working
+                const { error: e2 } = await client.rpc('diary_save_push_subscription', {
+                    p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_user_agent: ua.slice(0, 300)
+                });
+                return !e2;
+            }
+            return true;
         } catch (e) {
             console.warn('[push] subscribe failed', e);
             return false;
@@ -684,6 +706,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Missed calls are logged by the callee's own device (call.js calls this)
     window.diaryNotify = {
         alertStatus, enableAlerts, disableAlerts, unsubscribePush, pushSupported, showLivePopup, close, navigate,
+        permission: () => (canAlert ? Notification.permission : 'unsupported'),
         logMissedCall(callerId) {
             if (!s.profile || !callerId) return;
             client.from('diary_notifications').insert({ actor: callerId, type: 'missed_call', data: {} }).then(() => {});

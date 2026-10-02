@@ -88,26 +88,36 @@ document.addEventListener('DOMContentLoaded', () => {
         app.render();
     }
 
-    // Notification categories you've turned off (the server drops those notifications — and their push alerts)
-    const NOTIF_CATS = [
+    // Notification categories you've turned off (the server skips those notifications — and their device alerts)
+    const NOTIF_MAIN = [
+        ['messages', 'i-chat', 'Messages', 'New direct messages (muted chats stay quiet)'],
+        ['calls', 'i-phone', 'Calls', 'Incoming and missed calls'],
+        ['posts', 'i-feed', 'New posts', 'From friends and people you follow — one alert per person at a time'],
+        ['people', 'i-user-plus', 'Friend requests & followers', 'Requests, accepted requests and new followers'],
+        ['live', 'i-live', 'Live', 'When someone you follow goes live or opens a space']
+    ];
+    const NOTIF_MORE = [
         ['reactions', 'i-thumb', 'Reactions', 'When people react to or repost your posts'],
         ['comments', 'i-chat', 'Comments', 'On your posts, and on posts you follow'],
         ['mentions', 'i-reply', 'Mentions & replies', 'When someone @mentions or replies to you'],
-        ['people', 'i-user-plus', 'Friends & followers', 'Friend requests, accepted requests, new followers'],
         ['groups', 'i-users', 'Group activity', 'New posts, people joining, group calls'],
-        ['live', 'i-live', 'Live videos', 'When someone you follow goes live'],
-        ['posts', 'i-feed', 'New posts', 'When a friend, or someone you follow, posts on the Feed'],
+        ['games', 'i-trophy', 'Trivia & games', 'Your turn, challenges and where you placed'],
         ['scheduled', 'i-clock', 'Scheduled posts', 'When your scheduled posts go out, or can’t'],
-        ['market', 'i-store', 'Marketplace', 'Requests and messages about books'],
-        ['calls', 'i-phone', 'Missed calls', 'Calls you didn’t answer'],
-        ['games', 'i-trophy', 'Trivia & games', 'Where you placed in the daily and weekly challenges']
+        ['market', 'i-store', 'Marketplace', 'Requests and messages about books']
     ];
-    const NP = { muted: null, loading: false };
+    const NP = { muted: null, previews: true, v2: false, loading: false };
     async function loadNotifPrefs() {
         if (NP.loading) return;
         NP.loading = true;
-        const { data } = await I.client.from('diary_notification_prefs').select('muted').maybeSingle();
+        // show_previews (and alerts for messages and calls while Cordial is closed) come with the push update on the server
+        let res = await I.client.from('diary_notification_prefs').select('muted, show_previews').maybeSingle();
+        NP.v2 = !res.error;
+        if (res.error) res = await I.client.from('diary_notification_prefs').select('muted').maybeSingle();
+        const data = res.data;
         NP.muted = new Set((data && data.muted) || []);
+        let local = '1';
+        try { local = localStorage.getItem('diaryPreviews') || '1'; } catch (e) {}
+        NP.previews = NP.v2 ? !data || data.show_previews !== false : local !== '0';
         NP.loading = false;
         if (app.state.view === 'settings') app.render();
     }
@@ -115,7 +125,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!NP.muted) return;
         const before = new Set(NP.muted);
         if (on) NP.muted.delete(cat); else NP.muted.add(cat);
-        const { error } = await I.client.from('diary_notification_prefs').upsert({ muted: [...NP.muted], updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+        const { error } = await I.client.from('diary_notification_prefs').upsert({ muted: [...NP.muted], ...(NP.v2 ? { show_previews: NP.previews } : {}), updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
         if (error) { NP.muted = before; app.showToast('Couldn’t save that'); }
         else app.showToast(on ? 'Turned on' : 'Turned off — you won’t get these');
         app.render();
@@ -466,15 +476,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 <section class="st-card">
                     <h3>Notifications</h3>
-                    ${row('i-bell', 'Alerts on this device', alerts === 'unavailable' ? 'Not available in this browser — on iPhone, add Cordial to your Home Screen first' : (window.diaryNotify && window.diaryNotify.pushSupported && window.diaryNotify.pushSupported() ? 'Friend requests, new followers and people going live — even when Cordial is closed; messages, likes and calls while it’s open' : 'Messages, likes, comments and calls while Cordial is open'),
-                        alerts === 'unavailable' ? '<span class="muted small">Off</span>' : toggle('st-alerts', alerts === 'on', 'Device alerts'))}
+                    ${(() => {
+                        const push = !!(window.diaryNotify && window.diaryNotify.pushSupported && window.diaryNotify.pushSupported());
+                        const state = alerts === 'on'
+                            ? (push ? (NP.v2 ? 'You’re receiving alerts for calls, messages and other activity based on your choices below — even when Cordial is closed.'
+                                    : 'You’re getting alerts based on your choices below. Friend requests, followers, new posts, likes, comments and live arrive even when Cordial is closed; messages and calls while it’s open.')
+                                : 'Alerts work while Cordial is open. This browser can’t receive them when it’s closed.')
+                            : alerts === 'blocked' ? 'Notifications are blocked for Cordial on this device.'
+                            : alerts === 'unavailable' ? 'Not available in this browser — on iPhone, add Cordial to your Home Screen first, then open it from there.'
+                            : NP.v2 ? 'Alerts on this device are off. Turn them on to get calls, messages, new posts and more — even when Cordial is closed.'
+                            : 'Alerts on this device are off. Turn them on to get friend requests, new posts, likes and more — even when Cordial is closed.';
+                        return `<div class="nt-master${alerts === 'on' ? ' on' : ''}">
+                            <span class="st-ic"><svg class="i"><use href="#i-bell"/></svg></span>
+                            <span class="st-text"><strong>Alerts on this device</strong><small id="nt-state" aria-live="polite">${state}</small></span>
+                            ${alerts === 'blocked' || alerts === 'unavailable' ? '<span class="nt-off">Off</span>' : toggle('st-alerts', alerts === 'on', 'Alerts on this device')}
+                        </div>
+                        ${alerts === 'blocked' ? `<div class="nt-help" role="note"><strong>To turn them back on</strong>
+                            <span>${/iPhone|iPad/.test(navigator.userAgent) ? 'Open iPhone Settings → Notifications → Cordial, and allow notifications.' : /Android/.test(navigator.userAgent) ? 'Tap the lock or settings icon next to the address bar → Permissions → Notifications → Allow. (Installed app: Android Settings → Apps → Cordial → Notifications.)' : 'Click the lock icon next to the address bar → Notifications → Allow, then reload Cordial.'}</span>
+                            <button class="st-btn" data-action="st-reload">I’ve allowed them — reload</button></div>` : ''}`;
+                    })()}
                     ${signedIn() ? (() => {
                         if (!NP.muted) { loadNotifPrefs(); return '<p class="muted small st-pad">Loading your notification choices…</p>'; }
-                        return `<h4 class="st-sub">What to notify you about</h4>${NOTIF_CATS.map(([cat, icon, title, sub]) => row(icon, title, sub, `
-                            <label class="st-switch share-toggle" aria-label="${title}">
-                                <input type="checkbox" data-action="st-notif" data-cat="${cat}"${NP.muted.has(cat) ? '' : ' checked'}>
-                                <span class="switch" aria-hidden="true"></span>
-                            </label>`)).join('')}<p class="muted small st-pad">New sign-ins to your account are always shown.</p>`;
+                        const sw = (cat, title) => `<label class="st-switch share-toggle" aria-label="${title}"><input type="checkbox" data-action="st-notif" data-cat="${cat}"${NP.muted.has(cat) ? '' : ' checked'}><span class="switch" aria-hidden="true"></span></label>`;
+                        const line = ([cat, icon, title, sub]) => `<div class="nt-row"><span class="nt-ic"><svg class="i"><use href="#${icon}"/></svg></span><span class="nt-text"><strong>${title}</strong><small>${sub}</small></span>${sw(cat, title)}</div>`;
+                        return `<div class="nt-cats${alerts === 'on' ? '' : ' dim'}">
+                            <h4 class="nt-h">Alert me about</h4>
+                            ${NOTIF_MAIN.map(line).join('')}
+                            <details class="nt-more"><summary>More notification settings</summary>
+                                <div class="nt-row"><span class="nt-ic"><svg class="i"><use href="#i-eye"/></svg></span><span class="nt-text"><strong>Message previews</strong><small>Show what a message says in the alert, not just who it’s from</small></span>
+                                    <label class="st-switch share-toggle" aria-label="Message previews"><input type="checkbox" data-action="st-previews"${NP.previews ? ' checked' : ''}><span class="switch" aria-hidden="true"></span></label></div>
+                                ${NOTIF_MORE.map(line).join('')}
+                            </details>
+                            <p class="muted small nt-foot">${alerts === 'on' ? 'These choices also apply to your other devices.' : 'Your choices are saved and apply once alerts are on.'} New sign-ins to your account are always shown.</p>
+                        </div>`;
                     })() : ''}
                 </section>
 
@@ -719,6 +753,12 @@ document.addEventListener('DOMContentLoaded', () => {
             app.render();
         } else if (a === 'st-notif') {
             setNotifCat(e.target.dataset.cat, e.target.checked);
+        } else if (a === 'st-previews') {
+            NP.previews = e.target.checked;
+            write('diaryPreviews', NP.previews ? '1' : '0');
+            const { error } = NP.v2 ? await I.client.from('diary_notification_prefs').upsert({ muted: [...(NP.muted || [])], show_previews: NP.previews, updated_at: new Date().toISOString() }, { onConflict: 'user_id' }) : { error: null };
+            if (error) { NP.previews = !NP.previews; app.showToast('Couldn’t save that'); app.render(); }
+            else app.showToast(NP.previews ? 'Alerts show what messages say' : 'Alerts only say who messaged you');
         } else if (a === 'st-alerts') {
             if (e.target.checked && window.diaryNotify && window.diaryNotify.enableAlerts) await window.diaryNotify.enableAlerts();
             else if (!e.target.checked) {

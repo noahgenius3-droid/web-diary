@@ -219,6 +219,44 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Ringing ----------
+    const ringEnd = (topic, status) => client.rpc('diary_call_ring_end', { p_topic: topic, p_status: status }).then(() => {}, () => {});
+    // Does the server record rings (and missed calls) yet? Until it does, this device logs its own missed calls.
+    let serverRings = null;
+    const checkServerRings = async () => {
+        if (serverRings !== null || !me()) return serverRings;
+        const { error } = await client.rpc('diary_call_invite_get', { p_invite: '00000000-0000-0000-0000-000000000000' });
+        serverRings = !error;
+        return serverRings;
+    };
+
+    // Opened from a call alert (/?ring=<id>, with &answer=1 from the Answer button): ring here if it still is
+    async function openFromAlert(inviteId, answerNow) {
+        for (let i = 0; i < 40 && !me(); i++) await new Promise(r => setTimeout(r, 250)); // wait for sign-in
+        if (!me()) return;
+        const { data } = await client.rpc('diary_call_invite_get', { p_invite: inviteId });
+        if (!data) return;
+        if (data.status !== 'ringing') {
+            app.showToast(data.status === 'missed' ? `Missed call from ${data.name || 'someone'}` : 'That call has ended');
+            return;
+        }
+        if (call && call.topic === data.topic) return;
+        onRing({ from: data.from, name: data.name, avatar_path: data.avatar_path, topic: data.topic, video: !!data.video });
+        if (answerNow) answer(false);
+    }
+    function ringFromUrl(href) {
+        const url = new URL(href, location.origin);
+        const id = url.searchParams.get('ring');
+        if (!id || !/^[0-9a-f-]{36}$/i.test(id)) return false;
+        openFromAlert(id, url.searchParams.get('answer') === '1');
+        return true;
+    }
+    if (ringFromUrl(location.href)) history.replaceState(history.state, '', location.pathname + location.hash);
+    // Cordial already open: the service worker asks it to go to the alert's address
+    if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', e => {
+        const d = e.data || {};
+        if (d.type === 'open-url' && d.url && ringFromUrl(d.url) && e.ports && e.ports[0]) e.ports[0].postMessage('ok');
+    });
+
     setInterval(() => {
         const id = me();
         if (id && (!ringChannel || ringChannel.topic !== `realtime:diary_ring:${id}`)) listenForRings(id);
@@ -297,8 +335,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!incoming) return;
         clearTimeout(incoming.timer);
         if (missed) {
+            const from = incoming.group ? null : incoming.from;
+            checkServerRings().then(server => { if (!server && from && window.diaryNotify) window.diaryNotify.logMissedCall(from); });
             app.showToast(`Missed ${incoming.group ? `${incoming.group} call` : incoming.video ? 'video call' : 'call'} from ${incoming.name}`);
-            if (!incoming.group && window.diaryNotify) window.diaryNotify.logMissedCall(incoming.from);
             logCall({ direction: 'in', status: 'missed', peer: incoming.group ? null : incoming.from, communityId: communityOf(incoming.topic), title: incoming.group || incoming.name, video: incoming.video });
         }
         incoming = null;
@@ -310,6 +349,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!incoming) return;
         const p = incoming;
         dismissIncoming(false);
+        if (!p.group) ringEnd(p.topic, 'answered');
         if (call) {
             if (holdCurrent) hold();
             else leave(true);
@@ -324,7 +364,7 @@ document.addEventListener('DOMContentLoaded', () => {
     $('incoming-hold').addEventListener('click', () => answer(false, true));
     $('incoming-decline').addEventListener('click', () => {
         if (!incoming) return;
-        if (!incoming.group) ring(incoming.from, 'decline', { from: me() });
+        if (!incoming.group) { ring(incoming.from, 'decline', { from: me() }); ringEnd(incoming.topic, 'declined'); }
         logCall({ direction: 'in', status: 'declined', peer: incoming.group ? null : incoming.from, communityId: communityOf(incoming.topic), title: incoming.group || incoming.name, video: incoming.video });
         dismissIncoming(false);
     });
@@ -345,6 +385,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 setTimeout(() => leave(true), 1400);
             }
         }, RING_TIMEOUT);
+        // The server-side ring: reaches their phone as an alert even when Cordial is closed there
+        client.rpc('diary_call_ring', { p_callee: person.id, p_topic: call.topic, p_video: !!opts.video }).then(() => {}, () => {});
         try {
             await ring(person.id, 'ring', { from: me(), name: s.profile.display_name, avatar_path: s.profile.avatar_path || null, topic: call.topic, video: !!opts.video });
         } catch (e) {
@@ -684,6 +726,7 @@ document.addEventListener('DOMContentLoaded', () => {
         clearTimeout(c.ringTimer);
         stopRingback();
         if (notify && c.ringing) ring(c.ringing, 'cancel', { from: me() }).catch(() => {});
+        if (c.ringing && !c.started && c.topic && c.topic.startsWith('diary_call:d:')) ringEnd(c.topic, 'missed');
         c.peers.forEach(p => { p.pc.close(); if (p.audio) p.audio.remove(); });
         c.local.getTracks().forEach(t => t.stop());
         if (c.cam) c.cam.stop();

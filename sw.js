@@ -4,7 +4,11 @@
 //
 // Strategy: when online, always fetch fresh (so a new deploy shows up right away) and refresh the saved copy;
 // when the network fails, answer from the saved copy. Supabase data (posts, messages…) is never cached here.
-const CACHE = 'cordial-shell-v113';
+// The app's public Supabase settings (used by the lock-screen "Decline" on calls). Scripts can only be
+// imported while the worker installs, so this happens here, once.
+try { self.window = self; importScripts('/config.js'); } catch (e) { /* calls can still be declined in the app */ }
+
+const CACHE = 'cordial-shell-v114';
 const SHELL = [
     '/', '/index.html', '/manifest.webmanifest',
     '/style.css', '/photoedit.css',
@@ -118,30 +122,68 @@ self.addEventListener('fetch', event => {
     // Everything else (Supabase data, uploads, video) goes straight to the network
 });
 
-// ---------- Push notifications (friend requests, new followers…) ----------
-// The server sends { title, body, url, tag, icon }. If Cordial is open and in front, the app already
-// shows it as a toast, so the lock-screen alert is skipped.
+// ---------- Push notifications (calls, messages, posts, people, live…) ----------
+// The server sends { title, body, url, tag, icon, type, actions?, requireInteraction?, decline? }.
+// While Cordial is open and in front, the app already shows these itself (realtime), so the system alert is
+// skipped — except "Missed call", which replaces a ringing alert that may still be on screen.
+// The same tag replaces an earlier alert (one per conversation / caller / poster), so nothing piles up.
 self.addEventListener('push', event => {
     let data = {};
     try { data = event.data ? event.data.json() : {}; } catch (e) { data = { body: event.data && event.data.text() }; }
     event.waitUntil((async () => {
         const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-        if (windows.some(w => w.focused && w.visibilityState === 'visible')) return;
+        const inFront = windows.some(w => w.focused && w.visibilityState === 'visible');
+        if (inFront && data.type !== 'missed_call') {
+            // Let the open app know (it may want to refresh), without a system alert
+            windows.forEach(w => w.postMessage({ type: 'push', data }));
+            return;
+        }
+        const call = data.type === 'call';
         await self.registration.showNotification(data.title || 'Cordial', {
             body: data.body || '',
             icon: data.icon || '/icons/icon-192.png',
             badge: data.badge || '/icons/icon-192.png',
             tag: data.tag || data.id || 'cordial',
-            renotify: true,
-            data: { url: data.url || '/' }
+            renotify: data.renotify !== false,
+            requireInteraction: !!data.requireInteraction,
+            actions: Array.isArray(data.actions) ? data.actions.slice(0, 2) : [],
+            vibrate: data.vibrate || (call ? [600, 300, 600, 300, 600] : [120]),
+            timestamp: data.timestamp || Date.now(),
+            silent: false,
+            data: { url: data.url || '/', type: data.type || '', decline: data.decline || null }
         });
+        // A ring only lasts so long: if nobody answered, tidy it away (the server sends "Missed call" separately)
+        if (call) setTimeout(async () => {
+            const open = await self.registration.getNotifications({ tag: data.tag });
+            open.forEach(n => { if (n.data && n.data.type === 'call') n.close(); });
+        }, 45000);
     })());
 });
 
-// Tapping the alert opens Cordial on the right page (reusing an open window when there is one)
+// Supabase details for the lock-screen "Decline" are loaded at the top of this file (config.js)
+const cordialConfig = () => self.DIARY_CONFIG || null;
+
+// Tapping an alert opens Cordial on the right page (reusing an open window when there is one)
 self.addEventListener('notificationclick', event => {
-    event.notification.close();
-    const target = new URL((event.notification.data && event.notification.data.url) || '/', self.location.origin).href;
+    const n = event.notification;
+    const d = n.data || {};
+    n.close();
+    // Decline a call right from the lock screen: no need to open Cordial
+    if (event.action === 'decline' && d.decline) {
+        event.waitUntil((async () => {
+            const cfg = cordialConfig();
+            if (!cfg) return;
+            await fetch(`${cfg.supabaseUrl}/rest/v1/rpc/diary_call_decline`, {
+                method: 'POST',
+                headers: { apikey: cfg.supabaseKey, Authorization: `Bearer ${cfg.supabaseKey}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ p_invite: d.decline.invite, p_token: d.decline.token })
+            }).catch(() => {});
+        })());
+        return;
+    }
+    let url = d.url || '/';
+    if (event.action === 'answer') url += (url.includes('?') ? '&' : '?') + 'answer=1';
+    const target = new URL(url, self.location.origin).href;
     event.waitUntil((async () => {
         const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
         const open = windows.find(w => new URL(w.url).origin === self.location.origin);
@@ -160,3 +202,13 @@ self.addEventListener('notificationclick', event => {
         return self.clients.openWindow(target);
     })());
 });
+
+// The browser renewed this device's push address: subscribe again with the same key. Cordial saves the new
+// address the next time it opens (it can't sign in from here).
+self.addEventListener('pushsubscriptionchange', event => {
+    const old = event.oldSubscription;
+    const key = old && old.options && old.options.applicationServerKey;
+    if (!key) return;
+    event.waitUntil(self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }).catch(() => {}));
+});
+
