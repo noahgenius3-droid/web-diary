@@ -16492,3 +16492,24 @@ body.chat-open .alert-ask { bottom: calc(92px + env(safe-area-inset-bottom, 0px)
 .pf-v-perks small { display: block; margin-top: 2px; font-size: 0.82rem; line-height: 1.45; color: var(--text-muted); }
 .pf-v-foot { margin: 12px 0 0; }
 .vtick { color: var(--verified); }
+
+/* ---------- Profile header: name always starts below the cover; buttons keep their full labels ---------- */
+/* Only the photo overlaps the cover. Name, handle and badge sit under the cover edge, so a taller
+   block (verified badge, long names) grows downward instead of climbing onto the cover. */
+.pf-head .pf-id { --pf-overlap: 46px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 0 16px; }
+.pf-head .pf-photo { grid-row: 1 / span 2; }
+.pf-head .pf-names { padding: calc(var(--pf-overlap) + 10px) 0 0; margin: 0 !important; }
+.pf-head .pf-actions { margin-top: calc(var(--pf-overlap) + 10px); padding: 0; width: auto; }
+.pf-head .pf-actions .pf-btn:not(.icon) { flex: none; min-width: 0; }
+.pf-head .pf-verified { margin-top: 8px; }
+/* Mid widths: actions take their own full row under the name so labels never truncate */
+@media (max-width: 760px) {
+    .pf-head .pf-actions { grid-column: 1 / -1; margin-top: 14px; }
+    .pf-head .pf-actions .pf-btn:not(.icon) { flex: 1 1 0; }
+}
+/* Phones: photo, then name block, then actions, all left-aligned on one edge */
+@media (max-width: 560px) {
+    .pf-head .pf-id { --pf-overlap: 40px; grid-template-columns: minmax(0, 1fr); }
+    .pf-head .pf-photo { grid-row: auto; justify-self: start; }
+    .pf-head .pf-names { padding-top: 10px; }
+}
