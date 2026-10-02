@@ -8,7 +8,7 @@
 // imported while the worker installs, so this happens here, once.
 try { self.window = self; importScripts('/config.js'); } catch (e) { /* calls can still be declined in the app */ }
 
-const CACHE = 'cordial-shell-v120';
+const CACHE = 'cordial-shell-v121';
 const SHELL = [
     '/', '/index.html', '/manifest.webmanifest',
     '/style.css', '/photoedit.css',
@@ -40,19 +40,33 @@ self.addEventListener('activate', event => {
     })());
 });
 
+// Fresh from the network when it answers in time; on slow or stalled mobile data, the saved copy after a few
+// seconds instead of a blank screen (the fresh one still arrives and is saved for next time)
+const NETWORK_WAIT = 3500;
 async function networkFirst(request, fallbackUrl) {
     const cache = await caches.open(CACHE);
-    try {
-        const fresh = await fetch(request);
+    const savedCopy = async () => (await cache.match(request, { ignoreSearch: true }))
+        || (fallbackUrl && (await cache.match(fallbackUrl))) || null;
+    const network = fetch(request).then(fresh => {
         if (fresh && fresh.ok && fresh.type !== 'opaqueredirect') {
-            // Save under the plain address too, so "?v=29" and "?v=30" share one offline copy
             const url = new URL(request.url);
-            cache.put(url.origin === self.location.origin ? url.pathname : request, fresh.clone());
+            const own = url.origin === self.location.origin;
+            // The exact version ("script.js?v=147"), so a slow load never mixes old and new files…
+            if (own && url.search) cache.put(request, fresh.clone()).catch(() => {});
+            // …and under the plain address, so the app still opens offline whatever the version
+            cache.put(own ? url.pathname : request, fresh.clone()).catch(() => {});
         }
         return fresh;
+    });
+    const slow = new Promise(resolve => setTimeout(() => resolve('slow'), NETWORK_WAIT));
+    try {
+        const first = await Promise.race([network, slow]);
+        if (first !== 'slow') return first;
+        // Slow network: the page itself from the saved copy; its files only in the exact version it asks for
+        const saved = request.mode === 'navigate' ? await savedCopy() : await cache.match(request);
+        return saved || await network; // nothing suitable saved: keep waiting for the network
     } catch (e) {
-        const saved = await cache.match(request, { ignoreSearch: true })
-            || (fallbackUrl && (await cache.match(fallbackUrl)));
+        const saved = await savedCopy();
         if (saved) return saved;
         throw e;
     }

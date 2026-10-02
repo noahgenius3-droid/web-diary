@@ -18,11 +18,11 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,400..600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=147">
-    <link rel="stylesheet" href="photoedit.css?v=147">
-    <link rel="stylesheet" href="speak.css?v=147">
-    <link rel="stylesheet" href="zoom.css?v=147">
-    <link rel="stylesheet" href="location.css?v=147">
+    <link rel="stylesheet" href="style.css?v=148">
+    <link rel="stylesheet" href="photoedit.css?v=148">
+    <link rel="stylesheet" href="speak.css?v=148">
+    <link rel="stylesheet" href="zoom.css?v=148">
+    <link rel="stylesheet" href="location.css?v=148">
     <script>
         // Apply saved theme before paint to avoid a flash
         try {
@@ -71,6 +71,32 @@
         <span class="sp-progress"><i></i></span>
     </div>
     <script>window.__splashAt = performance.now(); window.__fromRing = /[?&]ring=/.test(location.search);</script>
+    <script>
+        // Safety net: if Cordial hasn't started 10s after opening (a stalled download on mobile data, a broken
+        // saved copy), offer a clean reload instead of leaving a blank screen. Plain old JavaScript on purpose.
+        setTimeout(function () {
+            if (window.diaryApp || document.getElementById('boot-rescue')) return;
+            var box = document.createElement('div');
+            box.id = 'boot-rescue';
+            box.setAttribute('role', 'alert');
+            box.style.cssText = 'position:fixed;inset:0;z-index:20000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center;background:#09090b;color:#fafafa;font:16px/1.5 system-ui,-apple-system,sans-serif';
+            box.innerHTML = '<strong style="font-size:1.2rem">Cordial is taking too long to open</strong><span style="opacity:.75;max-width:320px">Your connection may be slow. Reload to try again — your notes are safe on this device.</span><button type="button" style="min-height:48px;padding:0 26px;border:0;border-radius:999px;background:#6366f1;color:#fff;font:inherit;font-weight:700">Reload Cordial</button>';
+            box.querySelector('button').onclick = function () {
+                // Clear the saved app files (not your notes) so the next load is completely fresh
+                var done = function () { location.reload(); };
+                try {
+                    var jobs = [];
+                    if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); }));
+                    if (window.caches) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.filter(function (k) { return k.indexOf('cordial-') === 0; }).map(function (k) { return caches.delete(k); })); }));
+                    Promise.all(jobs).then(done, done);
+                    setTimeout(done, 3000);
+                } catch (e) { done(); }
+            };
+            document.body ? document.body.appendChild(box) : document.documentElement.appendChild(box);
+            // It got there after all: step aside
+            var watch = setInterval(function () { if (window.diaryApp) { clearInterval(watch); box.remove(); } }, 500);
+        }, 10000);
+    </script>
 
     <!-- Icon sprite -->
     <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -829,47 +855,47 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
-    <script src="config.js?v=147"></script>
-    <script src="rich.js?v=147"></script>
-    <script src="media.js?v=147"></script>
-    <script src="wallpaper.js?v=147"></script>
-    <script src="dilute.js?v=147"></script>
-    <script src="script.js?v=147"></script>
-    <script src="social.js?v=147"></script>
-    <script src="sync.js?v=147"></script>
-    <script src="stories.js?v=147"></script>
-    <script src="library.js?v=147"></script>
-    <script src="market.js?v=147"></script>
-    <script src="community.js?v=147"></script>
-    <script src="groupchat.js?v=147"></script>
-    <script src="live.js?v=147"></script>
-    <script src="explore.js?v=147"></script>
-    <script src="call.js?v=147"></script>
-    <script src="profile.js?v=147"></script>
-    <script src="invite.js?v=147"></script>
-    <script src="mention.js?v=147"></script>
-    <script src="spaces.js?v=147"></script>
-    <script src="notemedia.js?v=147"></script>
-    <script src="noteshare.js?v=147"></script>
-    <script src="noteslides.js?v=147"></script>
-    <script src="audiolib.js?v=147"></script>
-    <script src="sound.js?v=147"></script>
-    <script src="mediaeditor.js?v=147"></script>
-    <script src="support.js?v=147"></script>
-    <script src="helpline.js?v=147"></script>
-    <script src="schedule.js?v=147"></script>
-    <script src="play.js?v=147"></script>
-    <script src="games.js?v=147"></script>
-    <script src="chattools.js?v=147"></script>
-    <script src="safety.js?v=147"></script>
-    <script src="notify.js?v=147"></script>
-    <script src="settings.js?v=147"></script>
-    <script src="transcribe.js?v=147"></script>
-    <script src="ai.js?v=147"></script>
-    <script src="photoedit.js?v=147"></script>
-    <script src="speak.js?v=147"></script>
-    <script src="zoom.js?v=147"></script>
-    <script src="location.js?v=147"></script>
+    <script src="config.js?v=148"></script>
+    <script src="rich.js?v=148"></script>
+    <script src="media.js?v=148"></script>
+    <script src="wallpaper.js?v=148"></script>
+    <script src="dilute.js?v=148"></script>
+    <script src="script.js?v=148"></script>
+    <script src="social.js?v=148"></script>
+    <script src="sync.js?v=148"></script>
+    <script src="stories.js?v=148"></script>
+    <script src="library.js?v=148"></script>
+    <script src="market.js?v=148"></script>
+    <script src="community.js?v=148"></script>
+    <script src="groupchat.js?v=148"></script>
+    <script src="live.js?v=148"></script>
+    <script src="explore.js?v=148"></script>
+    <script src="call.js?v=148"></script>
+    <script src="profile.js?v=148"></script>
+    <script src="invite.js?v=148"></script>
+    <script src="mention.js?v=148"></script>
+    <script src="spaces.js?v=148"></script>
+    <script src="notemedia.js?v=148"></script>
+    <script src="noteshare.js?v=148"></script>
+    <script src="noteslides.js?v=148"></script>
+    <script src="audiolib.js?v=148"></script>
+    <script src="sound.js?v=148"></script>
+    <script src="mediaeditor.js?v=148"></script>
+    <script src="support.js?v=148"></script>
+    <script src="helpline.js?v=148"></script>
+    <script src="schedule.js?v=148"></script>
+    <script src="play.js?v=148"></script>
+    <script src="games.js?v=148"></script>
+    <script src="chattools.js?v=148"></script>
+    <script src="safety.js?v=148"></script>
+    <script src="notify.js?v=148"></script>
+    <script src="settings.js?v=148"></script>
+    <script src="transcribe.js?v=148"></script>
+    <script src="ai.js?v=148"></script>
+    <script src="photoedit.js?v=148"></script>
+    <script src="speak.js?v=148"></script>
+    <script src="zoom.js?v=148"></script>
+    <script src="location.js?v=148"></script>
     <script>
         // Lift the splash as soon as the first screen is drawn: at least a moment (no flash), never more than a second.
         // Opened from a call alert: straight to the ringing screen.
