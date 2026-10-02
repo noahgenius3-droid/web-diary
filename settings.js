@@ -860,9 +860,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             else app.showToast(NP.previews ? 'Alerts show what messages say' : 'Alerts only say who messaged you');
         } else if (a === 'st-alerts') {
-            if (e.target.checked && window.diaryNotify && window.diaryNotify.enableAlerts) await window.diaryNotify.enableAlerts();
+            if (e.target.checked && window.diaryNotify && window.diaryNotify.enableAlerts) { write('diaryAlerts', null); await window.diaryNotify.enableAlerts(); }
             else if (!e.target.checked) {
-                write('diaryAlerts', null);
                 if (window.diaryNotify && window.diaryNotify.disableAlerts) await window.diaryNotify.disableAlerts();
             }
             app.render();

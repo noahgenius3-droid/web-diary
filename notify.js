@@ -63,6 +63,52 @@ document.addEventListener('DOMContentLoaded', () => {
                 payload => onNew(payload.new))
             .subscribe();
         if (alertStatus() === 'on') subscribePush();
+        else setTimeout(askForAlerts, 4000);
+    }
+
+    // Once after signing in (and again a few days after "Not now"): calls and messages only reach a closed
+    // Cordial on devices where alerts are on, so ask in plain words instead of leaving it to Settings
+    function askForAlerts() {
+        if (!s.profile || document.querySelector('.alert-ask') || alertStatus() !== 'ask') return;
+        let last = 0;
+        try { last = Number(localStorage.getItem('diaryAlertAsked') || 0); } catch (e) {}
+        if (Date.now() - last < 3 * 86400000) return;
+        const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+        const installed = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+        const needsInstall = ios && !installed && !pushSupported();
+        if (!needsInstall && !pushSupported()) return;
+        const card = document.createElement('div');
+        card.className = 'alert-ask';
+        card.setAttribute('role', 'dialog');
+        card.setAttribute('aria-labelledby', 'alert-ask-title');
+        card.innerHTML = `
+            <span class="alert-ask-ic" aria-hidden="true"><svg class="i"><use href="#i-phone"/></svg></span>
+            <div class="alert-ask-text">
+                <strong id="alert-ask-title">Never miss a call</strong>
+                <small>${needsInstall
+                    ? 'To get calls and messages when Cordial is closed, tap Share, then “Add to Home Screen”, and open Cordial from there.'
+                    : 'Get calls and messages on this device, even when Cordial is closed.'}</small>
+            </div>
+            <div class="alert-ask-actions">
+                <button type="button" class="link-btn" data-ask="later">${needsInstall ? 'Got it' : 'Not now'}</button>
+                ${needsInstall ? '' : '<button type="button" class="primary-btn" data-ask="on">Turn on</button>'}
+            </div>`;
+        const close = () => {
+            try { localStorage.setItem('diaryAlertAsked', String(Date.now())); } catch (e) {}
+            card.classList.add('leaving');
+            setTimeout(() => card.remove(), 200);
+        };
+        card.addEventListener('click', async e => {
+            const b = e.target.closest('[data-ask]');
+            if (!b) return;
+            close();
+            if (b.dataset.ask === 'on') {
+                try { localStorage.removeItem('diaryAlerts'); } catch (err) {}
+                await enableAlerts();
+                if (app.state.view === 'settings') app.render();
+            }
+        });
+        document.body.appendChild(card);
     }
 
     function stop() {
@@ -585,9 +631,9 @@ document.addEventListener('DOMContentLoaded', () => {
     function alertStatus() {
         if (!canAlert) return 'unavailable';
         if (Notification.permission === 'denied') return 'blocked';
-        let on = false;
-        try { on = localStorage.getItem('diaryAlerts') === '1'; } catch (e) {}
-        return on && Notification.permission === 'granted' ? 'on' : 'ask';
+        let off = false;
+        try { off = localStorage.getItem('diaryAlerts') === '0'; } catch (e) {}
+        return !off && Notification.permission === 'granted' ? 'on' : 'ask';
     }
 
     async function enableAlerts() {
@@ -608,7 +654,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function disableAlerts() {
-        try { localStorage.removeItem('diaryAlerts'); } catch (e) {}
+        try { localStorage.setItem('diaryAlerts', '0'); } catch (e) {}
         await unsubscribePush();
         paintPanel();
     }

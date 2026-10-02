@@ -8,7 +8,7 @@
 // imported while the worker installs, so this happens here, once.
 try { self.window = self; importScripts('/config.js'); } catch (e) { /* calls can still be declined in the app */ }
 
-const CACHE = 'cordial-shell-v115';
+const CACHE = 'cordial-shell-v116';
 const SHELL = [
     '/', '/index.html', '/manifest.webmanifest',
     '/style.css', '/photoedit.css',
@@ -168,6 +168,15 @@ self.addEventListener('notificationclick', event => {
     const n = event.notification;
     const d = n.data || {};
     n.close();
+    // Hang up (or cancel) from the "On a call" alert: the open app ends the call
+    if (d.type === 'ongoing') {
+        event.waitUntil((async () => {
+            const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+            if (event.action === 'hangup') windows.forEach(w => w.postMessage({ type: 'hangup' }));
+            else if (windows[0]) await windows[0].focus().catch(() => {});
+        })());
+        return;
+    }
     // Decline a call right from the lock screen: no need to open Cordial
     if (event.action === 'decline' && d.decline) {
         event.waitUntil((async () => {

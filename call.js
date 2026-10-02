@@ -235,11 +235,27 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!me() || me() !== r.e) return;
         const known = (s.friends || []).find(f => f.id === r.c);
         const who = known || (await client.from('diary_profiles').select('id, display_name, avatar_path').eq('id', r.c).maybeSingle()).data || {};
-        if (Date.now() > r.x) return app.showToast(`Missed call from ${who.display_name || 'someone'}`);
+        const missed = () => app.showToast(`Missed call from ${who.display_name || 'someone'}`);
+        if (Date.now() > r.x) return missed();
         if (call && call.topic === r.t) return;
+        if (!(await stillRinging(r.c, r.t))) return missed();
         onRing({ from: r.c, name: who.display_name || 'Someone', avatar_path: who.avatar_path || null, topic: r.t, video: !!r.v, srv: true });
         if (answerNow) answer(false);
     }
+    // Ask the caller "still ringing?" over realtime; they answer within a moment if they are
+    const pongs = new Map(); // topic -> resolve
+    async function stillRinging(caller, topic) {
+        for (let i = 0; i < 20 && !(ringChannel && ringChannel.state === 'joined'); i++) await new Promise(r => setTimeout(r, 250));
+        const answered = new Promise(resolve => {
+            pongs.set(topic, resolve);
+            setTimeout(() => resolve(false), 3000);
+        });
+        ring(caller, 'ping', { from: me(), topic }).catch(() => {});
+        const ok = await answered;
+        pongs.delete(topic);
+        return ok;
+    }
+
     function ringFromUrl(href) {
         const url = new URL(href, location.origin);
         const token = url.searchParams.get('ring');
@@ -267,6 +283,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (ringChannel) client.removeChannel(ringChannel);
         ringChannel = client.channel(`diary_ring:${id}`, { config: { private: true } })
             .on('broadcast', { event: 'ring' }, ({ payload }) => onRing(payload))
+            .on('broadcast', { event: 'ping' }, ({ payload }) => {
+                // They opened Cordial from our call alert: tell them we're still calling
+                if (call && call.ringing === payload.from && call.topic === payload.topic) ring(payload.from, 'pong', { topic: payload.topic }).catch(() => {});
+            })
+            .on('broadcast', { event: 'pong' }, ({ payload }) => {
+                const resolve = pongs.get(payload.topic);
+                if (resolve) resolve(true);
+            })
             .on('broadcast', { event: 'cancel' }, ({ payload }) => {
                 if (incoming && incoming.from === payload.from) dismissIncoming(true);
             })
@@ -606,7 +630,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 const stream = e.streams[0] || new MediaStream([track]);
                 peer.audio.srcObject = stream;
-                peer.audio.play().catch(() => {});
+                peer.audio.play().catch(e => { if (e && e.name === 'NotAllowedError') askForSoundTap(); });
                 setupMeter(id, stream);
                 if (call && call.recorder) call.recorder.addStream(stream);
             } else {
@@ -720,6 +744,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const wasActive = c === call;
         if (wasActive) call = null;
         else if (c === held) held = null;
+        if (wasActive) {
+            ongoingAlert(false);
+            document.getElementById('call-sound-tap')?.remove();
+        }
         if (c.recorder) stopRecording(c);
         logCall({ ...c.log, status: c.started ? 'answered' : (c.endStatus || (c.log.direction === 'out' && c.person ? 'cancelled' : 'answered')), title: c.title, communityId: c.communityId || c.log.communityId, started_at: new Date(c.started || Date.now()).toISOString(), duration: c.started ? (Date.now() - c.started) / 1000 : 0, participants: c.maxPeople || 2 });
         clearInterval(c.tick);
@@ -1721,6 +1749,42 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     let ringTimer = null;
+
+    function askForSoundTap() {
+        if (!call || document.getElementById('call-sound-tap')) return;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.id = 'call-sound-tap';
+        btn.className = 'call-sound-tap';
+        btn.innerHTML = `<svg class="i" aria-hidden="true"><use href="#i-volume"/></svg>Tap to hear ${esc(call.title || 'the call')}`;
+        btn.addEventListener('click', () => {
+            unlockSound();
+            document.querySelectorAll('#call-audio audio').forEach(a => a.play().catch(() => {}));
+            btn.remove();
+        });
+        $('call-panel').append(btn);
+    }
+
+    // ---------- On a call with Cordial in the background: an alert with "Hang up" ----------
+    const ONGOING = 'cordial-ongoing-call';
+    async function ongoingAlert(show) {
+        if (!('serviceWorker' in navigator) || !window.Notification || Notification.permission !== 'granted') return;
+        const reg = await navigator.serviceWorker.getRegistration().catch(() => null);
+        if (!reg) return;
+        (await reg.getNotifications({ tag: ONGOING }).catch(() => [])).forEach(n => n.close());
+        if (!show || !call) return;
+        const who = call.title || 'someone';
+        reg.showNotification(call.ringing ? `Calling ${who}…` : `On a call with ${who}`, {
+            body: 'Tap to go back to the call', tag: ONGOING, renotify: false, silent: true, requireInteraction: true,
+            icon: '/icons/icon-192.png', badge: '/icons/icon-192.png',
+            actions: [{ action: 'hangup', title: call.ringing ? 'Cancel' : 'Hang up' }],
+            data: { type: 'ongoing', url: location.pathname + location.hash }
+        }).catch(() => {});
+    }
+    document.addEventListener('visibilitychange', () => ongoingAlert(document.visibilityState === 'hidden' && !!call));
+    if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', e => {
+        if ((e.data || {}).type === 'hangup' && call) leave(true);
+    });
 
     function unlockSound() {
         try {

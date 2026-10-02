@@ -508,7 +508,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Keep a copy of the app on the device so it opens without internet (https or localhost only)
     if ('serviceWorker' in navigator && (location.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(location.hostname))) {
-        window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+        window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').then(reg => {
+            // Look for a new version whenever Cordial comes back to the front, and every half hour
+            const check = () => reg.update().catch(() => {});
+            document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
+            setInterval(check, 30 * 60000);
+        }).catch(() => {}));
+        // A new version took over: reload while Cordial is in the background, when nothing would be lost
+        const hadController = !!navigator.serviceWorker.controller;
+        let updateReady = false;
+        // Never mid-call, and never with a sheet open (a half-written post or message stays put)
+        const quiet = () => !document.querySelector('dialog[open], #call-panel:not([hidden]), #call-incoming:not([hidden])');
+        const reloadIfQuiet = () => { if (updateReady && quiet()) location.reload(); };
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (!hadController) return; // first install, nothing old is running
+            updateReady = true;
+            if (document.visibilityState === 'hidden') reloadIfQuiet();
+        });
+        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') reloadIfQuiet(); });
     }
 
     // ---------- Refresh ----------

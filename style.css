@@ -16094,3 +16094,34 @@ body:not(.has-back) .st-up { display: grid; }
 /* Longer page names step down so they fit beside the header icons */
 .topbar h1#page-title.long-title { font-size: min(1.85rem, 5.6vw); }
 .st-card > .st-row:first-child, .st-card > .nt-master:first-child { border-top: 0; }
+
+/* "Never miss a call": the one-time ask to turn on alerts */
+.alert-ask {
+    position: fixed; z-index: 60; left: 12px; right: 12px; bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+    max-width: 460px; margin: 0 auto; display: grid; grid-template-columns: auto 1fr; gap: 10px 12px; align-items: start;
+    padding: 14px 16px; border-radius: 16px; background: var(--surface); border: 1px solid var(--border);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28); animation: alert-ask-in 260ms var(--ease-out, ease-out);
+}
+.alert-ask.leaving { opacity: 0; transform: translateY(8px); transition: opacity 180ms, transform 180ms; }
+.alert-ask-ic { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--tile-green, #2f9e57); color: #fff; }
+.alert-ask-ic .i { width: 20px; height: 20px; }
+.alert-ask-text { display: grid; gap: 3px; min-width: 0; }
+.alert-ask-text strong { font-size: 0.98rem; color: var(--text); }
+.alert-ask-text small { font-size: 0.85rem; line-height: 1.4; color: var(--text-muted); }
+.alert-ask-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; align-items: center; gap: 12px; }
+.alert-ask-actions .primary-btn { min-height: 40px; padding: 0 18px; }
+@media (min-width: 900px) { .alert-ask { left: auto; right: 24px; bottom: 24px; } }
+@keyframes alert-ask-in { from { opacity: 0; transform: translateY(12px); } }
+@media (prefers-reduced-motion: reduce) { .alert-ask { animation: none; } .alert-ask.leaving { transition: none; } }
+
+/* Answered from an alert and the phone held the sound back: one tap brings it in */
+.call-sound-tap {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 5;
+    display: inline-flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 22px;
+    border: 0; border-radius: 999px; background: var(--accent); color: var(--on-accent, #fff);
+    font: inherit; font-weight: 700; font-size: 1rem; cursor: pointer; touch-action: manipulation;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35); animation: sound-tap-pulse 1.6s ease-in-out infinite;
+}
+.call-sound-tap .i { width: 20px; height: 20px; }
+@keyframes sound-tap-pulse { 50% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--accent) 25%, transparent), 0 10px 30px rgba(0, 0, 0, 0.35); } }
+@media (prefers-reduced-motion: reduce) { .call-sound-tap { animation: none; } }
