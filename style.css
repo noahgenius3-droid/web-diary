@@ -16240,3 +16240,4 @@ body.is-ringing { overflow: hidden; }
 /* The caller's face stays fully visible; a soft ring ripples out from it instead of a fade */
 .call-incoming .incoming-avatar .avatar.xl { opacity: 1; animation: inc-ripple 1.8s ease-out infinite; box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.28); }
 @keyframes inc-ripple { 70%, 100% { box-shadow: 0 0 0 22px rgba(255, 255, 255, 0); } }
+.inc-act[hidden] { display: none; }

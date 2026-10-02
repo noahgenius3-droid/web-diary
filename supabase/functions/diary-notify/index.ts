@@ -23,6 +23,8 @@ const CORS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
+// Every refusal says why in the function logs (no personal details), so a failed ring or alert can be traced
+const refuse = (action: string, reason: string, status: number) => { console.warn(`refused ${action}: ${reason}`); return json({ ok: false, reason }, status); };
 
 let config: { vapid_public: string; vapid_private: string; trigger_secret: string } | null = null;
 async function getConfig() {
@@ -121,7 +123,7 @@ async function deliver(user: string, payload: any, ttl: number, urgency: "normal
 async function onMessage(me: string, id: string) {
   const { data: m } = await admin.from("diary_messages")
     .select("id, sender, recipient, body, attachments, deleted_at, vanish, expires_at, created_at").eq("id", id).maybeSingle();
-  if (!m || m.sender !== me || !m.recipient || m.deleted_at) return json({ ok: false, reason: "not-found" }, 404);
+  if (!m || m.sender !== me || !m.recipient || m.deleted_at) return refuse("message", "not-found", 404);
   if (Date.now() - Date.parse(m.created_at) > 120000) return json({ ok: true, skipped: "old" }); // only fresh messages ring
   const to = m.recipient;
   const [blocked, muted, prefs, who] = await Promise.all([
@@ -158,18 +160,18 @@ async function onMessage(me: string, id: string) {
 // ---------- Calls ----------
 async function onRing(me: string, input: { callee?: string; topic?: string; video?: boolean }, secret: string) {
   const callee = String(input.callee || "");
-  if (!uuid.test(callee) || callee === me) return json({ ok: false, reason: "bad-request" }, 400);
+  if (!uuid.test(callee) || callee === me) return refuse("ring", "bad-request", 400);
   const topic = `diary_call:d:${[me, callee].sort().join(":")}`;
-  if (input.topic !== topic) return json({ ok: false, reason: "bad-topic" }, 400);
+  if (input.topic !== topic) return refuse("ring", "bad-topic", 400);
   const [blocked, presence, who, muted] = await Promise.all([
     blockedEitherWay(me, callee),
     admin.from("diary_presence").select("allow_calls").eq("user_id", callee).maybeSingle(),
     profileOf(me),
     mutedFor(callee),
   ]);
-  if (blocked || !who || !(await profileOf(callee))) return json({ ok: false, reason: "unavailable" }, 403);
+  if (blocked || !who || !(await profileOf(callee))) return refuse("ring", blocked ? "blocked" : "no-profile", 403);
   const allow = presence.data?.allow_calls || "friends";
-  if (allow === "nobody" || !(await areFriends(me, callee))) return json({ ok: false, reason: "not-allowed" }, 403);
+  if (allow === "nobody" || !(await areFriends(me, callee))) return refuse("ring", allow === "nobody" ? "calls-off" : "not-friends", 403);
 
   const name = who.display_name || (who.username ? `@${who.username}` : "Someone");
   const ring: Ring = { i: crypto.randomUUID(), c: me, e: callee, t: topic, v: !!input.video, x: Date.now() + 45000, n: name.slice(0, 60), a: who.avatar_path || null };
@@ -190,7 +192,7 @@ async function onRing(me: string, input: { callee?: string; topic?: string; vide
 
 async function onMissed(me: string, token: string, secret: string) {
   const r = await readRing(secret, token);
-  if (!r || r.c !== me) return json({ ok: false, reason: "bad-ring" }, 403);
+  if (!r || r.c !== me) return refuse("missed", r ? "not-caller" : "bad-signature", 403);
   if (Date.now() > r.x + 120000) return json({ ok: true, skipped: "old" });
   // In the person's notifications (their "calls" choice applies there too); once per ring
   const { count } = await admin.from("diary_notifications").select("id", { count: "exact", head: true })
@@ -213,7 +215,7 @@ async function onMissed(me: string, token: string, secret: string) {
 
 async function onCancel(me: string, token: string, secret: string) {
   const r = await readRing(secret, token);
-  if (!r || r.c !== me) return json({ ok: false, reason: "bad-ring" }, 403);
+  if (!r || r.c !== me) return refuse("cancel", r ? "not-caller" : "bad-signature", 403);
   if (Date.now() > r.x + 120000) return json({ ok: true, skipped: "old" });
   await broadcast(r.e, "cancel", { from: me, id: r.i });
   const sent = await deliver(r.e, {
@@ -226,7 +228,7 @@ async function onCancel(me: string, token: string, secret: string) {
 
 async function onDecline(token: string, secret: string) {
   const r = await readRing(secret, token);
-  if (!r) return json({ ok: false, reason: "bad-ring" }, 403);
+  if (!r) return refuse("decline", "bad-signature", 403);
   if (Date.now() > r.x + 30000) return json({ ok: true, skipped: "old" });
   // Same message the open app sends when you tap Decline on the ringing screen; your other devices stop ringing
   await Promise.all([
@@ -249,7 +251,7 @@ Deno.serve(async (req) => {
   if (action === "decline") return onDecline(String(input.ring || ""), cfg.trigger_secret);
 
   const me = await signedInUser(req);
-  if (!me) return json({ ok: false, reason: "sign-in" }, 401);
+  if (!me) return refuse(action || "?", "sign-in", 401);
   try {
     if (action === "message" && /^\d+$/.test(String(input.id || ""))) return await onMessage(me, String(input.id));
     if (action === "ring") return await onRing(me, input, cfg.trigger_secret);

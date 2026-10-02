@@ -377,6 +377,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (call) $('incoming-waiting').textContent = `You’re on a call with ${call.title}`;
         $('incoming-accept').setAttribute('aria-label', p.video ? 'Accept with voice only' : 'Accept');
         $('call-incoming').querySelectorAll('button').forEach(b => { b.disabled = false; });
+        // Each button's caption goes with it (no :has() needed, for older browsers)
+        $('call-incoming').querySelectorAll('.inc-act').forEach(w => { const b = w.querySelector('button'); w.hidden = !!(b && b.hidden); });
         $('call-incoming').hidden = false;
         document.body.classList.add('is-ringing');
         $('incoming-accept').focus({ preventScroll: true });
