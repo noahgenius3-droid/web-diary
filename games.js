@@ -1021,6 +1021,7 @@ document.addEventListener('DOMContentLoaded', () => {
         st.last = new Set(((m.last_move && m.last_move.cells) || []).map(x => `${Math.floor(x / WP_N)},${x % WP_N}`));
         if (!W.dlg.querySelector('.wpm-game')) matchFrame();
         paintMatch();
+        if (m.status === 'finished' && !st.celebrated) { st.celebrated = true; celebrate(m); }
     }
     function matchFrame() {
         W.dlg.innerHTML = `
@@ -1176,6 +1177,96 @@ document.addEventListener('DOMContentLoaded', () => {
         input.value = '';
         chatSend({ kind: 'comment', body: text.slice(0, 300) });
     }
+    // ---------- The winner's moment: a pop-up with confetti ----------
+    const SEEN_KEY = 'cordialWpCelebrated';
+    function celebrated(id) { try { return (JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')).includes(id); } catch (e) { return false; } }
+    function markCelebrated(id) {
+        try { const all = JSON.parse(localStorage.getItem(SEEN_KEY) || '[]').filter(x => x !== id); all.push(id); localStorage.setItem(SEEN_KEY, JSON.stringify(all.slice(-100))); } catch (e) { /* private mode */ }
+    }
+    function celebrate(m) {
+        if (!W || celebrated(m.id)) return;
+        markCelebrated(m.id);
+        const host = W.dlg.querySelector('.wpm-game');
+        if (!host) return;
+        const me = myId();
+        const iWon = m.winner === me;
+        const score = p => Number(m.scores[p] || 0);
+        const ranked = [...m.players].sort((a, b) => (b === m.winner) - (a === m.winner) || score(b) - score(a));
+        const resigned = m.last_move && m.last_move.kind === 'resign';
+        const title = !m.winner ? 'It’s a draw!' : iWon ? 'You won! 🎉' : `Congratulations, ${esc(firstName(m.winner))}!`;
+        const sub = !m.winner ? 'Well played, everyone — evenly matched to the last tile.'
+            : resigned && m.players.length - m.out_players.length <= 1 ? `${iWon ? 'You’re' : `${esc(firstName(m.winner))} is`} the last one standing with ${score(m.winner)} points.`
+            : iWon ? `${score(me)} points — what a game.` : `${esc(firstName(m.winner))} won with ${score(m.winner)} points. Good game!`;
+        const box = document.createElement('div');
+        box.className = 'wpw';
+        box.setAttribute('role', 'alertdialog');
+        box.setAttribute('aria-labelledby', 'wpw-title');
+        box.innerHTML = `
+            <div class="wpw-card">
+                <div class="wpw-trophy" aria-hidden="true">${m.winner ? '🏆' : '🤝'}</div>
+                <h3 id="wpw-title">${title}</h3>
+                <p class="wpw-sub">${sub}</p>
+                <ol class="wpw-standings">${ranked.map((p, i) => `
+                    <li class="${p === m.winner ? 'win' : ''}${m.out_players.includes(p) ? ' out' : ''}">
+                        <span class="wpw-place">${p === m.winner ? '🥇' : i + 1}</span>
+                        ${I.avatar(who(p), 'sm')}
+                        <span class="wpw-name">${esc(firstName(p))}${m.out_players.includes(p) ? ' <small>left</small>' : ''}</span>
+                        <b>${score(p)}</b>
+                    </li>`).join('')}</ol>
+                <div class="wpw-acts">
+                    <button type="button" class="primary-btn" data-wp="rematch">${ic('i-refresh')}Rematch</button>
+                    <button type="button" class="ghost-btn" data-wpw="close">See the board</button>
+                </div>
+            </div>`;
+        host.append(box);
+        box.addEventListener('click', e => {
+            if (e.target === box || e.target.closest('[data-wpw="close"]')) { box.classList.add('out'); setTimeout(() => box.remove(), 220); }
+            else if (e.target.closest('[data-wp="rematch"]')) box.remove();
+        });
+        box.querySelector('[data-wpw="close"]').focus({ preventScroll: true });
+        try { if (navigator.vibrate) navigator.vibrate(iWon ? [20, 60, 30] : 15); } catch (e) { /* no haptics */ }
+        if (m.winner && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) confettiRain(host, iWon ? 160 : 110);
+    }
+    // A burst of confetti over the match: drawn on a canvas, gone in a few seconds
+    function confettiRain(host, count) {
+        const c = document.createElement('canvas');
+        c.className = 'wpw-confetti';
+        c.setAttribute('aria-hidden', 'true');
+        host.append(c);
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        const w = host.clientWidth, h = host.clientHeight;
+        c.width = w * dpr; c.height = h * dpr;
+        const ctx = c.getContext('2d');
+        ctx.scale(dpr, dpr);
+        const colors = ['#8b8cf8', '#f59e0b', '#10b981', '#ec4899', '#38bdf8', '#facc15', '#f43f5e'];
+        const bits = Array.from({ length: count }, (_, i) => ({
+            x: w / 2 + (Math.random() - 0.5) * w * 0.3, y: h * 0.32,
+            vx: (Math.random() - 0.5) * 13, vy: -6 - Math.random() * 11,
+            r: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 0.35,
+            s: 5 + Math.random() * 6, c: colors[i % colors.length], round: Math.random() < 0.3
+        }));
+        const t0 = performance.now();
+        const frame = now => {
+            const t = now - t0;
+            ctx.clearRect(0, 0, w, h);
+            ctx.globalAlpha = t > 2600 ? Math.max(0, 1 - (t - 2600) / 900) : 1;
+            for (const b of bits) {
+                b.vy += 0.32; b.vx *= 0.99; b.vy *= 0.99;
+                b.x += b.vx; b.y += b.vy; b.r += b.vr;
+                ctx.save();
+                ctx.translate(b.x, b.y);
+                ctx.rotate(b.r);
+                ctx.fillStyle = b.c;
+                if (b.round) { ctx.beginPath(); ctx.arc(0, 0, b.s / 2.2, 0, Math.PI * 2); ctx.fill(); }
+                else ctx.fillRect(-b.s / 2, -b.s / 4, b.s, b.s / 2 * (0.4 + Math.abs(Math.sin(b.r * 2))));
+                ctx.restore();
+            }
+            if (t < 3500 && c.isConnected) requestAnimationFrame(frame);
+            else c.remove();
+        };
+        requestAnimationFrame(frame);
+    }
+
     function lastText(m) {
         const lm = m.last_move;
         if (!lm) return '';
