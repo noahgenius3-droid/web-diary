@@ -17023,3 +17023,24 @@ html.kb-open .sp-chat-form { padding-bottom: 8px; }
 .feed-v2 .story-live > span:last-child { color: var(--text-muted); }
 .feed-v2 .story-live.is-on > span:last-child { color: var(--text); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { .story-live.is-on .story-ring::before { animation: none; opacity: 0.8; } }
+
+/* ---------- In-app notification cards: arrive in real time, click straight through ---------- */
+.nt-cards { position: fixed; z-index: 400; top: calc(12px + env(safe-area-inset-top, 0px)); right: 16px; display: grid; gap: 8px; width: min(380px, calc(100vw - 24px)); pointer-events: none; }
+@media (max-width: 760px) { .nt-cards { left: 12px; right: 12px; width: auto; margin: 0 auto; max-width: 460px; } }
+.nt-card { position: relative; display: flex; align-items: stretch; border-radius: 18px; background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: var(--shadow-lg, 0 18px 40px -16px rgba(0, 0, 0, 0.55)), 0 0 0 1px var(--border); pointer-events: auto; animation: nt-in 260ms cubic-bezier(0.23, 1, 0.32, 1); transition: opacity 200ms ease, transform 200ms ease; }
+.nt-card.out { opacity: 0; transform: translateY(-8px) scale(0.98); }
+@keyframes nt-in { from { opacity: 0; transform: translateY(-10px) scale(0.98); } }
+.nt-card-main { flex: 1; display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 60px; padding: 10px 6px 10px 12px; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; border-radius: 18px 0 0 18px; }
+.nt-card-main .avatar { width: 38px; height: 38px; flex: none; }
+.nt-card-ic { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; background: var(--accent-soft, var(--input)); color: var(--accent); flex: none; }
+.nt-card-ic .i { width: 18px; height: 18px; }
+.nt-card-text { display: grid; gap: 2px; min-width: 0; }
+.nt-card-text > span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 0.9rem; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.nt-card-text small { color: var(--text-muted); font-size: 0.76rem; }
+.nt-card-text small b { color: var(--accent); font-weight: 700; }
+.nt-card-x { display: grid; place-items: center; flex: none; width: 40px; border: 0; background: none; color: var(--text-muted); cursor: pointer; border-radius: 0 18px 18px 0; }
+.nt-card-x .i { width: 16px; height: 16px; }
+.nt-card-main:active { background: color-mix(in srgb, var(--text) 5%, transparent); }
+@media (hover: hover) and (pointer: fine) { .nt-card-main:hover { background: color-mix(in srgb, var(--text) 4%, transparent); } .nt-card-x:hover { color: var(--text); } }
+.nt-card-main:focus-visible, .nt-card-x:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+@media (prefers-reduced-motion: reduce) { .nt-card { animation: none; } }

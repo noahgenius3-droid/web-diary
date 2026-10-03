@@ -146,8 +146,126 @@ document.addEventListener('DOMContentLoaded', () => {
         const plain = describe(item, true);
         if (item.type === 'call_started') { if (!(window.diaryCalls && window.diaryCalls.ringGroup && window.diaryCalls.ringGroup(item))) showCallBanner(item); }
         else if (item.type === 'live_started') showLivePopup(item);
-        else if (item.type !== 'missed_call') app.showToast(plain);
+        else if (item.type !== 'missed_call') present(item, plain);
         deviceAlert(item, plain);
+    }
+
+    // ---------- In-app cards: a new notification you can click straight through ----------
+    // The card goes through the same navigate() as the list and the device alerts, so a notification always
+    // opens the same place however it reaches you. A tab in the background keeps them for when you're back.
+    let cardBox = null;
+    n.waiting = [];
+    function present(item, text) {
+        if (document.visibilityState === 'visible') showCard(item, text);
+        else { n.waiting.push(item); n.waiting = n.waiting.slice(-6); }
+    }
+    function showCard(item, text) {
+        if (!cardBox) {
+            cardBox = document.createElement('div');
+            cardBox.className = 'nt-cards';
+            cardBox.setAttribute('aria-live', 'polite');
+            document.body.append(cardBox);
+            cardBox.addEventListener('click', e => {
+                const card = e.target.closest('.nt-card');
+                if (!card) return;
+                const x = e.target.closest('[data-nt]');
+                const it = card._item;
+                dropCard(card);
+                if (!x || x.dataset.nt !== 'open') return;
+                if (it === 'many') { setTimeout(() => $('bell-btn').click(), 0); return; }
+                if (it) navigate(it);
+            });
+        }
+        const many = item === 'many';
+        const actor = !many && (item.actor_profile || (item.actor ? { id: item.actor, display_name: 'Someone' } : null));
+        const where = many ? 'See all' : leadsTo(item) || 'Open';
+        const card = document.createElement('div');
+        card.className = 'nt-card';
+        card._item = item;
+        card.innerHTML = `
+            <button type="button" class="nt-card-main" data-nt="open">
+                ${actor ? avatar(actor, 'sm') : '<span class="nt-card-ic" aria-hidden="true"><svg class="i"><use href="#i-bell"/></svg></span>'}
+                <span class="nt-card-text"><span></span><small>${many ? '' : `${esc(timeAgo(item.created_at))} · `}<b>${esc(where)} →</b></small></span>
+            </button>
+            <button type="button" class="nt-card-x" data-nt="x" aria-label="Dismiss"><svg class="i"><use href="#i-close"/></svg></button>`;
+        card.querySelector('.nt-card-text > span').textContent = text;
+        cardBox.prepend(card);
+        while (cardBox.children.length > 3) cardBox.lastElementChild.remove();
+        // Gone after a few seconds — but never while the pointer is on it
+        let timer = setTimeout(() => dropCard(card), 7000);
+        card.addEventListener('pointerenter', () => clearTimeout(timer));
+        card.addEventListener('pointerleave', () => { clearTimeout(timer); timer = setTimeout(() => dropCard(card), 3500); });
+    }
+    function dropCard(card) {
+        if (!card.isConnected || card.classList.contains('out')) return;
+        card.classList.add('out');
+        setTimeout(() => card.remove(), 200);
+    }
+    // Back to the tab: what came in meanwhile (anything already read in another tab is skipped)
+    let hiddenAt = 0;
+    document.addEventListener('visibilitychange', async () => {
+        if (document.visibilityState !== 'visible') { hiddenAt = Date.now(); return; }
+        if (!n.userId) return;
+        // A tab that slept can miss live events: catch up, and reconnect if the live connection dropped
+        if (hiddenAt && Date.now() - hiddenAt > 20000) {
+            if (n.channel && n.channel.state && n.channel.state !== 'joined') { const id = n.userId; start(id); return; }
+            const newest = n.items[0] && n.items[0].created_at;
+            let q = client.from('diary_notifications').select('*').order('created_at', { ascending: false }).limit(20);
+            if (newest) q = q.gt('created_at', newest);
+            const { data } = await q.catch(() => ({ data: null }));
+            for (const row of (data || []).reverse()) await onNew(row);
+        }
+        const waiting = n.waiting.filter(x => !x.read_at);
+        n.waiting = [];
+        if (waiting.length > 2) showCard('many', `${waiting.length} new notifications`);
+        else waiting.forEach(x => showCard(x, describe(x, true)));
+    });
+
+    // ---------- Tabs agree: read or removed in one tab is read or removed in all ----------
+    const tabs = 'BroadcastChannel' in window ? new BroadcastChannel('cordial-notifications') : null;
+    const tellTabs = msg => { try { if (tabs) tabs.postMessage(msg); } catch (e) { /* closed */ } };
+    if (tabs) {
+        tabs.onmessage = e => {
+            const m = e.data || {};
+            if (m.read) n.items.forEach(x => { if (m.read.includes(x.id) && !x.read_at) x.read_at = m.at || new Date().toISOString(); });
+            if (m.allRead) n.items.forEach(x => { if (!x.read_at) x.read_at = m.at; });
+            if (m.gone) n.items = n.items.filter(x => !m.gone.includes(x.id));
+            if (cardBox) cardBox.querySelectorAll('.nt-card').forEach(c => { if (c._item && c._item.read_at) dropCard(c); });
+            paintBadge();
+            if (n.open) paintPanel();
+        };
+    }
+
+    // The address of what a notification is about — the same destinations navigate() opens, written as a link,
+    // for device alerts (they open through the app worker, like push alerts, and land in the same place)
+    function hrefFor(x) {
+        const d = x.data || {};
+        const entry = d.entry_id || d.entry;
+        switch (x.type) {
+            case 'new_post': case 'entry_like': case 'entry_reaction': case 'entry_repost': case 'entry_comment':
+                return entry ? `/#/post/${entry}` : '/#/feed';
+            case 'post_like': case 'post_comment': case 'community_post':
+                return d.post_id ? `/#/post/g-${d.post_id}` : d.community_id ? `/#/community/${d.community_id}` : '/';
+            case 'post_activity':
+                return d.kind === 'entry' && d.entry_id ? `/#/post/${d.entry_id}` : d.post_id ? `/#/post/g-${d.post_id}` : '/';
+            case 'tagged': case 'comment_reply':
+                return d.entry_id ? `/#/post/${d.entry_id}` : d.post_id ? `/#/post/g-${d.post_id}` : d.reel_id ? `/#/reels/${d.reel_id}` : '/';
+            case 'scheduled_published':
+                return d.target === 'feed' ? `/#/post/${d.ref}` : d.target === 'group' ? `/#/post/g-${d.ref}` : '/#/messages';
+            case 'friend_accepted': case 'missed_call': return x.actor ? `/#/messages/chat/${x.actor}` : '/#/messages';
+            case 'friend_request': return '/#/messages';
+            case 'new_follower': case 'referral_joined': return x.actor ? `/#/profile/${x.actor}` : '/';
+            case 'mention': case 'reply': return d.community_id ? `/#/community/${d.community_id}${d.message_id ? `/m/${d.message_id}` : ''}` : '/';
+            case 'game_invite': case 'game_turn': case 'game_over': return d.match_id ? `/#/play/m/${d.match_id}` : '/#/play';
+            case 'live_started': return d.stream_id || d.live_id ? `/?live=${d.stream_id || d.live_id}` : '/#/explore';
+            case 'space_live': return d.space_id ? `/?space=${d.space_id}` : '/';
+            case 'community_join': case 'call_started': return d.community_id ? `/#/community/${d.community_id}` : '/';
+            case 'reel_like': case 'reel_comment': return d.reel_id ? `/#/reels/${d.reel_id}` : '/#/reels';
+            case 'new_login': return '/#/settings/security';
+            case 'verification_update': return '/#/settings/privacy';
+            case 'trivia_rank': case 'badge_earned': return '/#/play';
+            default: return '/';
+        }
     }
 
     // ---------- Text & navigation ----------
@@ -257,6 +375,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!x.read_at) {
             x.read_at = new Date().toISOString();
             Promise.resolve().then(() => client.from('diary_notifications').update({ read_at: x.read_at }).in('id', x._ids || [x.id])).catch(() => {});
+            tellTabs({ read: x._ids || [x.id], at: x.read_at });
             try { paintBadge(); } catch (e) { /* badge redraws later */ }
         }
         close();
@@ -435,6 +554,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const now = new Date().toISOString();
         n.items.forEach(x => { if (!x.read_at) x.read_at = now; });
         paintBadge();
+        tellTabs({ allRead: true, at: now });
         await client.from('diary_notifications').update({ read_at: now }).in('id', ids);
     }
 
@@ -536,6 +656,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 paintPanel();
                 paintBadge();
                 client.from('diary_notifications').delete().in('id', ids);
+                tellTabs({ gone: ids });
             } else if (what === 'accept' || what === 'decline') {
                 act.disabled = true;
                 await I.respond(act.dataset.fid, what === 'accept');
@@ -630,6 +751,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (it && !it.read_at) {
             it.read_at = new Date().toISOString();
             client.from('diary_notifications').update({ read_at: it.read_at }).eq('id', id).then(() => paintBadge());
+            tellTabs({ read: [id], at: it.read_at });
         }
     }
 
@@ -776,6 +898,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const actor = item.actor_profile;
         showLocal('Cordial', text, {
             tag: item.id,
+            data: { url: hrefFor(item), id: item.id },
             icon: actor && actor.avatar_path ? avatarUrl(actor.avatar_path) : '/icons/icon-192.png',
             onclick: () => { window.focus(); navigate(item); }
         });
@@ -784,6 +907,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Missed calls are logged by the callee's own device (call.js calls this)
     window.diaryNotify = {
         alertStatus, enableAlerts, disableAlerts, unsubscribePush, pushSupported, showLivePopup, close, navigate,
+        _receive: row => onNew(row), // the same path the live connection uses (handy for testing)
         permission: () => (canAlert ? Notification.permission : 'unsupported'),
         logMissedCall(callerId) {
             if (!s.profile || !callerId) return;
