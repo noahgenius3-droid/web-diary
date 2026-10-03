@@ -945,7 +945,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <span class="sp-live"><i aria-hidden="true"></i>LIVE</span>
             <span class="sp-head-count">${ids.length} here</span>
             <button type="button" class="sp-icon" data-sp="share" aria-label="Share room">${ic('i-share')}</button>
-            <button type="button" class="sp-leave-pill" data-sp="leave"><span aria-hidden="true">✌️</span> Leave</button>
+            ${isHost() ? `<button type="button" class="sp-end-pill" data-sp="end" aria-label="End the room for everyone">${ic('i-close')}End</button>` : `<button type="button" class="sp-leave-pill" data-sp="leave"><span aria-hidden="true">✌️</span> Leave</button>`}
             <button type="button" class="sp-icon" data-sp="menu" aria-label="Room options" aria-haspopup="menu">${ic('i-more')}</button>`;
 
         const invite = R.invite && !speaker ? `

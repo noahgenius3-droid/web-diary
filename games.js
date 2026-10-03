@@ -976,10 +976,15 @@ document.addEventListener('DOMContentLoaded', () => {
         dlg.setAttribute('aria-label', 'Wordplay match');
         document.body.append(dlg);
         W = { game: 'wordplay', match: id, dlg, daily: false, started: 0, timer: null, done: false, state: { board: [], rack: [], pending: [], sel: null, busy: false, last: new Set() } };
-        dlg.addEventListener('close', () => { dlg.remove(); if (W && W.dlg === dlg) W = null; loadMatches(); });
+        W.chat = { list: [], unread: 0, open: false, ch: null, off: false, ready: false };
+        const chat = W.chat;
+        dlg.addEventListener('close', () => { chatStop(chat); dlg.remove(); if (W && W.dlg === dlg) W = null; loadMatches(); });
+        dlg.addEventListener('click', onChatClick);
+        dlg.addEventListener('submit', onChatSubmit);
         dlg.innerHTML = '<div class="gm-card"><div class="gm-body"><p class="gm-hint">Opening the board…</p></div></div>';
         dlg.showModal();
         await refreshMatch(true);
+        chatStart(id);
     }
     const sortedLetters = arr => arr.filter(Boolean).sort().join('');
     // Give up waiting after ms (the request may still finish; we check the board afterwards)
@@ -1023,9 +1028,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 <header class="gm-head">
                     <button type="button" class="icon-btn" data-gm="close" aria-label="Close">${ic('i-close')}</button>
                     <div class="gm-title"><strong>${ic('i-g-tiles')}Wordplay</strong><small class="wpm-bag"></small></div>
+                    <button type="button" class="icon-btn wpc-btn" data-wpc="open" aria-label="Match chat" hidden>${ic('i-chat')}<b class="wpc-dot" hidden></b></button>
                 </header>
                 <div class="gm-body">
                     <div class="wpm-players" role="list" aria-label="Players"></div>
+                    <button type="button" class="wpc-ticker" data-wpc="open" hidden></button>
                     <div class="wp-board" role="grid" aria-label="Board"></div>
                     <p class="gm-hint" aria-live="polite"></p>
                     <div class="wp-rack" aria-label="Your letters"></div>
@@ -1035,9 +1042,139 @@ document.addEventListener('DOMContentLoaded', () => {
                         <button type="button" class="ghost-btn" data-wp="pass">Pass</button>
                         <button type="button" class="primary-btn" data-wp="play">Play</button>
                     </div>
+                    <div class="wpc-react" role="group" aria-label="React" hidden>${CHAT_EMOJI.map(e => `<button type="button" data-wpc="react" data-emoji="${e}" aria-label="React ${e}">${e}</button>`).join('')}</div>
                     <div class="wpm-foot"></div>
                 </div>
+                <div class="wpc-fx" aria-hidden="true"></div>
+                <div class="wpc-sheet" role="dialog" aria-label="Match chat" hidden>
+                    <header class="wpc-head"><strong>Match chat</strong><small>Only the players see this</small><button type="button" class="icon-btn" data-wpc="close" aria-label="Back to the board">${ic('i-close')}</button></header>
+                    <div class="wpc-list" role="log" aria-live="polite"></div>
+                    <form class="wpc-form">
+                        <input class="wpc-input" maxlength="300" placeholder="Say something to the table…" aria-label="Message the other players" autocomplete="off" enterkeyhint="send">
+                        <button type="submit" class="wpc-send" aria-label="Send">${ic('i-send')}</button>
+                    </form>
+                </div>
             </div>`;
+        if (W.chat) paintChat();
+    }
+
+    // ---------- Talking while you play: comments and quick reactions in a match ----------
+    // Saved for the match's players only (the database checks that), and live while the board is open.
+    // Until the match chat is switched on on the server, none of this shows.
+    const CHAT_EMOJI = ['👏', '🔥', '😂', '😮', '😅', '🤝', '💯', '🎉'];
+    async function chatStart(id) {
+        const chat = W && W.chat;
+        if (!chat || W.match !== id) return;
+        const { data, error } = await client.from('diary_wp_chat').select('*').eq('match_id', id).order('created_at', { ascending: true }).limit(150);
+        if (!W || W.chat !== chat) return;
+        if (error) { chat.off = true; paintChat(); return; } // not switched on yet (or offline): stay out of the way
+        chat.list = data || [];
+        chat.ready = true;
+        chat.ch = client.channel(`wp-chat-${id}-${Date.now()}`)
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'diary_wp_chat', filter: `match_id=eq.${id}` }, p => chatIn(chat, p.new))
+            .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'diary_wp_chat' }, p => { if (p.old && p.old.id) { chat.list = chat.list.filter(x => x.id !== p.old.id); if (W && W.chat === chat) paintChat(); } })
+            .subscribe();
+        paintChat();
+    }
+    function chatStop(chat) { if (chat && chat.ch) { client.removeChannel(chat.ch); chat.ch = null; } }
+    function chatIn(chat, row) {
+        if (!row || chat.list.some(x => x.id === row.id)) return;
+        chat.list.push(row);
+        if (chat.list.length > 200) chat.list.shift();
+        if (!W || W.chat !== chat) return;
+        if (row.kind === 'reaction') floatReaction(row);
+        else if (!chat.open && row.user_id !== myId()) chat.unread++;
+        paintChat();
+    }
+    function floatReaction(row) {
+        const fx = W && W.dlg.querySelector('.wpc-fx');
+        if (!fx || fx.childElementCount > 8) return;
+        const el = document.createElement('span');
+        el.className = 'wpc-bubble';
+        el.style.setProperty('--x', `${Math.round(10 + Math.random() * 70)}%`);
+        el.innerHTML = `<b></b><small></small>`;
+        el.querySelector('b').textContent = row.emoji;
+        el.querySelector('small').textContent = firstName(row.user_id);
+        fx.append(el);
+        setTimeout(() => el.remove(), window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 1400 : 2400);
+    }
+    function paintChat() {
+        const chat = W && W.chat;
+        if (!chat || !W.dlg.querySelector('.wpm-game')) return;
+        const d = W.dlg;
+        const on = chat.ready && !chat.off;
+        const m = W.state.m;
+        const canTalk = on && m && !m.out_players.includes(myId());
+        d.querySelector('.wpc-btn').hidden = !on;
+        d.querySelector('.wpc-react').hidden = !canTalk;
+        const dot = d.querySelector('.wpc-dot');
+        dot.hidden = !chat.unread;
+        dot.textContent = chat.unread > 9 ? '9+' : String(chat.unread);
+        d.querySelector('.wpc-btn').setAttribute('aria-label', `Match chat${chat.unread ? `, ${chat.unread} new` : ''}`);
+        // The latest comment, one line, under the scores
+        const last = [...chat.list].reverse().find(x => x.kind === 'comment');
+        const ticker = d.querySelector('.wpc-ticker');
+        ticker.hidden = !on || !last;
+        if (last) { ticker.innerHTML = `${ic('i-chat')}<span><b></b> </span>`; ticker.querySelector('b').textContent = `${firstName(last.user_id)}:`; ticker.querySelector('span').append(last.body); }
+        if (!chat.open) return;
+        const list = d.querySelector('.wpc-list');
+        const near = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+        const items = chat.list;
+        list.innerHTML = items.length ? items.map(x => {
+            const mine = x.user_id === myId();
+            const time = new Date(x.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            return x.kind === 'reaction'
+                ? `<p class="wpc-rx">${esc(firstName(x.user_id))} reacted ${esc(x.emoji)} <time>${time}</time></p>`
+                : `<div class="wpc-msg${mine ? ' mine' : ''}" data-wpc="msg" data-id="${esc(x.id)}" ${mine ? 'role="button" tabindex="0" aria-label="Your message — tap to delete"' : ''}>
+                        ${I.avatar(who(x.user_id), 'sm')}<div><span class="wpc-who">${esc(firstName(x.user_id))} <time>${time}</time></span><p></p></div></div>`;
+        }).join('') : '<p class="wpc-empty">Say hi, cheer a good move, or call a bluff — only the players see this.</p>';
+        list.querySelectorAll('.wpc-msg p').forEach((p, i) => { const msgs = items.filter(x => x.kind === 'comment'); if (msgs[i]) p.textContent = msgs[i].body; });
+        if (near || chat.justOpened) { list.scrollTop = list.scrollHeight; chat.justOpened = false; }
+        const form = d.querySelector('.wpc-form');
+        form.hidden = !canTalk;
+    }
+    async function chatSend(fields) {
+        const chat = W && W.chat;
+        if (!chat || chat.off) return;
+        const { data, error } = await client.from('diary_wp_chat').insert({ match_id: W.match, ...fields }).select('*').single();
+        if (error) return app.showToast(/guest|anonymous|account/i.test(error.message || '') ? 'Create a free account to chat in games' : (error.message && error.message.length < 80 ? error.message : 'Couldn’t send that — try again'));
+        chatIn(chat, data);
+    }
+    async function onChatClick(e) {
+        const el = e.target.closest('[data-wpc]');
+        if (!el || !W || !W.chat) return;
+        const chat = W.chat, what = el.dataset.wpc;
+        if (what === 'open') {
+            chat.open = true; chat.unread = 0; chat.justOpened = true;
+            W.dlg.querySelector('.wpc-sheet').hidden = false;
+            paintChat();
+            if (window.matchMedia('(pointer: fine)').matches) setTimeout(() => W && W.dlg.querySelector('.wpc-input')?.focus(), 120);
+        } else if (what === 'close') {
+            chat.open = false;
+            W.dlg.querySelector('.wpc-sheet').hidden = true;
+            paintChat();
+        } else if (what === 'react') {
+            const emoji = el.dataset.emoji;
+            if (!CHAT_EMOJI.includes(emoji)) return;
+            try { if (navigator.vibrate) navigator.vibrate(8); } catch (err) { /* no haptics */ }
+            chatSend({ kind: 'reaction', emoji });
+        } else if (what === 'msg' && el.classList.contains('mine')) {
+            if (!(await app.ask({ title: 'Delete this message?', text: 'It disappears for everyone in the match.', ok: 'Delete', danger: true }))) return;
+            const id = el.dataset.id;
+            const { error } = await client.from('diary_wp_chat').delete().eq('id', id);
+            if (error) return app.showToast('Couldn’t delete it — try again');
+            chat.list = chat.list.filter(x => x.id !== id);
+            paintChat();
+        }
+    }
+    function onChatSubmit(e) {
+        if (!e.target.classList.contains('wpc-form')) return;
+        e.preventDefault();
+        const input = e.target.querySelector('.wpc-input');
+        const text = input.value.trim();
+        if (!text) return;
+        input.value = '';
+        chatSend({ kind: 'comment', body: text.slice(0, 300) });
     }
     function lastText(m) {
         const lm = m.last_move;
@@ -1079,6 +1216,7 @@ document.addEventListener('DOMContentLoaded', () => {
             : out ? '<small class="muted">You left this match — the others play on</small>'
             : '<button type="button" class="link-btn" data-wp="resign">Resign</button>';
         const last = lastText(m);
+        paintChat();
         if (st.busy) return;
         if (move) hint(move.error || move.words.map(w => `${w.word} ${w.points}`).join(' + ') + (move.bingo ? ' + 50 for all seven!' : ''));
         else if (!active) hint(m.winner === me ? `You won with ${Number(m.scores[me] || 0)} points!` : m.winner ? `${who(m.winner).display_name || 'Someone'} won this one.` : 'It’s a draw!');

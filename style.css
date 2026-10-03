@@ -17044,3 +17044,55 @@ html.kb-open .sp-chat-form { padding-bottom: 8px; }
 @media (hover: hover) and (pointer: fine) { .nt-card-main:hover { background: color-mix(in srgb, var(--text) 4%, transparent); } .nt-card-x:hover { color: var(--text); } }
 .nt-card-main:focus-visible, .nt-card-x:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 @media (prefers-reduced-motion: reduce) { .nt-card { animation: none; } }
+
+/* ---------- Wordplay: comments and reactions while you play ---------- */
+.wpm-game { position: relative; }
+.wpc-btn { position: relative; margin-left: auto; }
+.wpc-dot { position: absolute; top: 2px; right: 2px; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 999px; background: #ef4444; color: #fff; font-size: 0.64rem; font-weight: 800; line-height: 17px; text-align: center; }
+.wpc-dot[hidden] { display: none; }
+.wpc-ticker { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 36px; margin: 2px 0 6px; padding: 6px 12px; border: 0; border-radius: 12px; background: var(--input); color: var(--text); font: inherit; font-size: 0.84rem; text-align: left; cursor: pointer; }
+.wpc-ticker[hidden] { display: none; }
+.wpc-ticker .i { width: 15px; height: 15px; flex: none; color: var(--text-muted); }
+.wpc-ticker span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wpc-react { display: flex; justify-content: space-between; gap: 4px; margin: 8px 0 2px; overflow-x: auto; scrollbar-width: none; }
+.wpc-react[hidden] { display: none; }
+.wpc-react button { flex: 1 0 36px; height: 38px; border: 0; border-radius: 12px; background: var(--input); font-size: 1.15rem; cursor: pointer; touch-action: manipulation; transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1); }
+.wpc-react button:active { transform: scale(0.88); }
+@media (hover: hover) and (pointer: fine) { .wpc-react button:hover { background: color-mix(in srgb, var(--text) 9%, var(--input)); } }
+/* Reactions rise over the board with the sender's name, then fade */
+.wpc-fx { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 4; }
+.wpc-bubble { position: absolute; left: var(--x, 50%); bottom: 90px; display: grid; justify-items: center; gap: 2px; animation: wpc-rise 2.4s cubic-bezier(0.23, 1, 0.32, 1) forwards; }
+.wpc-bubble b { font-size: 2rem; line-height: 1; }
+.wpc-bubble small { padding: 1px 7px; border-radius: 999px; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 0.68rem; font-weight: 700; }
+@keyframes wpc-rise { 0% { opacity: 0; transform: translateY(16px) scale(0.7); } 12% { opacity: 1; transform: translateY(0) scale(1.08); } 100% { opacity: 0; transform: translateY(-220px) scale(1); } }
+@media (prefers-reduced-motion: reduce) { .wpc-bubble { animation: wpc-fade 1.4s ease forwards; } @keyframes wpc-fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } } }
+/* The chat sheet sits over the board, inside the match */
+.wpc-sheet { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; display: flex; flex-direction: column; height: min(72%, 560px); border-radius: 22px 22px 0 0; background: var(--surface); box-shadow: 0 -20px 50px -20px rgba(0, 0, 0, 0.6), 0 -1px 0 var(--border); animation: wpc-up 320ms cubic-bezier(0.32, 0.72, 0, 1); }
+.wpc-sheet[hidden] { display: none; }
+@keyframes wpc-up { from { transform: translateY(100%); } }
+.wpc-head { display: flex; align-items: center; gap: 8px; padding: 12px 10px 8px 16px; border-bottom: 1px solid var(--border); }
+.wpc-head strong { font-size: 1rem; }
+.wpc-head small { flex: 1; color: var(--text-muted); font-size: 0.76rem; }
+.wpc-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; }
+.wpc-msg { display: flex; align-items: flex-start; gap: 8px; }
+.wpc-msg.mine { cursor: pointer; }
+.wpc-msg .avatar { width: 28px; height: 28px; flex: none; font-size: 0.66rem; }
+.wpc-msg > div { min-width: 0; padding: 7px 11px; border-radius: 14px; background: var(--input); }
+.wpc-msg.mine > div { background: color-mix(in srgb, var(--accent) 16%, var(--input)); }
+.wpc-who { display: block; color: var(--text-muted); font-size: 0.72rem; font-weight: 700; }
+.wpc-who time, .wpc-rx time { font-weight: 500; opacity: 0.8; }
+.wpc-msg p { margin: 1px 0 0; font-size: 0.92rem; line-height: 1.4; overflow-wrap: anywhere; }
+.wpc-rx { margin: 0; text-align: center; color: var(--text-muted); font-size: 0.78rem; }
+.wpc-empty { margin: auto; padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.86rem; line-height: 1.45; }
+.wpc-form { display: flex; gap: 8px; padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--border); }
+.wpc-form[hidden] { display: none; }
+.wpc-input { flex: 1; min-width: 0; min-height: 44px; padding: 0 16px; border: 0; border-radius: 999px; background: var(--input); color: var(--text); font: inherit; font-size: 16px; }
+.wpc-send { display: grid; place-items: center; flex: none; width: 44px; height: 44px; border: 0; border-radius: 50%; background: var(--accent); color: var(--on-accent, #fff); cursor: pointer; }
+.wpc-send .i { width: 18px; height: 18px; }
+
+/* Live room: hosts get a clear End button in the header (Leave quietly stays in the ⋯ menu) */
+.sp-end-pill { display: inline-flex; align-items: center; gap: 5px; min-height: 40px; padding: 0 14px 0 11px; border: 0; border-radius: 999px; background: #dc2626; color: #fff; font: inherit; font-size: 0.88rem; font-weight: 800; cursor: pointer; touch-action: manipulation; transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background 140ms ease; }
+.sp-end-pill .i { width: 15px; height: 15px; }
+.sp-end-pill:active { transform: scale(0.95); }
+@media (hover: hover) and (pointer: fine) { .sp-end-pill:hover { background: #b91c1c; } }
+.sp-end-pill:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
