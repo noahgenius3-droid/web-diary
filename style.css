@@ -17137,3 +17137,57 @@ html.kb-open .sp-chat-form { padding-bottom: 8px; }
 .wpc-chip:active { transform: scale(0.92); }
 .wpc-emo { flex: none; width: 44px; height: 44px; border: 0; border-radius: 50%; background: var(--input); font-size: 1.25rem; cursor: pointer; touch-action: manipulation; }
 .wpc-emo:active { transform: scale(0.92); }
+
+/* ---------- People you may know: dismiss, few-connections header, people in the empty Feed ---------- */
+.pymk-card { position: relative; }
+.pymk-x { position: absolute; top: 6px; right: 6px; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--text-muted); cursor: pointer; touch-action: manipulation; transition: background 140ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1); }
+.pymk-x .i { width: 14px; height: 14px; }
+.pymk-x::before { content: ""; position: absolute; inset: -8px; } /* a finger-sized target */
+.pymk-x:active { transform: scale(0.9); }
+@media (hover: hover) and (pointer: fine) { .pymk-x:hover, .pymk-x-row:hover { background: var(--input); color: var(--text); } }
+.pymk-x-row { flex: none; width: 34px; height: 34px; color: var(--text-muted); }
+.pymk-x-row .i { width: 15px; height: 15px; }
+.pymk-strip.few header { align-items: flex-start; }
+.pymk-strip.few header h3 { margin: 0; }
+.pymk-strip.few header p { margin: 2px 0 0; color: var(--text-muted); font-size: 0.84rem; line-height: 1.4; }
+.feed-empty-people { display: grid; gap: 4px; width: min(440px, 100%); margin: 14px auto 6px; padding: 6px; border-radius: 16px; background: var(--input); text-align: left; }
+.feed-empty-people .suggest-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 12px; }
+.feed-empty-people .contact-name { flex: 1; min-width: 0; display: grid; cursor: pointer; }
+.feed-empty-people .contact-name strong, .feed-empty-people .contact-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.feed-empty-people .contact-name small { color: var(--text-muted); font-size: 0.78rem; }
+
+/* ---------- Videos in chats ---------- */
+.msg-video { position: relative; width: min(280px, 72vw); max-height: 420px; border-radius: 16px; overflow: hidden; background: #000; }
+.msg-video video { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.msg-video-cover { position: absolute; inset: 0; display: grid; place-items: center; padding: 0; border: 0; background: #111; cursor: pointer; }
+.msg-video-cover[hidden] { display: none; }
+.msg-video-cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.msg-video-play { position: relative; display: grid; place-items: center; width: 54px; height: 54px; border-radius: 50%; background: rgba(0, 0, 0, 0.55); color: #fff; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1); }
+.msg-video-play .i { width: 24px; height: 24px; margin-left: 3px; }
+.msg-video-cover:active .msg-video-play { transform: scale(0.92); }
+.msg-video-cover.loading .msg-video-play { animation: vid-pulse 1s ease-in-out infinite; }
+@keyframes vid-pulse { 50% { opacity: 0.55; } }
+.msg-video-cover small { position: absolute; right: 8px; bottom: 8px; padding: 2px 7px; border-radius: 999px; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 0.74rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.msg-video-cover:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
+.gc-bubble .msg-video { margin: 2px 0 6px; }
+/* The tray before sending */
+.pending-video { position: relative; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 10px; overflow: hidden; background: #000; flex: none; }
+.pending-video video { width: 100%; height: 100%; object-fit: cover; }
+.pending-video .i { position: absolute; width: 16px; height: 16px; color: #fff; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6)); }
+/* Upload progress */
+.up-bar { position: relative; display: flex; align-items: center; min-height: 28px; margin: 0 0 6px; padding: 0 12px; border-radius: 10px; background: var(--input); overflow: hidden; font-size: 0.8rem; font-weight: 700; }
+.up-bar i, .up-pill i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: color-mix(in srgb, var(--accent) 28%, transparent); transition: width 160ms linear; }
+.up-bar span, .up-pill span { position: relative; }
+.up-pill { position: fixed; z-index: 450; left: 50%; bottom: calc(96px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 16px; border-radius: 999px; background: var(--surface); box-shadow: var(--shadow-lg, 0 14px 30px -12px rgba(0, 0, 0, 0.6)), 0 0 0 1px var(--border); overflow: hidden; font-size: 0.86rem; font-weight: 700; }
+.up-pill.failed { color: #f87171; }
+.up-pill button { position: relative; min-height: 30px; padding: 0 10px; border: 0; border-radius: 999px; background: var(--input); color: var(--text); font: inherit; font-size: 0.8rem; cursor: pointer; }
+/* Preview before sending (group chats) */
+dialog.vid-confirm { width: min(440px, calc(100vw - 24px)); padding: 0; border: 1px solid var(--border); border-radius: 22px; background: var(--surface); color: var(--text); }
+dialog.vid-confirm::backdrop { background: rgba(0, 0, 0, 0.6); }
+.vid-card { display: grid; gap: 10px; padding: 12px; }
+.vid-card video { width: 100%; max-height: 56vh; border-radius: 14px; background: #000; }
+.vid-caption { min-height: 44px; padding: 0 14px; border: 0; border-radius: 12px; background: var(--input); color: var(--text); font: inherit; font-size: 16px; }
+.vid-meta { margin: 0; color: var(--text-muted); font-size: 0.8rem; }
+.vid-acts { display: grid; grid-template-columns: 1fr 1.4fr; gap: 8px; }
+.vid-acts button { min-height: 46px; justify-content: center; }
+@media (prefers-reduced-motion: reduce) { .msg-video-cover.loading .msg-video-play { animation: none; } }

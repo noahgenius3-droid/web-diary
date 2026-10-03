@@ -237,6 +237,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const locations = atts.filter(a => a.kind === 'location' && a.id);
         const voices = atts.filter(a => a.kind === 'audio' && a.path);
         const contacts = atts.filter(a => a.kind === 'contact' && a.id);
+        const videos = atts.filter(a => a.kind === 'video' && a.path);
         return `
             <div class="gc-msg${mine ? ' mine' : ''}${grouped ? ' grouped' : ''}${pinned ? ' is-pinned' : ''}${!mine && m.body && s.profile && new RegExp(`@(${s.profile.username}|everyone|all)\\b`, 'i').test(m.body) ? ' mentions-me' : ''}" data-mid="${m.id}">
                 ${!mine ? `<span class="gc-av">${grouped ? '' : `<button type="button" class="gc-who" data-profile="${esc(m.author)}" aria-label="View ${esc(p.display_name)}’s profile">${avatar(p, 'sm')}</button>`}</span>` : ''}
@@ -245,6 +246,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="gc-bubble">
                         ${m.forwarded ? '<span class="msg-forwarded"><svg class="i"><use href="#i-forward"/></svg>Forwarded</span>' : ''}
                         ${reply ? `<button type="button" class="gc-quote" data-action="gc-goto" data-id="${reply.id}"><strong>${esc(personOf(reply.author).display_name)}</strong><span>${esc(reply.deleted_at ? 'Message deleted' : (reply.body || (reply.attachments || []).length ? (reply.body || '📎 Attachment') : '')).slice(0, 120)}</span></button>` : ''}
+                        ${videos.map(v => (I.videoHTML ? I.videoHTML(v) : '').replace(/data-src-path=/, `data-bucket="${BUCKET}" data-src-path=`).replace(/<img data-path=/, `<img data-bucket="${BUCKET}" data-path=`)).join('')}
                         ${photos.length ? `<div class="gc-photos n${Math.min(photos.length, 4)}">${photos.slice(0, 4).map(ph => `<button type="button" class="gc-photo" data-action="gc-view-photo" data-path="${esc(ph.path)}"><img data-path="${esc(ph.path)}" data-bucket="${BUCKET}" alt=""></button>`).join('')}</div>` : ''}
                         ${voices.map(a => I.voiceHTML(a, BUCKET)).join('')}
                         ${I.contactCardHTML ? contacts.map(I.contactCardHTML).join('') : ''}
@@ -588,6 +590,51 @@ document.addEventListener('DOMContentLoaded', () => {
         C.showChat(r.communityId);
     });
 
+    // Watch the video before it goes out; add a caption; Send or Cancel
+    function previewVideo(file) {
+        return new Promise(resolve => {
+            const url = URL.createObjectURL(file);
+            const dlg = document.createElement('dialog');
+            dlg.className = 'vid-confirm';
+            dlg.setAttribute('aria-label', 'Send a video');
+            dlg.innerHTML = `
+                <form method="dialog" class="vid-card">
+                    <video src="${url}" controls playsinline preload="metadata"></video>
+                    <input class="vid-caption" maxlength="500" placeholder="Add a caption…" aria-label="Caption" autocomplete="off">
+                    <p class="vid-meta">${esc(file.name || 'Video')} · ${Media.formatSize(file.size)}</p>
+                    <div class="vid-acts"><button type="button" class="ghost-btn" value="cancel">Cancel</button><button type="submit" class="primary-btn" value="send">Send video</button></div>
+                </form>`;
+            const host = document.querySelector('dialog[open]') || document.body;
+            host.append(dlg);
+            let answer = null;
+            dlg.querySelector('[value="cancel"]').addEventListener('click', () => dlg.close());
+            dlg.querySelector('form').addEventListener('submit', e => { e.preventDefault(); answer = { caption: dlg.querySelector('.vid-caption').value.trim() }; dlg.close(); });
+            dlg.addEventListener('close', () => { URL.revokeObjectURL(url); dlg.remove(); resolve(answer); });
+            dlg.showModal();
+        });
+    }
+    function progressPill(text) {
+        const el = document.createElement('div');
+        el.className = 'up-pill';
+        el.setAttribute('role', 'status');
+        el.innerHTML = '<i></i><span></span>';
+        (document.querySelector('dialog[open]') || document.body).append(el);
+        const set = (t, f) => { el.querySelector('span').textContent = t; el.querySelector('i').style.width = `${Math.round((f || 0) * 100)}%`; };
+        set(text, 0);
+        return {
+            set,
+            done: () => el.remove(),
+            fail: (t, retry) => {
+                el.classList.add('failed');
+                el.innerHTML = `<span></span><button type="button">Retry</button><button type="button" aria-label="Dismiss">✕</button>`;
+                el.querySelector('span').textContent = t;
+                const [again, x] = el.querySelectorAll('button');
+                again.addEventListener('click', () => { el.remove(); retry(); });
+                x.addEventListener('click', () => el.remove());
+            }
+        };
+    }
+
     // ---------- Group info page ----------
     // Everything about the group in one place: who's in it and their roles, what's pinned, shared media,
     // settings, and (for staff) reports from the group and banned members.
@@ -827,6 +874,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const run = name => setTimeout(() => app.actions[name](el), 0);
             app.openPopover(el, [
                 { label: 'Photo', icon: 'i-image', onClick: () => run('gc-photo') },
+                ...(I.videoOn && I.videoOn() ? [{ label: 'Video', icon: 'i-video', onClick: () => run('gc-video') }] : []),
                 window.LiveLocation && window.LiveLocation.supported ? { label: 'Live location', icon: 'i-pin', onClick: () => run('gc-location') } : null,
                 { label: 'Contact', icon: 'i-contact', onClick: () => run('gc-contact') }
             ].filter(Boolean));
@@ -897,6 +945,34 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!paths.length) return app.showToast('Couldn’t upload that photo');
             await send($('gc-input') ? $('gc-input').value.trim() : '', paths);
             if ($('gc-input')) $('gc-input').value = '';
+        },
+        'gc-video': async () => {
+            const [file] = await Media.pickFiles('video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm', false);
+            if (!file) return;
+            const type = (file.type || '').split(';')[0];
+            if (!I.VIDEO_TYPES.includes(type)) return app.showToast('That video isn’t supported — use MP4, MOV or WebM');
+            if (file.size > I.MAX_VIDEO) return app.showToast('That video is larger than 100 MB — try a shorter clip');
+            const ok = await previewVideo(file);
+            if (!ok) return;
+            const info = await I.probeVideo(file);
+            const base = `${g.cid}/${me()}/${randomId()}`;
+            const ext = { 'video/mp4': '.mp4', 'video/quicktime': '.mov', 'video/webm': '.webm' }[type];
+            const bar = progressPill('Uploading video… 0%');
+            const { error } = await I.uploadWithProgress(BUCKET, base + ext, file, type, f => bar.set(`Uploading video… ${Math.round(f * 100)}%`, f));
+            if (error) {
+                bar.fail('Upload failed', () => run('gc-video'));
+                return;
+            }
+            bar.set('Sending…', 1);
+            let poster = null;
+            if (info.poster) {
+                const r = await client.storage.from(BUCKET).upload(base + '-poster.jpg', info.poster, { contentType: 'image/jpeg', upsert: false });
+                if (!r.error) poster = base + '-poster.jpg';
+            }
+            const att = { kind: 'video', path: base + ext, type, size: file.size, ...(poster ? { poster } : {}),
+                ...(info.duration ? { duration: Math.round(info.duration) } : {}), ...(info.width ? { width: info.width, height: info.height } : {}) };
+            await send(ok.caption || '', [att]);
+            bar.done();
         },
         'gc-location': async () => {
             if (!window.LiveLocation) return;

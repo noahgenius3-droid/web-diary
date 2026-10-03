@@ -8,6 +8,8 @@ window.DIARY_CONFIG = {
     // Voice calls connect people directly. STUN works on most networks; some mobile carriers
     // need a TURN relay too — add one here, e.g.
     //   { urls: 'turn:your.turn.server:3478', username: '…', credential: '…' }
+    // Videos in chats: switched on once the storage buckets accept video (migration 20261004090000_diary_chat_video)
+    chatVideo: false,
     iceServers: [
         { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }
     ]

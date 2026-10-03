@@ -20,6 +20,32 @@ document.addEventListener('DOMContentLoaded', () => {
         'application/zip'
     ];
     const DOC_ACCEPT = '.pdf,.txt,.csv,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip';
+    // Videos in chats (MP4, MOV, WebM up to 100 MB). The storage bucket enforces the same types and size on the
+    // server; this switch stays off until that's in place (window.DIARY_CONFIG.chatVideo).
+    const VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/webm'];
+    const MAX_VIDEO = 100 * 1048576;
+    const videoOn = () => !!(window.DIARY_CONFIG || {}).chatVideo;
+    // A still frame, the length and the size of a video, read on this device before anything is uploaded
+    function probeVideo(file) {
+        return new Promise(resolve => {
+            const url = URL.createObjectURL(file);
+            const v = document.createElement('video');
+            let done = false;
+            const finish = r => { if (done) return; done = true; clearTimeout(t); v.removeAttribute('src'); v.load(); URL.revokeObjectURL(url); resolve(r); };
+            const t = setTimeout(() => finish({ duration: 0, poster: null, width: 0, height: 0 }), 8000);
+            v.muted = true; v.playsInline = true; v.preload = 'metadata';
+            v.onloadedmetadata = () => { v.currentTime = Math.min(0.5, (v.duration || 1) / 3); };
+            v.onseeked = () => {
+                const w = v.videoWidth || 640, h = v.videoHeight || 360, scale = Math.min(1, 640 / Math.max(w, h));
+                const c = document.createElement('canvas');
+                c.width = Math.round(w * scale); c.height = Math.round(h * scale);
+                try { c.getContext('2d').drawImage(v, 0, 0, c.width, c.height); } catch (e) { /* no frame */ }
+                c.toBlob(b => finish({ duration: v.duration || 0, poster: b, width: w, height: h }), 'image/jpeg', 0.78);
+            };
+            v.onerror = () => finish({ duration: 0, poster: null, width: 0, height: 0, error: true });
+            v.src = url;
+        });
+    }
     const EMOJI = ['😀', '😂', '🥰', '😊', '😎', '🤔', '😅', '😢', '😭', '😤', '😴', '🤗', '👍', '👏', '🙏', '💪',
         '🎉', '✨', '🔥', '❤️', '💙', '💚', '💛', '🌸', '🌞', '🌙', '☕', '📚', '✍️', '🎧', '🏃', '✅'];
 
@@ -952,6 +978,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 async () => {
                     await loadFriends();
                     app.requestRender(['messages', 'feed']);
+                    clearTimeout(s.pymkTimer);
+                    s.pymkTimer = setTimeout(() => refreshSuggestions(true), 1500);
                 })
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'diary_comments' },
                 payload => onCommentInsert(payload.new))
@@ -1273,12 +1301,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const list = s.pending[friendId] = s.pending[friendId] || [];
         for (const file of files) {
             const type = (file.type || '').split(';')[0];
-            if (!ALLOWED_TYPES.includes(type)) {
-                app.showToast(`${file.name || 'That file'} isn’t a supported type`);
+            const isVideo = videoOn() && VIDEO_TYPES.includes(type);
+            if (!isVideo && !ALLOWED_TYPES.includes(type)) {
+                app.showToast(type.startsWith('video/') ? `${file.name || 'That video'} isn’t a supported video — use MP4, MOV or WebM` : `${file.name || 'That file'} isn’t a supported type`);
                 continue;
             }
-            if (file.size > MAX_UPLOAD) {
-                app.showToast(`${file.name || 'File'} is larger than 20 MB`);
+            if (file.size > (isVideo ? MAX_VIDEO : MAX_UPLOAD)) {
+                app.showToast(`${file.name || 'File'} is larger than ${isVideo ? '100' : '20'} MB${isVideo ? ' — try a shorter clip' : ''}`);
                 continue;
             }
             if (list.length >= 10) {
@@ -1292,8 +1321,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 size: file.size,
                 kind: extra.kind || Media.kindOf(type),
                 duration: extra.duration,
-                preview: type.startsWith('image/') ? URL.createObjectURL(file) : null
+                preview: type.startsWith('image/') || type.startsWith('video/') ? URL.createObjectURL(file) : null
             });
+            // Videos: read the length and a still frame for the bubble (in the background; the chat stays responsive)
+            if (type.startsWith('video/')) {
+                const item = list[list.length - 1];
+                probeVideo(file).then(info => {
+                    if (info.error) { app.showToast(`Couldn’t read ${item.name} — it may be in a format this device can’t play`); }
+                    Object.assign(item, { duration: info.duration, posterBlob: info.poster, width: info.width, height: info.height });
+                    renderPending();
+                });
+            }
         }
         renderPending();
     }
@@ -1306,8 +1344,9 @@ document.addEventListener('DOMContentLoaded', () => {
         updateComposerButton();
         box.innerHTML = list.map(p => `
             <div class="pending">
-                ${p.preview ? `<img src="${p.preview}" alt="">` : `<svg class="i"><use href="#${p.kind === 'audio' ? 'i-mic' : 'i-file'}"/></svg>`}
-                <span class="pending-name">${esc(p.name)}<small>${p.kind === 'audio' ? Media.formatDuration(p.duration) : Media.formatSize(p.size)}</small></span>
+                ${p.kind === 'video' && p.preview ? `<span class="pending-video"><video src="${p.preview}" muted playsinline preload="metadata"></video><svg class="i" aria-hidden="true"><use href="#i-play"/></svg></span>`
+                    : p.preview ? `<img src="${p.preview}" alt="">` : `<svg class="i"><use href="#${p.kind === 'audio' ? 'i-mic' : 'i-file'}"/></svg>`}
+                <span class="pending-name">${esc(p.name)}<small>${p.kind === 'audio' || (p.kind === 'video' && p.duration) ? `${p.kind === 'video' ? 'Video · ' : ''}${Media.formatDuration(p.duration)}${p.kind === 'video' ? ` · ${Media.formatSize(p.size)}` : ''}` : Media.formatSize(p.size)}</small></span>
                 <button type="button" class="att-remove" data-action="remove-pending" data-id="${p.id}" aria-label="Remove ${esc(p.name)}"><svg class="i"><use href="#i-close"/></svg></button>
             </div>`).join('');
     }
@@ -1360,12 +1399,28 @@ document.addEventListener('DOMContentLoaded', () => {
             for (const p of items) {
                 const ext = (p.name.match(/\.[a-z0-9]{1,5}$/i) || [''])[0].toLowerCase() || extFor(p.type);
                 const path = `${me}/${friendId}/${incognitoOf(friendId) ? 'incognito/' : ''}${randomId()}${ext}`;
-                const { error } = await client.storage.from(BUCKET).upload(path, p.file, { contentType: p.type, upsert: false });
-                if (error) throw new Error(`Couldn’t upload ${p.name}: ${error.message}`);
+                let poster = null;
+                if (p.kind === 'video') {
+                    const bar = uploadBar(`Uploading video… 0%`);
+                    const { error } = await uploadWithProgress(BUCKET, path, p.file, p.type, f => bar.set(`Uploading video… ${Math.round(f * 100)}%`, f));
+                    if (error) { bar.done(); throw new Error(`Upload failed — ${p.name} wasn’t sent. Tap send to try again.`); }
+                    bar.set('Sending…', 1);
+                    if (p.posterBlob) {
+                        const pp = path.replace(/\.[a-z0-9]+$/i, '') + '-poster.jpg';
+                        const r = await client.storage.from(BUCKET).upload(pp, p.posterBlob, { contentType: 'image/jpeg', upsert: false });
+                        if (!r.error) poster = pp;
+                    }
+                    bar.done();
+                } else {
+                    const { error } = await client.storage.from(BUCKET).upload(path, p.file, { contentType: p.type, upsert: false });
+                    if (error) throw new Error(`Couldn’t upload ${p.name}: ${error.message}`);
+                }
                 uploaded.push({
                     path, name: p.name.slice(0, 120), type: p.type, size: p.size, kind: p.kind,
                     ...(p.duration ? { duration: Math.round(p.duration) } : {}),
-                    ...(p.waveform ? { waveform: p.waveform.slice(0, 40) } : {})
+                    ...(p.waveform ? { waveform: p.waveform.slice(0, 40) } : {}),
+                    ...(poster ? { poster } : {}),
+                    ...(p.width ? { width: p.width, height: p.height } : {})
                 });
             }
             const { data, error } = await client.from('diary_messages')
@@ -1381,12 +1436,22 @@ document.addEventListener('DOMContentLoaded', () => {
             return true;
         } catch (err) {
             app.showToast(err.message || 'Message not sent');
-            if (uploaded.length) client.storage.from(BUCKET).remove(uploaded.map(u => u.path));
+            if (uploaded.length) client.storage.from(BUCKET).remove(uploaded.flatMap(u => (u.poster ? [u.path, u.poster] : [u.path])));
             return false;
         } finally {
             s.sending = false;
             content.querySelector('.composer')?.classList.remove('busy');
         }
+    }
+
+    // A thin progress line over the message box while a video uploads
+    function uploadBar(text) {
+        const comp = content.querySelector('.composer');
+        let el = comp && comp.querySelector('.up-bar');
+        if (comp && !el) { el = document.createElement('div'); el.className = 'up-bar'; el.setAttribute('role', 'status'); el.innerHTML = '<i></i><span></span>'; comp.prepend(el); }
+        const set = (t, f) => { if (!el) return; el.querySelector('span').textContent = t; el.querySelector('i').style.width = `${Math.round((f || 0) * 100)}%`; };
+        set(text, 0);
+        return { set, done: () => { if (el) el.remove(); } };
     }
 
     // ---------- Voice notes (WhatsApp style) ----------
@@ -1886,7 +1951,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!d.open) d.showModal();
         const { data, error } = await client.rpc('diary_recently_deleted', { p_kind: kind, p_scope: scope });
         const text = r => (kind === 'dm' ? Rich.toText(r.body || '') : String(r.body || '')).trim()
-            || ((r.attachments || [])[0] ? ({ audio: '🎤 Voice note', image: '📷 Photo', location: '📍 Location' }[r.attachments[0].kind] || '📎 Attachment') : '');
+            || ((r.attachments || [])[0] ? ({ audio: '🎤 Voice note', image: '📷 Photo', video: '🎥 Video', location: '📍 Location' }[r.attachments[0].kind] || '📎 Attachment') : '');
         d.innerHTML = `
             <div class="hist-card">
                 <header><strong>${esc(title)}</strong><button type="button" class="icon-btn" data-close aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button></header>
@@ -2727,7 +2792,7 @@ document.addEventListener('DOMContentLoaded', () => {
         s.feedLoading = true;
         const [feedRes, suggestRes, repostRes, hiddenRes, watchRes] = await Promise.all([
             client.from('diary_shared_entries').select(FEED_SELECT).order('shared_at', { ascending: false }).limit(100),
-            client.rpc('diary_people_you_may_know', { p_limit: 12 }),
+            client.rpc('diary_people_you_may_know', { p_limit: 24 }),
             client.from('diary_reposts').select('entry_id').order('created_at', { ascending: false }).limit(60),
             client.from('diary_hidden_posts').select('kind, item_id'),
             client.from('diary_post_watch').select('kind, item_id')
@@ -2747,7 +2812,8 @@ document.addEventListener('DOMContentLoaded', () => {
         feed.sort((a, b) => b.sortAt - a.sortAt);
         s.feedLoading = false;
         s.feed = feed;
-        s.suggestions = (!suggestRes.error && Array.isArray(suggestRes.data)) ? verifiedFirst(suggestRes.data) : [];
+        s.suggestions = (!suggestRes.error && Array.isArray(suggestRes.data)) ? arrangeSuggestions(suggestRes.data) : [];
+        s.suggestedAt = Date.now();
         await loadSavedExtra();
         app.requestRender(['feed', 'explore']);
         loadPreviews(feed);
@@ -2927,6 +2993,53 @@ document.addEventListener('DOMContentLoaded', () => {
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible' && s.profile && Date.now() - verifiedAt > 15 * 60000) loadVerified().catch(() => {});
     });
+    // ---------- People you may know: dismiss, rotate, refresh ----------
+    // The server ranks people (mutual friends, shared groups and interests, who your friends follow, who follows you)
+    // and leaves out friends, pending requests, people you follow and blocks. On top of that, here:
+    // people you dismissed stay away for 60 days, and faces you've seen many times without acting move down.
+    const PYMK_KEY = () => `cordialPymk:${(s.profile && s.profile.id) || ''}`;
+    function pymkMemory() { try { return JSON.parse(localStorage.getItem(PYMK_KEY()) || '{}'); } catch (e) { return {}; } }
+    function pymkSave(mem) { try { localStorage.setItem(PYMK_KEY(), JSON.stringify(mem)); } catch (e) { /* private mode */ } }
+    function arrangeSuggestions(list) {
+        const mem = pymkMemory();
+        const now = Date.now();
+        const hidden = mem.hidden || {};
+        const seen = mem.seen || {};
+        const out = list.filter(p => p && p.id && !(hidden[p.id] && hidden[p.id] > now) && !(s.friends || []).some(f => f.id === p.id));
+        // Seen 6+ times: still suggested, just after the fresh ones (the server's order is kept otherwise)
+        const fresh = out.filter(p => (seen[p.id] || 0) < 6), stale = out.filter(p => (seen[p.id] || 0) >= 6);
+        const arranged = verifiedFirst(fresh).concat(stale);
+        arranged.slice(0, 8).forEach(p => { seen[p.id] = (seen[p.id] || 0) + 1; });
+        mem.seen = Object.fromEntries(Object.entries(seen).slice(-300));
+        pymkSave(mem);
+        return arranged;
+    }
+    function dismissSuggestion(id) {
+        if (!id) return;
+        const mem = pymkMemory();
+        mem.hidden = mem.hidden || {};
+        mem.hidden[id] = Date.now() + 60 * 86400000;
+        // forget expired ones
+        Object.keys(mem.hidden).forEach(k => { if (mem.hidden[k] < Date.now()) delete mem.hidden[k]; });
+        pymkSave(mem);
+        s.suggestions = (s.suggestions || []).filter(p => p.id !== id);
+        app.requestRender(['feed', 'explore']);
+        if ((s.suggestions || []).length < 4) refreshSuggestions(true);
+    }
+    let pymkBusy = false;
+    async function refreshSuggestions(force) {
+        if (pymkBusy || !signedIn() || isGuest()) return;
+        if (!force && s.suggestedAt && Date.now() - s.suggestedAt < 10 * 60000) return;
+        pymkBusy = true;
+        try {
+            const { data, error } = await client.rpc('diary_people_you_may_know', { p_limit: 24 });
+            if (!error && Array.isArray(data)) { s.suggestions = arrangeSuggestions(data); s.suggestedAt = Date.now(); app.requestRender(['feed', 'explore']); }
+        } finally { pymkBusy = false; }
+    }
+    // Fresh suggestions every half hour while Cordial is open, and when you come back to it
+    setInterval(() => { if (!document.hidden) refreshSuggestions(true); }, 30 * 60000);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshSuggestions(false); });
+
     // A verified perk: verified people come first in people search and suggestions (order kept otherwise)
     function verifiedFirst(list) {
         const v = p => (s.verified && s.verified.has(p.id)) || p.verified ? 1 : 0;
@@ -4007,6 +4120,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                 <span class="contact-name" data-profile="${esc(p.id)}" role="button" tabindex="0"><strong>${esc(p.display_name)}</strong><small>${esc(p.reason || `@${p.username}`)}</small></span>
                                 ${followButton(p, 'chip small')}
                                 <button class="icon-btn ghost accent" data-action="suggest-add" data-username="${esc(p.username)}" aria-label="Add ${esc(p.display_name)} as a friend"><svg class="i"><use href="#i-user-plus"/></svg></button>
+                                <button type="button" class="icon-btn ghost pymk-x-row" data-action="suggest-dismiss" data-id="${esc(p.id)}" aria-label="Not now — hide ${esc(p.display_name)} from suggestions"><svg class="i"><use href="#i-close"/></svg></button>
                             </div>`).join('')}
                         <button class="link-btn center" data-action="go-explore-people">See more people</button>
                     </section>` : ''}
@@ -4346,11 +4460,13 @@ document.addEventListener('DOMContentLoaded', () => {
     function pymkStripHTML() {
         const list = (s.suggestions || []).slice(0, 10);
         if (!list.length) return '';
+        const few = (s.friends || []).length < 3;
         return `
-            <section class="pymk-strip" aria-label="People you may know">
-                <header><h3>People you may know</h3><button type="button" class="link-btn accent" data-action="find-people">See more</button></header>
+            <section class="pymk-strip${few ? ' few' : ''}" aria-label="People you may know">
+                <header>${few ? '<div><h3>You don’t have many connections yet</h3><p>Discover people you may know and start building your Cordial.</p></div>' : '<h3>People you may know</h3>'}<button type="button" class="link-btn accent" data-action="find-people">See more</button></header>
                 <div class="pymk-row">${list.map(p => `
                     <div class="pymk-card">
+                        <button type="button" class="pymk-x" data-action="suggest-dismiss" data-id="${esc(p.id)}" aria-label="Not now — hide ${esc(p.display_name)} from suggestions"><svg class="i"><use href="#i-close"/></svg></button>
                         <button type="button" class="pymk-open" data-profile="${esc(p.id)}" aria-label="${esc(p.display_name)}’s profile">${avatar(p, 'lg')}<strong>${esc(p.display_name)}</strong><small>${esc(p.reason || `@${p.username}`)}</small></button>
                         ${followButton(p, 'chip accent') || `<button type="button" class="chip accent" data-action="suggest-add" data-username="${esc(p.username)}">Add friend</button>`}
                     </div>`).join('')}</div>
@@ -4572,8 +4688,18 @@ document.addEventListener('DOMContentLoaded', () => {
             // One clear first step: no friends yet → find them; friends but a quiet feed → be the first to post
             : (s.friends || []).length
                 ? ['Your Feed is quiet', 'Be the first: a moment from today, a photo, or what’s on your mind.', '<button type="button" class="primary-btn feed-empty-main" data-action="feed-compose"><svg class="i"><use href="#i-pencil"/></svg>Write your first post</button><button type="button" class="link-btn" data-action="go-explore-people">or find more people</button>']
-                : ['Your Feed starts with your people', 'Add friends to see their posts, stories and moments here.', '<button type="button" class="primary-btn feed-empty-main" data-action="go-explore-people"><svg class="i"><use href="#i-user-plus"/></svg>Find people you know</button><button type="button" class="link-btn" data-action="feed-compose">or write your first post</button>'];
-        return `<div class="empty feed-empty"><p class="empty-title">${title}</p><p>${text}</p>${actions ? `<div class="feed-empty-actions">${actions}</div>` : ''}</div>`;
+                : ['You don’t have many connections yet', 'Discover people you may know and start building your Cordial network.', '<button type="button" class="primary-btn feed-empty-main" data-action="go-explore-people"><svg class="i"><use href="#i-user-plus"/></svg>Find people you know</button><button type="button" class="link-btn" data-action="feed-compose">or write your first post</button>'];
+        const noFriends = s.feedFilter !== 'saved' && !type && !following && !filterLabel && !(s.friends || []).length;
+        const people = noFriends ? (s.suggestions || []).slice(0, 5) : [];
+        return `<div class="empty feed-empty"><p class="empty-title">${title}</p><p>${text}</p>
+            ${people.length ? `<div class="feed-empty-people" aria-label="People you may know">${people.map(p => `
+                <div class="suggest-row">
+                    <button type="button" class="row-av" data-profile="${esc(p.id)}" aria-label="${esc(p.display_name)}’s profile">${avatar(p, 'md')}</button>
+                    <span class="contact-name" data-profile="${esc(p.id)}" role="button" tabindex="0"><strong>${esc(p.display_name)}</strong><small>${esc(p.reason || `@${p.username}`)}</small></span>
+                    ${followButton(p, 'chip small') || `<button type="button" class="chip accent small" data-action="suggest-add" data-username="${esc(p.username)}">Add friend</button>`}
+                    <button type="button" class="icon-btn ghost pymk-x-row" data-action="suggest-dismiss" data-id="${esc(p.id)}" aria-label="Not now — hide ${esc(p.display_name)} from suggestions"><svg class="i"><use href="#i-close"/></svg></button>
+                </div>`).join('')}</div>` : ''}
+            ${actions ? `<div class="feed-empty-actions">${actions}</div>` : ''}</div>`;
     }
 
     // Share: everything you can do with a post, in one sheet
@@ -5607,6 +5733,7 @@ document.addEventListener('DOMContentLoaded', () => {
         startProgress: opts => startProgress(opts),
         soundOf, soundLineHTML, soundPlayer, soundRecord, openSound, useSound, ownAudio, openPostEditor,
         uploadWithProgress: (bucket, path, body, type, onProgress) => uploadWithProgress(bucket, path, body, type, onProgress),
+        probeVideo, VIDEO_TYPES, MAX_VIDEO, videoOn, videoHTML: a => attachmentHTML(a),
         openEntry(id, opts) {
             const p = findPost('entry', id);
             if (!p) {
@@ -5833,6 +5960,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (a.kind === 'contact') return `👤 ${a.name || 'Contact'}`;
         if (a.kind === 'note') return a.once && !a.saved ? (a.opened_at ? '📝 Note · opened' : '📝 New note') : `📝 ${a.title || 'A note'}`;
         if (a.kind === 'image' || a.kind === 'drawing') return '📷 Photo';
+        if (a.kind === 'video') return '🎥 Video';
         return `📎 ${a.name}`;
     }
 
@@ -6008,6 +6136,17 @@ document.addEventListener('DOMContentLoaded', () => {
             return `<button type="button" class="msg-img" data-action="chat-view-image" data-img="${path}" aria-label="View ${name}"><img data-path="${path}" alt="${name}"></button>`;
         }
         if (a.kind === 'audio') return voiceHTML(a);
+        if (a.kind === 'video') {
+            const ratio = a.width && a.height ? Math.max(0.56, Math.min(1.78, a.width / a.height)) : 16 / 9;
+            return `<div class="msg-video" style="aspect-ratio:${ratio.toFixed(3)}">
+                <video data-src-path="${path}" controls playsinline preload="none" aria-label="${name}"></video>
+                <button type="button" class="msg-video-cover" data-action="chat-play-video" aria-label="Play video${a.duration ? `, ${Media.formatDuration(a.duration)}` : ''}">
+                    ${a.poster ? `<img data-path="${esc(a.poster)}" alt="">` : ''}
+                    <span class="msg-video-play" aria-hidden="true"><svg class="i"><use href="#i-play"/></svg></span>
+                    ${a.duration ? `<small>${Media.formatDuration(a.duration)}</small>` : ''}
+                </button>
+            </div>`;
+        }
         return `<a class="file-chip" data-path="${path}" target="_blank" rel="noopener" download="${name}">
             <svg class="i"><use href="#i-file"/></svg><span>${name}<small>${Media.formatSize(a.size)}</small></span></a>`;
     }
@@ -6312,6 +6451,21 @@ document.addEventListener('DOMContentLoaded', () => {
             s.suggestions = (s.suggestions || []).filter(p => p.username !== el.dataset.username);
             addFriend(el.dataset.username);
         },
+        'suggest-dismiss': el => dismissSuggestion(el.dataset.id),
+        'chat-play-video': async el => {
+            const box = el.closest('.msg-video');
+            const v = box && box.querySelector('video');
+            if (!v) return;
+            el.classList.add('loading');
+            if (!v.src) {
+                const path = v.dataset.srcPath;
+                const { data } = await client.storage.from(v.dataset.bucket || BUCKET).createSignedUrl(path, URL_TTL);
+                if (!data || !data.signedUrl) { el.classList.remove('loading'); return app.showToast('That video isn’t available any more'); }
+                v.src = data.signedUrl;
+            }
+            el.hidden = true;
+            v.play().catch(() => {});
+        },
         'feed-photo': el => {
             const entry = s.urls.get(`${FEED_BUCKET}:${el.dataset.img}`);
             if (entry) Media.lightbox(entry.url);
@@ -6556,6 +6710,7 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         'chat-add': el => app.openPopover(el, [
             { label: 'Photo', icon: 'i-image', onClick: async () => addPending(await Media.pickFiles('image/png,image/jpeg,image/gif,image/webp')) },
+            ...(videoOn() ? [{ label: 'Video', icon: 'i-video', onClick: async () => addPending(await Media.pickFiles('video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm')) }] : []),
             { label: 'Document', icon: 'i-file', onClick: async () => addPending(await Media.pickFiles(DOC_ACCEPT)) },
             { label: 'Voice note', icon: 'i-mic', onClick: () => startVoice(0, true) },
             ...(window.diaryNoteShare ? [{ label: 'Note', icon: 'i-note', onClick: () => pickNoteForChat(el) }] : []),
