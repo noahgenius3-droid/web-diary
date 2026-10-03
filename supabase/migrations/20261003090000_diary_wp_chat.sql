@@ -9,14 +9,10 @@ create table public.diary_wp_chat (
     kind text not null check (kind in ('comment', 'reaction')),
     body text check (body is null or length(btrim(body)) between 1 and 300),
     emoji text check (emoji is null or emoji in ('👏', '🔥', '😂', '😮', '😅', '🤝', '💯', '🎉')),
-    target uuid references public.diary_wp_chat (id) on delete cascade, -- a reaction on a message (empty = a reaction to the game)
     created_at timestamptz not null default now(),
-    check (target is null or kind = 'reaction'),
     check ((kind = 'comment' and body is not null and emoji is null) or (kind = 'reaction' and emoji is not null and body is null))
 );
 create index diary_wp_chat_match on public.diary_wp_chat (match_id, created_at);
--- One of each emoji per person per message
-create unique index diary_wp_chat_one_reaction on public.diary_wp_chat (target, user_id, emoji) where target is not null;
 alter table public.diary_wp_chat enable row level security;
 
 -- Only the match's players read it
@@ -28,7 +24,6 @@ create policy "Players talk in their matches" on public.diary_wp_chat for insert
     user_id = (select auth.uid())
     and exists (select 1 from public.diary_wp_matches m
                 where m.id = match_id and (select auth.uid()) = any (m.players) and not ((select auth.uid()) = any (m.out_players)))
-    and (target is null or exists (select 1 from public.diary_wp_chat t where t.id = target and t.match_id = diary_wp_chat.match_id and t.kind = 'comment'))
 );
 -- Your own messages can be taken back
 create policy "Players delete their own chat" on public.diary_wp_chat for delete to authenticated using (user_id = (select auth.uid()));
@@ -43,7 +38,7 @@ create policy "No game chat across a block" on public.diary_wp_chat as restricti
 );
 
 grant select, delete on public.diary_wp_chat to authenticated;
-grant insert (match_id, kind, body, emoji, target) on public.diary_wp_chat to authenticated;
+grant insert (match_id, kind, body, emoji) on public.diary_wp_chat to authenticated;
 
 -- Easy does it: at most 20 comments/reactions a minute per player in a match
 create or replace function private.diary_wp_chat_limit() returns trigger
