@@ -8,7 +8,7 @@
 // imported while the worker installs, so this happens here, once.
 try { self.window = self; importScripts('/config.js'); } catch (e) { /* calls can still be declined in the app */ }
 
-const CACHE = 'cordial-shell-v140';
+const CACHE = 'cordial-shell-v141';
 const SHELL = [
     '/', '/index.html', '/manifest.webmanifest',
     '/style.css', '/photoedit.css',
@@ -208,6 +208,13 @@ self.addEventListener('notificationclick', event => {
     if (event.action === 'answer') url += (url.includes('?') ? '&' : '?') + 'answer=1';
     const target = new URL(url, self.location.origin).href;
     event.waitUntil((async () => {
+        // First, leave the destination where the app will find it. A Cordial that was asleep in the background
+        // (iPhone especially) may not answer a message in time, and iPhone can't be told to change page —
+        // but the app reads this the moment it's on screen again, so the tap always lands in the right place.
+        try {
+            const box = await caches.open('link-handoff');
+            await box.put('/__pending-link', new Response(JSON.stringify({ url: target, at: Date.now(), tag: n.tag || '' }), { headers: { 'Content-Type': 'application/json' } }));
+        } catch (e) { /* no storage: the message below still works */ }
         const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
         const open = windows.find(w => new URL(w.url).origin === self.location.origin);
         if (open) {

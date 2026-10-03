@@ -815,6 +815,10 @@ document.addEventListener('DOMContentLoaded', () => {
         registerDevice();
         setTimeout(flushOutbox, 1500);
         if (s.pendingRoute) { const r = s.pendingRoute; s.pendingRoute = null; setTimeout(() => routeTo(r), 300); }
+        // Anything you tapped before you were signed in (a game invite, a group message…)
+        let pendingLink = null;
+        try { pendingLink = sessionStorage.getItem('cordialPendingLink'); sessionStorage.removeItem('cordialPendingLink'); } catch (e) { /* private mode */ }
+        if (pendingLink && !isGuest()) setTimeout(() => { lastLink = { key: '', at: 0 }; openDeepLink(pendingLink, 'after sign-in'); }, 500);
         // A post you tried to open from a notification before signing in
         let pendingPost = s.pendingPost;
         try { pendingPost = pendingPost || sessionStorage.getItem('cordialPendingPost'); sessionStorage.removeItem('cordialPendingPost'); } catch (e) { /* private mode */ }
@@ -2801,25 +2805,83 @@ document.addEventListener('DOMContentLoaded', () => {
         while (!signedIn() && Date.now() - t0 < 15000) await new Promise(r => setTimeout(r, 200));
         return signedIn();
     }
-    // A notification tapped while Cordial is already open: go to the post without reloading
+    // ---------- Deep links: every notification tap comes through here ----------
+    // A tap on a device alert reaches the app one of three ways — the address Cordial opens with (it was closed),
+    // a message from the app worker (it was open), or the hand-off the worker leaves (it was asleep in the
+    // background). All three go through openDeepLink(), which opens the exact thing, once.
+    // The address only says what to open; whether you may see it is checked by the server when it loads.
+    let lastLink = { key: '', at: 0 };
+    const linkKey = url => url.pathname + url.search + url.hash;
+    function openDeepLink(href, source) {
+        let url;
+        try { url = new URL(href, location.origin); } catch (e) { return false; }
+        if (url.origin !== location.origin) return false;
+        const q = url.searchParams;
+        if (q.get('ring')) return false; // calls open themselves (call.js)
+        const key = linkKey(url);
+        if (key === '/' || key === '/index.html') return false;
+        if (lastLink.key === key && Date.now() - lastLink.at < 8000) return true; // the same tap arriving twice
+        lastLink = { key, at: Date.now() };
+        try { console.info('[deep link]', source, key); } catch (e) { /* no console */ }
+        followLink(url).catch(err => {
+            try { console.warn('[deep link] failed', key, err); } catch (e) { /* no console */ }
+            app.showToast('Couldn’t open that — try again from your notifications');
+        });
+        return true;
+    }
+    async function followLink(url) {
+        const q = url.searchParams;
+        const parts = url.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
+        // Signed out: keep the destination, sign in, then go there
+        if (!(await accountReady())) {
+            try { sessionStorage.setItem('cordialPendingLink', linkKey(url)); } catch (e) { /* private mode */ }
+            if (window.diarySocial && window.diarySocial.requireSignIn) window.diarySocial.requireSignIn('Sign in to open this.');
+            return;
+        }
+        // Whatever sheet was open gives way to what you tapped (a post replaces the open post)
+        document.querySelectorAll('dialog[open]').forEach(dl => { if (!dl.classList.contains('post-view')) dl.close(); });
+        if (q.get('live')) { if (window.diaryLive) window.diaryLive.watch(q.get('live')); return; }
+        if (q.get('space')) { if (window.diarySpaces) window.diarySpaces.open(q.get('space')); return; }
+        if (parts[0] === 'post' && parts[1]) {
+            if (parts[1].startsWith('g-')) app.setView('post', { postId: parts[1] });
+            else { if (app.state.view !== 'feed') app.setView('feed'); window.diarySocial.internals.openEntry(parts[1]); }
+            return;
+        }
+        if ($('post-view') && $('post-view').open) closePost();
+        if (!url.hash) return;
+        history.pushState(null, '', url.hash);
+        window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
+    }
+    // The app worker's hand-off: read once, then removed (old taps are ignored)
+    async function takeHandoff() {
+        if (!('caches' in window)) return;
+        try {
+            const box = await caches.open('link-handoff');
+            const res = await box.match('/__pending-link');
+            if (!res) return;
+            await box.delete('/__pending-link');
+            const { url, at } = await res.json();
+            if (!url || Date.now() - at > 3 * 60000) return;
+            const u = new URL(url, location.origin);
+            // Opened fresh on that very address: the page is already going there
+            if (window.__bootLink && linkKey(u) === window.__bootLink && performance.now() < 15000) { lastLink = { key: linkKey(u), at: Date.now() }; return; }
+            openDeepLink(url, 'handoff');
+        } catch (e) { /* nothing waiting */ }
+    }
+    setTimeout(takeHandoff, 800);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(takeHandoff, 150); });
+    window.addEventListener('focus', () => setTimeout(takeHandoff, 150));
+    // A tap while Cordial is open: go there without reloading
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.addEventListener('message', e => {
             const d = e.data || {};
-            if (d.type !== 'open-url') return;
-            const url = new URL(d.url, location.origin);
-            if (url.pathname !== '/' && url.pathname !== '/index.html' || url.search || !url.hash) return;
-            if (e.ports && e.ports[0]) e.ports[0].postMessage('ok');
-            const parts = url.hash.replace(/^#\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
-            if (parts[0] === 'post' && parts[1]) {
-                document.querySelectorAll('dialog[open]').forEach(dl => { if (!dl.classList.contains('post-view')) dl.close(); });
-                if (parts[1].startsWith('g-')) app.setView('post', { postId: parts[1] });
-                else { if (app.state.view !== 'feed') app.setView('feed'); window.diarySocial.internals.openEntry(parts[1]); }
-            } else {
-                history.pushState(null, '', url.hash);
-                window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
-            }
+            if (d.type !== 'open-url' || !d.url) return;
+            if (/[?&]ring=/.test(d.url)) return; // a call: call.js answers this one
+            if (openDeepLink(d.url, 'message') && e.ports && e.ports[0]) e.ports[0].postMessage('ok');
+            caches.open('link-handoff').then(box => box.delete('/__pending-link')).catch(() => {});
         });
     }
+    window.diarySocial.openDeepLink = openDeepLink;
     app.views.post = () => {
         const id = app.state.postId || '';
         if (!resolving.has(id)) {
