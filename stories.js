@@ -32,6 +32,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     window.diaryStories = {
         strip,
+        paintStrip: () => paintStrip(),
         reels: () => st.reels || [],
         paintCounts,
         openReelComments,
@@ -136,10 +137,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <span class="story-ring add-own">${avatar(s.profile, 'lg')}<span class="story-plus"><svg class="i"><use href="#i-plus"/></svg></span></span>
                         <span>${st.busy ? 'Posting…' : 'Add story'}</span>
                     </button>
-                    ${window.diaryLive ? `<button class="story story-live" data-action="live-start" aria-label="Go live — start a live video">
-                        <span class="story-ring go-live"><span class="go-live-ic"><svg class="i"><use href="#i-live"/></svg></span></span>
-                        <span>Go live</span>
-                    </button>` : ''}
+                    ${liveItems()}
                     ${list.map(g => `
                         <button class="story" data-action="story-open" data-id="${esc(g.author)}">
                             <span class="story-ring${g.items.every(x => s.seenStories.has(x.id)) ? ' seen' : ''}">${avatar(g.person, 'lg')}</span>
@@ -150,9 +148,43 @@ document.addEventListener('DOMContentLoaded', () => {
             </section>`;
     }
 
+    // Live sits in the row like a story: one quiet "Live" entry to start your own (it opens the setup screen —
+    // nothing broadcasts until you press Start), then anyone live right now, with a thin breathing ring and a LIVE tag
+    function liveItems() {
+        const L = window.diaryLive;
+        if (!L) return '';
+        if (L.ensure) L.ensure();
+        const me = s.profile.id;
+        const lives = (L.list ? L.list() : []).filter(x => x && x.host);
+        const mine = lives.find(x => x.host === me);
+        const others = lives.filter(x => x.host !== me);
+        const entry = mine ? `
+            <button class="story story-live is-on" data-action="live-watch" data-id="${esc(mine.id)}" aria-label="You’re live — open your live video">
+                <span class="story-ring live-ring">${avatar(s.profile, 'lg')}<span class="live-tag" aria-hidden="true">LIVE</span></span>
+                <span>You’re live</span>
+            </button>` : `
+            <button class="story story-live" data-action="live-start" aria-label="Go live — set up a live video">
+                <span class="story-ring go-live"><span class="go-live-ic"><svg class="i"><use href="#i-live"/></svg></span><span class="live-tag" aria-hidden="true">LIVE</span></span>
+                <span>Live</span>
+            </button>`;
+        return entry + others.map(x => {
+            const p = x.host_profile || { display_name: 'Someone' };
+            const name = String(p.display_name || 'Someone').split(' ')[0];
+            return `
+            <button class="story story-live is-on" data-action="live-watch" data-id="${esc(x.id)}" aria-label="${esc(name)} is live${x.title ? `: ${esc(x.title)}` : ''} — watch">
+                <span class="story-ring live-ring">${avatar({ id: x.host, ...p }, 'lg')}<span class="live-tag" aria-hidden="true">LIVE</span></span>
+                <span>${esc(name)}</span>
+            </button>`;
+        }).join('');
+    }
+
     function paintStrip() {
         const bar = $('stories-bar');
-        if (bar) bar.outerHTML = strip();
+        if (!bar) return;
+        const x = (bar.querySelector('.stories') || {}).scrollLeft || 0;
+        bar.outerHTML = strip();
+        const row = document.querySelector('#stories-bar .stories');
+        if (row && x) row.scrollLeft = x; // a refresh never jumps the row back to the start
     }
 
     // ---------- Adding a story or a reel ----------

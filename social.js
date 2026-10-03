@@ -3824,7 +3824,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${announcementHTML()}
                     ${guestCardHTML()}
                     ${window.diaryStories ? window.diaryStories.strip() : ''}
-                    ${window.diaryLive ? window.diaryLive.strip() : ''}
+                    ${window.diaryLive && !window.diaryStories ? window.diaryLive.strip() : ''}
                     ${window.diarySpaces && window.diarySpaces.feedStrip ? window.diarySpaces.feedStrip() : ''}
                     <button class="new-posts" data-action="feed-refresh"${s.feedStale ? '' : ' hidden'}><svg class="i"><use href="#i-refresh"/></svg>New posts</button>
                     <div class="feed-bar">

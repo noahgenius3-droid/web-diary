@@ -396,6 +396,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function paintStrips() {
+        if (window.diaryStories && window.diaryStories.paintStrip && document.getElementById('stories-bar')) window.diaryStories.paintStrip();
         document.querySelectorAll('#live-strip').forEach(el => {
             el.innerHTML = stripInner();
             el.hidden = !(L.list && L.list.length);

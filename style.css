@@ -17005,3 +17005,21 @@ html.kb-open .sp-chat-form { padding-bottom: 8px; }
 .notif-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .notif-go { color: var(--accent); font-size: 0.76rem; font-weight: 700; }
 .notif .notif-text strong { font-weight: 700; }
+
+/* ---------- Live in the Stories row: the same size as a story, a thin ring instead of a big red disc ---------- */
+.story-live .story-ring { position: relative; }
+.story-ring.go-live, .story-ring.live-ring { padding: 2.5px; background: linear-gradient(135deg, #f43f5e, #ec4899 55%, #a855f7); }
+.story-ring.go-live .go-live-ic { display: grid; place-items: center; width: 100%; height: 100%; border-radius: 50%; border: 3px solid var(--bg, #000); background: var(--input, #1c1c22); color: #f43f5e; box-sizing: border-box; }
+.story-ring.go-live .go-live-ic .i { width: 24px; height: 24px; }
+.story-ring.live-ring .avatar { border-color: var(--bg, #000); }
+/* LIVE tag: text, not just colour */
+.live-tag { position: absolute; left: 50%; bottom: -5px; transform: translateX(-50%); padding: 1px 5px; border: 2px solid var(--bg, #000); border-radius: 5px; background: #e11d48; color: #fff; font-size: 0.56rem; font-weight: 800; letter-spacing: 0.06em; line-height: 1.35; pointer-events: none; }
+.story-ring.go-live .live-tag { background: var(--input, #1c1c22); color: #fb7185; border-color: var(--bg, #000); }
+/* Someone live: a slow, quiet breath on the ring (no glow, no spin) */
+.story-live.is-on .story-ring::before { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 2px solid rgba(244, 63, 94, 0.55); animation: live-breathe 2.4s ease-in-out infinite; pointer-events: none; }
+@keyframes live-breathe { 0%, 100% { opacity: 0; transform: scale(0.96); } 50% { opacity: 1; transform: scale(1.04); } }
+.story-live .story-ring { transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1); }
+.story-live:active .story-ring { transform: scale(0.94); }
+.feed-v2 .story-live > span:last-child { color: var(--text-muted); }
+.feed-v2 .story-live.is-on > span:last-child { color: var(--text); font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { .story-live.is-on .story-ring::before { animation: none; opacity: 0.8; } }
