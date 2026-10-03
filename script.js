@@ -2356,6 +2356,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     edBody.addEventListener('input', changed);
     edTitle.addEventListener('input', changed);
+    // Tapping the empty page below the writing puts you at the end of the note (like a notepad)
+    $('editor-form').addEventListener('click', e => {
+        if (e.target !== e.currentTarget || window.innerWidth > 760 || editor.classList.contains('diluted')) return;
+        const below = edTitle.getBoundingClientRect().bottom;
+        if (e.clientY <= below) return;
+        edBody.focus();
+        Rich.placeCaretAtEnd(edBody);
+    });
     edTitle.addEventListener('keydown', e => {
         if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
             e.preventDefault();

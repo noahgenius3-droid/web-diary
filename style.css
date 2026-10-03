@@ -17226,3 +17226,28 @@ dialog.vid-confirm::backdrop { background: rgba(0, 0, 0, 0.6); }
     .editor .rich-toolbar.fmt-open .tb-style[aria-checked="true"] { background: color-mix(in srgb, var(--ios-accent, var(--accent)) 20%, transparent); color: var(--ios-accent, var(--accent)); box-shadow: inset 0 0 0 1.5px currentColor; }
 }
 @media (prefers-reduced-motion: reduce) { .tb-style-menu { animation: none; } }
+
+/* ---------- Note editor on phones: a notepad, not a form — date, then a calm title, then the body ---------- */
+@media (max-width: 760px) {
+    .editor .ed-date-m { margin: 2px 0 14px; }
+    .editor #editor-title,
+    html.kb-open .editor #editor-title {
+        min-height: 36px;
+        padding: 0 20px;
+        font-size: 1.42rem !important; /* above the 16px no-zoom floor, so iPhone still never zooms */
+        font-weight: 700;
+        line-height: 1.25;
+        letter-spacing: -0.012em;
+    }
+    /* "Title" is only a hint: light and quiet until you type */
+    .editor .editor-title::placeholder { color: var(--text-faint); opacity: 0.55; font-weight: 700; }
+    .editor .editor-body {
+        padding: 8px 20px 28px;
+        font-size: 1.0625rem !important;
+        font-weight: 400;
+        line-height: 1.5;
+        letter-spacing: 0;
+    }
+    .editor .editor-body:empty::before { color: var(--text-faint); opacity: 0.55; }
+    .editor .editor-body > :first-child { margin-top: 0; }
+}
