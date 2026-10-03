@@ -2,9 +2,11 @@
 // Shared by the journal editor and the chat composer.
 window.Rich = (() => {
     const ALLOWED_TAGS = ['b', 'strong', 'i', 'em', 'u', 's', 'strike', 'del', 'code', 'pre', 'blockquote',
-        'a', 'br', 'p', 'div', 'ul', 'ol', 'li', 'mark'];
+        'a', 'br', 'p', 'div', 'ul', 'ol', 'li', 'mark', 'h1', 'h2', 'h3'];
     const HIGHLIGHTS = ['yellow', 'green', 'pink', 'blue', 'orange', 'purple'];
-    const BLOCKS = new Set(['P', 'DIV', 'LI', 'PRE', 'BLOCKQUOTE', 'UL', 'OL']);
+    const BLOCKS = new Set(['P', 'DIV', 'LI', 'PRE', 'BLOCKQUOTE', 'UL', 'OL', 'H1', 'H2', 'H3']);
+    // Text styles for notes (like Apple Notes): each is a kind of line
+    const TEXT_STYLES = [['title', 'Title', 'H1'], ['heading', 'Heading', 'H2'], ['subheading', 'Subheading', 'H3'], ['body', 'Body', ''], ['mono', 'Monostyle', 'PRE']];
     let hooked = false;
 
     function escapeHTML(str) {
@@ -155,9 +157,11 @@ window.Rich = (() => {
      */
     function attach(toolbar, editable, opts = {}) {
         const extra = opts.extra || [];
-        const defs = [...FORMAT_BUTTONS, ...(extra.length ? [{ sep: true }, ...extra] : []),
+        const defs = [...(opts.styles ? [{ cmd: 'pstyle', label: 'Text style — title, heading, subheading, body or monostyle', html: '<span class="tb-pstyle-name">Body</span><svg class="i" aria-hidden="true"><use href="#i-chevron-down"/></svg>' }] : []),
+            ...FORMAT_BUTTONS, ...(extra.length ? [{ sep: true }, ...extra] : []),
             ...(opts.history === false ? [] : HISTORY_BUTTONS)];
-        toolbar.innerHTML = defs.map(button).join('');
+        toolbar.innerHTML = (opts.styles ? `<div class="tb-styles" role="radiogroup" aria-label="Text style">${TEXT_STYLES.map(([k, name]) =>
+            `<button type="button" role="radio" aria-checked="false" class="tb-style s-${k}" data-pstyle="${k}">${name}</button>`).join('')}</div>` : '') + defs.map(button).join('');
         const changed = () => opts.onChange && opts.onChange();
 
         // Keep focus (and the selection) in the editor while clicking toolbar buttons
@@ -165,9 +169,13 @@ window.Rich = (() => {
             if (e.target.closest('.tb-btn')) e.preventDefault();
         });
 
+        toolbar.addEventListener('mousedown', e => { if (e.target.closest('[data-pstyle]')) e.preventDefault(); });
         toolbar.addEventListener('click', async e => {
+            const st = e.target.closest('[data-pstyle]');
+            if (st) { applyStyle(editable, st.dataset.pstyle); changed(); toolbar.refresh(); return; }
             const btn = e.target.closest('.tb-btn');
             if (!btn) return;
+            if (btn.dataset.cmd === 'pstyle') { styleMenu(btn, editable, () => { changed(); toolbar.refresh(); }); return; }
             const cmd = btn.dataset.cmd;
             const custom = extra.find(x => x.cmd === cmd);
             if (custom) return custom.run(btn);
@@ -193,6 +201,29 @@ window.Rich = (() => {
                 e.preventDefault();
                 await run('link', editable, opts);
                 changed();
+            }
+            // Enter at the end of a title or heading: the next line is body text again
+            if (e.key === 'Enter' && !e.shiftKey && opts.styles) {
+                const h = currentBlock(editable, ['H1', 'H2', 'H3']);
+                const sel = document.getSelection();
+                if (h && sel.rangeCount && sel.isCollapsed) {
+                    const after = document.createRange();
+                    after.selectNodeContents(h);
+                    after.setStart(sel.getRangeAt(0).endContainer, sel.getRangeAt(0).endOffset);
+                    if (!after.toString().length) {
+                        e.preventDefault();
+                        const line = document.createElement('div');
+                        line.innerHTML = '<br>';
+                        h.after(line);
+                        const r2 = document.createRange();
+                        r2.setStart(line, 0);
+                        r2.collapse(true);
+                        sel.removeAllRanges();
+                        sel.addRange(r2);
+                        changed();
+                        return;
+                    }
+                }
             }
             // Leave a code block or quote with Enter on an empty last line
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -264,6 +295,13 @@ window.Rich = (() => {
 
         toolbar.refresh = () => {
             const active = document.activeElement === editable || editable.contains(document.activeElement);
+            if (opts.styles) {
+                const now = active ? styleAt(editable) : 'body';
+                const name = (TEXT_STYLES.find(x => x[0] === now) || TEXT_STYLES[3])[1];
+                const label = toolbar.querySelector('.tb-pstyle-name');
+                if (label) label.textContent = name;
+                toolbar.querySelectorAll('[data-pstyle]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.pstyle === now)));
+            }
             toolbar.querySelectorAll('[data-state]').forEach(b => {
                 let on = false;
                 try { on = active && document.queryCommandState(b.dataset.cmd); } catch (err) {}
@@ -433,6 +471,49 @@ window.Rich = (() => {
             node = node.parentNode;
         }
         return null;
+    }
+
+    function styleAt(editable) {
+        const block = currentBlock(editable, ['H1', 'H2', 'H3', 'PRE']);
+        return block ? (TEXT_STYLES.find(x => x[2] === block.tagName) || TEXT_STYLES[3])[0] : 'body';
+    }
+    function applyStyle(editable, key) {
+        const def = TEXT_STYLES.find(x => x[0] === key);
+        if (!def) return;
+        editable.focus();
+        const now = styleAt(editable);
+        const tag = key === 'body' || now === key ? 'div' : def[2].toLowerCase();
+        // Lists can't hold headings: the line leaves the list first
+        if (tag !== 'div' && currentBlock(editable, ['LI'])) document.execCommand('insertUnorderedList');
+        document.execCommand('formatBlock', false, `<${tag}>`);
+    }
+    // Desktop: a small menu under the style button, each style shown in its own look
+    function styleMenu(anchor, editable, done) {
+        document.querySelectorAll('.tb-style-menu').forEach(m => m.remove());
+        const now = styleAt(editable);
+        const menu = document.createElement('div');
+        menu.className = 'tb-style-menu';
+        menu.setAttribute('role', 'menu');
+        menu.innerHTML = TEXT_STYLES.map(([k, name]) => `<button type="button" role="menuitemradio" aria-checked="${k === now}" class="tb-style s-${k}" data-pstyle="${k}">${name}</button>`).join('');
+        (anchor.closest('dialog[open]') || document.body).append(menu);
+        const rect = anchor.getBoundingClientRect();
+        menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8))}px`;
+        const below = rect.bottom + 6 + menu.offsetHeight < window.innerHeight;
+        menu.style.top = `${below ? rect.bottom + 6 : rect.top - menu.offsetHeight - 6}px`;
+        menu.style.transformOrigin = below ? 'top left' : 'bottom left';
+        const close = () => { menu.remove(); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', key, true); };
+        const outside = e => { if (!menu.contains(e.target) && e.target !== anchor && !anchor.contains(e.target)) close(); };
+        const key = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); editable.focus(); } };
+        menu.addEventListener('mousedown', e => e.preventDefault());
+        menu.addEventListener('click', e => {
+            const b = e.target.closest('[data-pstyle]');
+            if (!b) return;
+            applyStyle(editable, b.dataset.pstyle);
+            close();
+            done();
+        });
+        setTimeout(() => { document.addEventListener('pointerdown', outside, true); document.addEventListener('keydown', key, true); }, 0);
+        menu.querySelector('[aria-checked="true"]')?.focus({ preventScroll: true });
     }
 
     async function run(cmd, editable, opts) {

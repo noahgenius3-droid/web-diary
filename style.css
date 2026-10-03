@@ -17191,3 +17191,38 @@ dialog.vid-confirm::backdrop { background: rgba(0, 0, 0, 0.6); }
 .vid-acts { display: grid; grid-template-columns: 1fr 1.4fr; gap: 8px; }
 .vid-acts button { min-height: 46px; justify-content: center; }
 @media (prefers-reduced-motion: reduce) { .msg-video-cover.loading .msg-video-play { animation: none; } }
+
+/* ---------- Text styles in notes: Title, Heading, Subheading, Body, Monostyle ---------- */
+.rich h1, .rich-content h1 { margin: 14px 0 6px; font-size: 1.65em; font-weight: 800; line-height: 1.2; letter-spacing: -0.02em; }
+.rich h2, .rich-content h2 { margin: 12px 0 4px; font-size: 1.3em; font-weight: 750; line-height: 1.25; letter-spacing: -0.01em; }
+.rich h3, .rich-content h3 { margin: 10px 0 2px; font-size: 1.08em; font-weight: 700; line-height: 1.3; color: color-mix(in srgb, var(--text) 82%, transparent); }
+.rich > :is(h1, h2, h3):first-child, .rich-content > :is(h1, h2, h3):first-child { margin-top: 2px; }
+
+/* Style choices, each shown in its own look */
+.tb-style { border: 0; background: none; color: var(--text); font: inherit; cursor: pointer; white-space: nowrap; }
+.tb-style.s-title { font-size: 1.15rem; font-weight: 800; letter-spacing: -0.01em; }
+.tb-style.s-heading { font-size: 1rem; font-weight: 750; }
+.tb-style.s-subheading { font-size: 0.92rem; font-weight: 700; color: color-mix(in srgb, var(--text) 80%, transparent); }
+.tb-style.s-body { font-size: 0.9rem; font-weight: 500; }
+.tb-style.s-mono { font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace; font-size: 0.84rem; }
+
+/* Desktop: one style button in the toolbar ("Body ▾") and its menu */
+.tb-btn[data-cmd="pstyle"] { display: inline-flex; align-items: center; gap: 4px; width: auto; min-width: 104px; padding: 0 10px; justify-content: space-between; font-weight: 700; font-size: 0.86rem; }
+.tb-btn[data-cmd="pstyle"] .i { width: 14px; height: 14px; opacity: 0.7; }
+.tb-styles { display: none; }
+.tb-style-menu { position: fixed; z-index: 500; display: grid; min-width: 190px; padding: 6px; border-radius: 14px; background: var(--surface); box-shadow: var(--shadow-lg, 0 18px 40px -16px rgba(0, 0, 0, 0.55)), 0 0 0 1px var(--border); animation: tb-menu-in 140ms cubic-bezier(0.23, 1, 0.32, 1); }
+@keyframes tb-menu-in { from { opacity: 0; transform: scale(0.97); } }
+.tb-style-menu .tb-style { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 40px; padding: 0 12px; border-radius: 10px; text-align: left; }
+.tb-style-menu .tb-style[aria-checked="true"]::after { content: "✓"; color: var(--accent); font-family: inherit; font-size: 0.9rem; font-weight: 800; }
+.tb-style-menu .tb-style:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+@media (hover: hover) and (pointer: fine) { .tb-style-menu .tb-style:hover { background: var(--input); } }
+
+/* Phones: the styles live in the Aa panel, as a row of chips above Bold / Italic… */
+@media (max-width: 760px) {
+    .editor .rich-toolbar .tb-btn[data-cmd="pstyle"] { display: none !important; }
+    .editor .rich-toolbar.fmt-open .tb-styles { display: flex; flex-basis: 100%; gap: 6px; margin: 0 3px 4px; padding: 2px 0 6px; overflow-x: auto; scrollbar-width: none; }
+    .editor .rich-toolbar.fmt-open .tb-styles::-webkit-scrollbar { display: none; }
+    .editor .rich-toolbar.fmt-open .tb-style { flex: none; display: grid; place-items: center; min-height: 44px; padding: 0 14px; border-radius: 12px; background: rgba(127, 127, 127, 0.1); }
+    .editor .rich-toolbar.fmt-open .tb-style[aria-checked="true"] { background: color-mix(in srgb, var(--ios-accent, var(--accent)) 20%, transparent); color: var(--ios-accent, var(--accent)); box-shadow: inset 0 0 0 1.5px currentColor; }
+}
+@media (prefers-reduced-motion: reduce) { .tb-style-menu { animation: none; } }

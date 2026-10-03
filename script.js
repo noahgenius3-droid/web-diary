@@ -208,6 +208,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         Rich.attach($('editor-toolbar'), edBody, {
+            styles: true, // Title, Heading, Subheading, Body, Monostyle
             onChange: changed,
             onFiles: addFiles,
             askLink,
