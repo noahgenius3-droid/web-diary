@@ -2847,11 +2847,17 @@ document.addEventListener('DOMContentLoaded', () => {
     // A short list, fetched once per sign-in; the tick is drawn next to names everywhere
     const VERIFIED_LABEL = { person: 'Verified public figure', organisation: 'Verified organisation', minister: 'Verified minister', educator: 'Verified educator', administrator: 'Verified administrator' };
     s.verified = new Map();
+    let verifiedAt = 0;
     async function loadVerified() {
+        verifiedAt = Date.now();
         const { data } = await client.rpc('diary_verified_list');
         s.verified = new Map((data || []).map(r => [r.id, r.verified]));
         if (s.verified.size) app.requestRender && app.requestRender();
     }
+    // Someone verified today shows up for everyone without a sign-out: re-read the list when Cordial comes back (at most every 15 min)
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && s.profile && Date.now() - verifiedAt > 15 * 60000) loadVerified().catch(() => {});
+    });
     // A verified perk: verified people come first in people search and suggestions (order kept otherwise)
     function verifiedFirst(list) {
         const v = p => (s.verified && s.verified.has(p.id)) || p.verified ? 1 : 0;
