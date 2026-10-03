@@ -215,6 +215,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 { cmd: 'styles', label: 'Text styles', html: '<span class="aa">Aa</span>', run: btn => {
                     const open = $('editor-toolbar').classList.toggle('fmt-open');
                     btn.setAttribute('aria-pressed', String(open));
+                    if (open) setMoreTools(false);
                 } },
                 { cmd: 'image', label: 'Add photos', icon: 'i-image', run: () => pickAndAdd('image/*') },
                 { cmd: 'file', label: 'Attach a file', icon: 'i-paperclip', run: () => pickAndAdd('') },
@@ -238,7 +239,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 { cmd: 'slides', label: 'Turn into slides', icon: 'i-slides', run: () => {
                     if (!window.diaryNoteSlides) return;
                     window.diaryNoteSlides.open({ title: edTitle.value, text: Rich.toText(edBody.innerHTML), color: editing && editing.color, createdAt: editing && editing.createdAt });
-                } }
+                } },
+                // Dilute lives here now, not as a permanent slider under the title
+                { cmd: 'dilute', label: 'Dilute: show just the essence', icon: 'i-drop', run: () => {
+                    paintDilute();
+                    if ($('editor-dilute').hidden) return showToast('Dilute works once a note has a few sentences');
+                    const open = editor.classList.toggle('show-dilute');
+                    setMoreTools(false);
+                    if (open) $('editor-dilute').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                } },
+                // Phones: the less-used tools wait behind "More" so the toolbar stays one row
+                { cmd: 'more', label: 'More tools', icon: 'i-more', run: () => setMoreTools(!$('editor-toolbar').classList.contains('more-open')) }
             ]
         });
 
@@ -1761,6 +1772,8 @@ document.addEventListener('DOMContentLoaded', () => {
         Media.hydrate(edBody);
         $('editor-toolbar').classList.remove('fmt-open');
         $('editor-toolbar').querySelector('[data-cmd="styles"]')?.setAttribute('aria-pressed', 'false');
+        editor.classList.remove('show-dilute');
+        setMoreTools(false);
         edFolder.innerHTML = '<option value="">No folder</option>' +
             folders.map(f => `<option value="${escapeHTML(f.id)}">${escapeHTML(f.name)}</option>`).join('');
         edFolder.value = (note ? note.folderId : defaults.folderId) || '';
@@ -1812,6 +1825,47 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Dilute ----------
+    function setMoreTools(open) {
+        const bar = $('editor-toolbar');
+        bar.classList.toggle('more-open', open);
+        const btn = bar.querySelector('[data-cmd="more"]');
+        if (btn) {
+            btn.setAttribute('aria-expanded', String(open));
+            btn.setAttribute('aria-label', open ? 'Back to writing tools' : 'More tools');
+            btn.querySelector('use')?.setAttribute('href', open ? '#i-close' : '#i-more');
+        }
+        if (open) {
+            bar.classList.remove('fmt-open');
+            bar.querySelector('[data-cmd="styles"]')?.setAttribute('aria-pressed', 'false');
+        }
+    }
+
+    // While the keyboard is up, keep the line you're typing on clear of the toolbar (and the header)
+    function keepCaretVisible() {
+        if (!editor.open || !document.documentElement.classList.contains('kb-open') || document.activeElement !== edBody) return;
+        const sel = document.getSelection();
+        if (!sel.rangeCount) return;
+        const range = sel.getRangeAt(0).cloneRange();
+        let rect = range.getClientRects()[0] || range.getBoundingClientRect();
+        if (!rect || (!rect.height && !rect.top)) {
+            const node = range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentElement;
+            rect = node && node.getBoundingClientRect();
+        }
+        if (!rect) return;
+        const scroller = $('editor-form');
+        const bottomEdge = $('editor-toolbar').getBoundingClientRect().top - 16;
+        const head = editor.querySelector('.ed-bar');
+        const topEdge = (head ? head.getBoundingClientRect().bottom : scroller.getBoundingClientRect().top) + 8;
+        if (rect.bottom > bottomEdge) scroller.scrollTop += rect.bottom - bottomEdge;
+        else if (rect.top < topEdge) scroller.scrollTop -= topEdge - rect.top;
+    }
+    let caretFrame = 0;
+    const queueCaret = () => { cancelAnimationFrame(caretFrame); caretFrame = requestAnimationFrame(keepCaretVisible); };
+    edBody.addEventListener('input', queueCaret);
+    edBody.addEventListener('focus', () => setTimeout(queueCaret, 320));
+    document.addEventListener('selectionchange', () => { if (document.activeElement === edBody) queueCaret(); });
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', () => setTimeout(queueCaret, 60));
+
     function strengths() {
         try { return JSON.parse(localStorage.getItem('diaryStrength')) || {}; } catch (e) { return {}; }
     }
@@ -1924,7 +1978,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function paintEditor() {
-        const keep = ['show-details', 'show-colors'].filter(cls => editor.classList.contains(cls));
+        const keep = ['show-details', 'show-colors', 'show-dilute'].filter(cls => editor.classList.contains(cls));
         editor.className = ['editor', 'tinted', `c-${editing.color}`, ...keep].join(' ');
         paintSwatches($('editor-colors'), editing.color);
         $('editor-kind').querySelectorAll('button').forEach(b =>

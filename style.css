@@ -16517,3 +16517,43 @@ body.chat-open .alert-ask { bottom: calc(92px + env(safe-area-inset-bottom, 0px)
 /* ---------- Multi-photo posts: frame follows the first photo; nothing is ever cropped ---------- */
 .post-media .carousel:not([data-count="1"]) .slide { aspect-ratio: var(--ar, 4 / 5); height: auto; }
 .post-media .carousel:not([data-count="1"]) .slide img { width: 100%; height: 100%; max-height: none; object-fit: contain; }
+
+/* ---------- Note editor: writing first. Dilute on demand, one compact toolbar row, roomier keyboard state ---------- */
+/* Dilute is a tool now (the drop in the toolbar); the slider shows only when asked for, or while a note is diluted */
+.editor:not(.show-dilute):not(.diluted) #editor-dilute { display: none !important; }
+.tb-btn[data-cmd="more"] { display: none; }
+@media (max-width: 760px) {
+    .editor #editor-dilute { order: 8; margin: 6px 18px 4px; }
+    .editor-body { order: 8; }
+
+    /* One row, always: Aa · marker · photo · file · voice · draw · undo · redo · More */
+    .editor .rich-toolbar { flex: none; flex-wrap: nowrap !important; overflow: hidden; gap: 0; padding: 4px 6px calc(4px + env(safe-area-inset-bottom)); }
+    .editor .rich-toolbar.fmt-open { flex-wrap: wrap !important; }
+    .editor .rich-toolbar .tb-btn { flex: 1 1 0; min-width: 36px; height: 44px; border-radius: 12px; }
+    .editor .rich-toolbar:not(.fmt-open) .tb-sep { display: none; }
+    .editor .rich-toolbar .tb-btn[data-cmd="more"] { display: grid; place-items: center; order: 99; }
+    /* Secondary tools wait behind More… */
+    .editor .rich-toolbar:not(.more-open) .tb-btn:is([data-cmd="dictate"], [data-cmd="listen"], [data-cmd="remix"], [data-cmd="slides"], [data-cmd="dilute"]) { display: none !important; }
+    /* …and, when opened, take the same row (labelled) in place of the writing tools */
+    .editor .rich-toolbar.more-open .tb-btn:not(:is([data-cmd="dictate"], [data-cmd="listen"], [data-cmd="remix"], [data-cmd="slides"], [data-cmd="dilute"], [data-cmd="more"])),
+    .editor .rich-toolbar.more-open .tb-sep { display: none !important; }
+    .editor .rich-toolbar.more-open .tb-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; height: 52px; animation: ed-tray 160ms cubic-bezier(0.23, 1, 0.32, 1); }
+    .editor .rich-toolbar.more-open .tb-btn .i { width: 21px; height: 21px; }
+    .editor .rich-toolbar.more-open .tb-btn::after { font-size: 0.66rem; font-weight: 600; color: var(--text-muted); }
+    .editor .rich-toolbar.more-open [data-cmd="dictate"]::after { content: 'Dictate'; }
+    .editor .rich-toolbar.more-open [data-cmd="listen"]::after { content: 'Listen'; }
+    .editor .rich-toolbar.more-open [data-cmd="remix"]::after { content: 'Video'; }
+    .editor .rich-toolbar.more-open [data-cmd="slides"]::after { content: 'Slides'; }
+    .editor .rich-toolbar.more-open [data-cmd="dilute"]::after { content: 'Dilute'; }
+    .editor .rich-toolbar.more-open [data-cmd="more"]::after { content: 'Back'; }
+    .editor.show-dilute .rich-toolbar [data-cmd="dilute"] { color: var(--ios-accent); }
+
+    /* Keyboard up: the toolbar rests right on it (no home-indicator gap) and the date line steps aside */
+    html.kb-open .editor .rich-toolbar { padding-bottom: 4px; }
+    html.kb-open .editor .ed-date-m { display: none; }
+    html.kb-open .editor .editor-title { padding-top: 4px; font-size: 1.45rem; }
+    html.kb-open .editor .editor-body { min-height: 0; padding-bottom: 16px; }
+    .editor .editor-title, .editor .ed-date-m { transition: font-size 200ms cubic-bezier(0.23, 1, 0.32, 1), padding 200ms cubic-bezier(0.23, 1, 0.32, 1); }
+}
+@keyframes ed-tray { from { opacity: 0; transform: translateY(4px); } }
+@media (prefers-reduced-motion: reduce) { .editor .rich-toolbar.more-open .tb-btn { animation: none; } .editor .editor-title { transition: none; } }
