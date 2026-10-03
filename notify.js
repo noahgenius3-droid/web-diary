@@ -234,9 +234,40 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // What a tap on a notification opens, in words (shown on the row and read out by screen readers)
+    const POST_TYPES = new Set(['new_post', 'entry_like', 'entry_reaction', 'entry_repost', 'entry_comment', 'comment_reply', 'tagged', 'post_activity',
+        'post_like', 'post_comment', 'community_post', 'scheduled_published']);
+    function leadsTo(x) {
+        if (POST_TYPES.has(x.type)) return x.type === 'tagged' && (x.data || {}).reel_id ? 'View reel' : 'View post';
+        if (x.type === 'reel_like' || x.type === 'reel_comment') return 'View reel';
+        return '';
+    }
+
+    // Every notification tap — in the list, a device alert, a toast — comes through here, once
+    let lastOpen = { id: null, at: 0 };
     function navigate(x) {
+        if (!x) return;
+        const now = Date.now();
+        if (lastOpen.id === x.id && now - lastOpen.at < 1200) return; // a double tap opens it once
+        lastOpen = { id: x.id, at: now };
         const d = x.data || {};
+        const target = d.entry_id || d.entry || d.post_id || d.reel_id || null;
+        try { console.info('[notifications] open', x.type, target ? `→ ${target}` : ''); } catch (e) { /* no console */ }
+        // Reading it is separate from going there: neither can stop the other
+        if (!x.read_at) {
+            x.read_at = new Date().toISOString();
+            Promise.resolve().then(() => client.from('diary_notifications').update({ read_at: x.read_at }).in('id', x._ids || [x.id])).catch(() => {});
+            try { paintBadge(); } catch (e) { /* badge redraws later */ }
+        }
         close();
+        try { route(x, d); }
+        catch (e) {
+            try { console.warn('[notifications] could not open', x.type, e); } catch (err) { /* no console */ }
+            app.showToast('Couldn’t open that — showing your Feed');
+            app.setView('feed');
+        }
+    }
+    function route(x, d) {
         switch (x.type) {
             case 'friend_request':
                 app.setView('messages');
@@ -267,10 +298,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (window.diaryGroupChat && window.diaryGroupChat.jump) window.diaryGroupChat.jump(d.community_id, d.message_id);
                 app.setView('community', { communityId: d.community_id });
                 break;
-            case 'entry_reaction':
-                app.setView('feed');
-                I.focusPost(`entry:${d.entry}`, { open: false });
-                break;
             case 'story_reaction':
                 if (window.diaryStories && window.diaryStories.openMine) window.diaryStories.openMine();
                 break;
@@ -294,6 +321,7 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'entry_repost':
             case 'entry_comment':
             case 'entry_reaction':
+                if (!(d.entry_id || d.entry)) { app.setView('feed'); app.showToast('That post isn’t available any more'); break; }
                 app.setView('feed');
                 I.openEntry(d.entry_id || d.entry, x.type === 'entry_comment' ? { focus: 'input' } : undefined);
                 break;
@@ -470,12 +498,16 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (x.type === 'missed_call') {
             actions = `<span class="notif-actions"><button class="chip call-chip" data-n-act="callback"><svg class="i"><use href="#i-phone"/></svg>Call back</button></span>`;
         }
+        const where = leadsTo(x);
+        // The whole row opens what it's about: names inside it are plain text (a separate profile link here
+        // used to swallow most taps on phones, so the post never opened)
+        const text = describe(x).replace(/<button type="button" class="name-link" data-profile="[^"]*">([\s\S]*?)<\/button>/g, '<strong>$1</strong>');
         return `
-            <div class="notif${n.fresh.has(x.id) ? ' unread' : ''}" data-n="${esc(x.id)}" data-n-ids="${esc((x._ids || [x.id]).join(','))}" role="button" tabindex="0">
-                <span class="notif-avatar${(x._others || []).length ? ' stacked' : ''}"${x.actor ? ` data-profile="${esc(x.actor)}"` : ''}>${avatar(actor, 'md')}${(x._others || []).length ? avatar(x._others[0].actor_profile || { id: x._others[0].actor, display_name: 'Someone' }, 'sm') : ''}<span class="notif-type t-${cat}"><svg class="i"><use href="#${icon}"/></svg></span></span>
+            <div class="notif${n.fresh.has(x.id) ? ' unread' : ''}" data-n="${esc(x.id)}" data-n-ids="${esc((x._ids || [x.id]).join(','))}" role="button" tabindex="0"${where ? ` aria-description="${where}"` : ''}>
+                <span class="notif-avatar${(x._others || []).length ? ' stacked' : ''}">${avatar(actor, 'md')}${(x._others || []).length ? avatar(x._others[0].actor_profile || { id: x._others[0].actor, display_name: 'Someone' }, 'sm') : ''}<span class="notif-type t-${cat}"><svg class="i"><use href="#${icon}"/></svg></span></span>
                 <span class="notif-main">
-                    <span class="notif-text">${describe(x)}</span>
-                    <time>${timeAgo(x.created_at)}</time>
+                    <span class="notif-text">${text}</span>
+                    <span class="notif-meta"><time>${timeAgo(x.created_at)}</time>${where ? `<span class="notif-go">${where} ›</span>` : ''}</span>
                     ${actions}
                 </span>
                 <button class="notif-dismiss" data-n-act="dismiss" aria-label="Remove notification"><svg class="i"><use href="#i-close"/></svg></button>

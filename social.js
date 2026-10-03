@@ -815,6 +815,10 @@ document.addEventListener('DOMContentLoaded', () => {
         registerDevice();
         setTimeout(flushOutbox, 1500);
         if (s.pendingRoute) { const r = s.pendingRoute; s.pendingRoute = null; setTimeout(() => routeTo(r), 300); }
+        // A post you tried to open from a notification before signing in
+        let pendingPost = s.pendingPost;
+        try { pendingPost = pendingPost || sessionStorage.getItem('cordialPendingPost'); sessionStorage.removeItem('cordialPendingPost'); } catch (e) { /* private mode */ }
+        if (pendingPost && !isGuest()) { s.pendingPost = null; setTimeout(() => app.setView('post', { postId: pendingPost }), 400); }
         syncAllShared();
         app.render();
         if (event === 'PASSWORD_RECOVERY') chooseNewPassword();
@@ -2824,6 +2828,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 const ready = await accountReady();
                 resolving.delete(id);
                 if (!ready) {
+                    // Keep where you were going: the post opens as soon as you've signed in
+                    s.pendingPost = id;
+                    try { sessionStorage.setItem('cordialPendingPost', id); } catch (e) { /* private mode */ }
                     app.setView('feed', {}, { replace: true });
                     if (window.diarySocial && window.diarySocial.requireSignIn) window.diarySocial.requireSignIn('Sign in to see this post.');
                     return;
@@ -2833,7 +2840,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     const { data } = await client.from('diary_community_posts').select('community_id').eq('id', pid).maybeSingle();
                     if (!data) { app.setView('communities', {}, { replace: true }); return app.showToast('That post isn’t available — you may need to join the group'); }
                     app.setView('community', { communityId: data.community_id }, { replace: true });
-                    setTimeout(() => focusPost(`post:${pid}`, { open: true }), 900);
+                    setTimeout(() => focusPost(`post:${pid}`, { open: true, tries: 60, onMissing: () => app.showToast('Couldn’t find that post in the group — it may have been removed') }), 900);
                 } else {
                     app.setView('feed', {}, { replace: true });
                     window.diarySocial.internals.openEntry(id);
@@ -5085,8 +5092,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 el.classList.add('flash');
                 setTimeout(() => el.classList.remove('flash'), 1800);
                 if (opts.open) openPost(key);
-            } else if (tries++ < 40) {
+            } else if (tries++ < (opts.tries || 40)) {
                 setTimeout(tick, 200);
+            } else if (opts.onMissing) {
+                opts.onMissing();
             }
         };
         tick();
@@ -5539,7 +5548,13 @@ document.addEventListener('DOMContentLoaded', () => {
         openEntry(id, opts) {
             const p = findPost('entry', id);
             if (!p) {
-                fetchEntry(id).then(found => { if (found) this.openEntry(id, opts); else app.showToast('That post isn’t available — it may have been removed or is only for friends'); });
+                // Not loaded here yet: fetch just this post (your access is checked by the database, as always)
+                const slow = setTimeout(() => app.showToast('Opening post…'), 400);
+                fetchEntry(id).then(found => {
+                    clearTimeout(slow);
+                    if (found) this.openEntry(id, opts);
+                    else app.showToast('Post unavailable — it may have been deleted, or it isn’t shared with you');
+                }, () => { clearTimeout(slow); app.showToast('Couldn’t load that post — check your connection and try again'); });
                 return true;
             }
             postCard(p); // records what the post view needs

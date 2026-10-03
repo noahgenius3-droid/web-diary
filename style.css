@@ -17000,3 +17000,8 @@ html.kb-open .sp-chat-form { padding-bottom: 8px; }
     .nm-sheet, .nm-sheet-back, .nm-ready { animation: none; }
     .nm-sheet { transition-duration: 1ms; }
 }
+
+/* Notification rows say where a tap goes ("View post ›"); the whole row is the target */
+.notif-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.notif-go { color: var(--accent); font-size: 0.76rem; font-weight: 700; }
+.notif .notif-text strong { font-weight: 700; }
