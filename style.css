@@ -16860,3 +16860,6 @@ html.kb-open .sp-chat-form { padding-bottom: 8px; }
 .pop-item[aria-checked="true"] .pop-val { color: var(--accent); }
 .pop-item.is-checked[role="menuitemradio"] { font-weight: 700; }
 .pop-item.is-checked[role="menuitemradio"] .i { color: var(--accent); }
+
+/* Editor: its parts never shrink to fit; the form scrolls instead (a long note used to spill over the reflection row and footer) */
+.editor-form > * { flex-shrink: 0; }
