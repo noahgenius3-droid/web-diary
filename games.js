@@ -1068,7 +1068,23 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!chat || W.match !== id) return;
         const { data, error } = await client.from('diary_wp_chat').select('*').eq('match_id', id).order('created_at', { ascending: true }).limit(150);
         if (!W || W.chat !== chat) return;
-        if (error) { chat.off = true; paintChat(); return; } // not switched on yet (or offline): stay out of the way
+        if (error) {
+            // Saved chat isn't switched on on the server yet: talk live instead, between the players who have
+            // this board open (nothing is stored; messages from anyone who isn't in this match are ignored)
+            if (!navigator.onLine) { chat.off = true; paintChat(); return; }
+            chat.live = true;
+            chat.ready = true;
+            chat.ch = client.channel(`wp-live-${id}`, { config: { broadcast: { self: false } } })
+                .on('broadcast', { event: 'chat' }, ({ payload }) => { if (W && W.chat === chat) chatIn(chat, checkLive(payload)); })
+                .on('broadcast', { event: 'unsay' }, ({ payload }) => {
+                    if (!payload || !W || W.chat !== chat) return;
+                    chat.list = chat.list.filter(x => !(x.id === payload.id && x.user_id === payload.user_id));
+                    paintChat();
+                })
+                .subscribe(st => { chat.joined = st === 'SUBSCRIBED'; });
+            paintChat();
+            return;
+        }
         chat.list = data || [];
         chat.ready = true;
         chat.ch = client.channel(`wp-chat-${id}-${Date.now()}`)
@@ -1076,6 +1092,14 @@ document.addEventListener('DOMContentLoaded', () => {
             .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'diary_wp_chat' }, p => { if (p.old && p.old.id) { chat.list = chat.list.filter(x => x.id !== p.old.id); if (W && W.chat === chat) paintChat(); } })
             .subscribe();
         paintChat();
+    }
+    // A live message is only shown if it's well-formed and from one of this match's players
+    function checkLive(p) {
+        const m = W && W.state && W.state.m;
+        if (!p || !m || !m.players.includes(p.user_id) || typeof p.id !== 'string' || p.id.length > 40) return null;
+        if (p.kind === 'reaction' && CHAT_EMOJI.includes(p.emoji)) return { id: p.id, match_id: m.id, user_id: p.user_id, kind: 'reaction', emoji: p.emoji, created_at: new Date().toISOString() };
+        if (p.kind === 'comment' && typeof p.body === 'string' && p.body.trim()) return { id: p.id, match_id: m.id, user_id: p.user_id, kind: 'comment', body: p.body.trim().slice(0, 300), created_at: new Date().toISOString() };
+        return null;
     }
     function chatStop(chat) { if (chat && chat.ch) { client.removeChannel(chat.ch); chat.ch = null; } }
     function chatIn(chat, row) {
@@ -1117,6 +1141,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const ticker = d.querySelector('.wpc-ticker');
         ticker.hidden = !on || !last;
         if (last) { ticker.innerHTML = `${ic('i-chat')}<span><b></b> </span>`; ticker.querySelector('b').textContent = `${firstName(last.user_id)}:`; ticker.querySelector('span').append(last.body); }
+        const note = d.querySelector('.wpc-head small');
+        if (note) note.textContent = chat.live ? 'Live — seen by players who have the board open' : 'Only the players see this';
         if (!chat.open) return;
         const list = d.querySelector('.wpc-list');
         const near = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
@@ -1128,7 +1154,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 ? `<p class="wpc-rx">${esc(firstName(x.user_id))} reacted ${esc(x.emoji)} <time>${time}</time></p>`
                 : `<div class="wpc-msg${mine ? ' mine' : ''}" data-wpc="msg" data-id="${esc(x.id)}" ${mine ? 'role="button" tabindex="0" aria-label="Your message — tap to delete"' : ''}>
                         ${I.avatar(who(x.user_id), 'sm')}<div><span class="wpc-who">${esc(firstName(x.user_id))} <time>${time}</time></span><p></p></div></div>`;
-        }).join('') : '<p class="wpc-empty">Say hi, cheer a good move, or call a bluff — only the players see this.</p>';
+        }).join('') : `<p class="wpc-empty">Say hi, cheer a good move, or call a bluff — only the players see this.${chat.live ? ' Messages go to whoever has the board open right now.' : ''}</p>`;
         list.querySelectorAll('.wpc-msg p').forEach((p, i) => { const msgs = items.filter(x => x.kind === 'comment'); if (msgs[i]) p.textContent = msgs[i].body; });
         if (near || chat.justOpened) { list.scrollTop = list.scrollHeight; chat.justOpened = false; }
         const form = d.querySelector('.wpc-form');
@@ -1137,6 +1163,16 @@ document.addEventListener('DOMContentLoaded', () => {
     async function chatSend(fields) {
         const chat = W && W.chat;
         if (!chat || chat.off) return;
+        if (chat.live) {
+            if (!chat.joined) return app.showToast('Connecting to the match… try again in a moment');
+            // Easy does it: at most 20 a minute, like saved chat
+            chat.sent = (chat.sent || []).filter(t => Date.now() - t < 60000);
+            if (chat.sent.length >= 20) return app.showToast('Slow down a little — try again in a moment');
+            chat.sent.push(Date.now());
+            const row = { id: Math.random().toString(36).slice(2, 14), match_id: W.match, user_id: myId(), created_at: new Date().toISOString(), ...fields };
+            chat.ch.send({ type: 'broadcast', event: 'chat', payload: { id: row.id, user_id: row.user_id, kind: row.kind, body: row.body, emoji: row.emoji } }).catch(() => {});
+            return chatIn(chat, row);
+        }
         const { data, error } = await client.from('diary_wp_chat').insert({ match_id: W.match, ...fields }).select('*').single();
         if (error) return app.showToast(/guest|anonymous|account/i.test(error.message || '') ? 'Create a free account to chat in games' : (error.message && error.message.length < 80 ? error.message : 'Couldn’t send that — try again'));
         chatIn(chat, data);
@@ -1162,8 +1198,11 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (what === 'msg' && el.classList.contains('mine')) {
             if (!(await app.ask({ title: 'Delete this message?', text: 'It disappears for everyone in the match.', ok: 'Delete', danger: true }))) return;
             const id = el.dataset.id;
-            const { error } = await client.from('diary_wp_chat').delete().eq('id', id);
-            if (error) return app.showToast('Couldn’t delete it — try again');
+            if (chat.live) chat.ch.send({ type: 'broadcast', event: 'unsay', payload: { id, user_id: myId() } }).catch(() => {});
+            else {
+                const { error } = await client.from('diary_wp_chat').delete().eq('id', id);
+                if (error) return app.showToast('Couldn’t delete it — try again');
+            }
             chat.list = chat.list.filter(x => x.id !== id);
             paintChat();
         }
