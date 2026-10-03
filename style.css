@@ -17120,3 +17120,20 @@ html.kb-open .sp-chat-form { padding-bottom: 8px; }
 .wpw-acts .primary-btn, .wpw-acts .ghost-btn { width: 100%; min-height: 46px; justify-content: center; }
 .wpw-confetti { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 9; pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .wpw, .wpw-card, .wpw-trophy { animation: none; } }
+
+/* Wordplay chat: react to a message (chips under it), and an emoji button in the box */
+.wpc-msg { cursor: pointer; }
+.wpc-msg > .wpc-bub { display: grid; justify-items: start; gap: 4px; padding: 0; background: none; min-width: 0; }
+.wpc-msg.mine > .wpc-bub { background: none; }
+.wpc-bub > div { min-width: 0; padding: 7px 11px; border-radius: 14px; background: var(--input); transition: background 140ms ease; }
+.wpc-msg.mine .wpc-bub > div { background: color-mix(in srgb, var(--accent) 16%, var(--input)); }
+@media (hover: hover) and (pointer: fine) { .wpc-msg:hover .wpc-bub > div { background: color-mix(in srgb, var(--text) 7%, var(--input)); } }
+.wpc-msg:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 14px; }
+.wpc-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.wpc-chip { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; padding: 0 9px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text); font: inherit; font-size: 0.86rem; cursor: pointer; touch-action: manipulation; transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1); }
+.wpc-chip b { font-size: 0.74rem; font-weight: 700; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.wpc-chip.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+.wpc-chip.on b { color: var(--accent); }
+.wpc-chip:active { transform: scale(0.92); }
+.wpc-emo { flex: none; width: 44px; height: 44px; border: 0; border-radius: 50%; background: var(--input); font-size: 1.25rem; cursor: pointer; touch-action: manipulation; }
+.wpc-emo:active { transform: scale(0.92); }

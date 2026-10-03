@@ -981,6 +981,7 @@ document.addEventListener('DOMContentLoaded', () => {
         dlg.addEventListener('close', () => { chatStop(chat); dlg.remove(); if (W && W.dlg === dlg) W = null; loadMatches(); });
         dlg.addEventListener('click', onChatClick);
         dlg.addEventListener('submit', onChatSubmit);
+        dlg.addEventListener('keydown', onChatKey);
         dlg.innerHTML = '<div class="gm-card"><div class="gm-body"><p class="gm-hint">Opening the board…</p></div></div>';
         dlg.showModal();
         await refreshMatch(true);
@@ -1051,6 +1052,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <header class="wpc-head"><strong>Match chat</strong><small>Only the players see this</small><button type="button" class="icon-btn" data-wpc="close" aria-label="Back to the board">${ic('i-close')}</button></header>
                     <div class="wpc-list" role="log" aria-live="polite"></div>
                     <form class="wpc-form">
+                        <button type="button" class="wpc-emo" data-wpc="emoji" aria-label="Add an emoji">😊</button>
                         <input class="wpc-input" maxlength="300" placeholder="Say something to the table…" aria-label="Message the other players" autocomplete="off" enterkeyhint="send">
                         <button type="submit" class="wpc-send" aria-label="Send">${ic('i-send')}</button>
                     </form>
@@ -1063,6 +1065,36 @@ document.addEventListener('DOMContentLoaded', () => {
     // Saved for the match's players only (the database checks that), and live while the board is open.
     // Until the match chat is switched on on the server, none of this shows.
     const CHAT_EMOJI = ['👏', '🔥', '😂', '😮', '😅', '🤝', '💯', '🎉'];
+    const CHAT_NAMES = { '👏': 'Clap', '🔥': 'Fire', '😂': 'Haha', '😮': 'Wow', '😅': 'Phew', '🤝': 'Good game', '💯': 'Perfect', '🎉': 'Party' };
+    // Emoji to type into a message
+    const TYPE_EMOJI = [['😀', 'Grin'], ['😂', 'Laugh'], ['😅', 'Phew'], ['😍', 'Love it'], ['😎', 'Cool'], ['🤔', 'Hmm'], ['😮', 'Wow'], ['😢', 'Sad'],
+        ['😤', 'Huff'], ['👍', 'Thumbs up'], ['👏', 'Clap'], ['🙏', 'Thanks'], ['🔥', 'Fire'], ['💯', 'Perfect'], ['🎉', 'Party'], ['❤️', 'Heart']];
+    // Reactions on one message: { emoji: [ { id, user_id } ] }
+    function reactsOn(chat, msgId) {
+        const out = {};
+        chat.list.forEach(x => { if (x.kind === 'reaction' && x.target === msgId) (out[x.emoji] = out[x.emoji] || []).push(x); });
+        return out;
+    }
+    async function toggleMsgReact(msgId, emoji) {
+        const chat = W && W.chat;
+        if (!chat || !CHAT_EMOJI.includes(emoji)) return;
+        const mine = chat.list.find(x => x.kind === 'reaction' && x.target === msgId && x.emoji === emoji && x.user_id === myId());
+        if (mine) return unsay(mine.id);
+        try { if (navigator.vibrate) navigator.vibrate(8); } catch (e) { /* no haptics */ }
+        chatSend({ kind: 'reaction', emoji, target: msgId });
+    }
+    // Take back one of your own messages or reactions
+    async function unsay(id) {
+        const chat = W && W.chat;
+        if (!chat) return;
+        if (chat.live) chat.ch.send({ type: 'broadcast', event: 'unsay', payload: { id, user_id: myId() } }).catch(() => {});
+        else {
+            const { error } = await client.from('diary_wp_chat').delete().eq('id', id);
+            if (error) return app.showToast('Couldn’t take that back — try again');
+        }
+        chat.list = chat.list.filter(x => x.id !== id && x.target !== id);
+        paintChat();
+    }
     async function chatStart(id) {
         const chat = W && W.chat;
         if (!chat || W.match !== id) return;
@@ -1078,7 +1110,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 .on('broadcast', { event: 'chat' }, ({ payload }) => { if (W && W.chat === chat) chatIn(chat, checkLive(payload)); })
                 .on('broadcast', { event: 'unsay' }, ({ payload }) => {
                     if (!payload || !W || W.chat !== chat) return;
-                    chat.list = chat.list.filter(x => !(x.id === payload.id && x.user_id === payload.user_id));
+                    const gone = chat.list.find(x => x.id === payload.id && x.user_id === payload.user_id);
+                    if (!gone) return;
+                    chat.list = chat.list.filter(x => x !== gone && x.target !== gone.id);
                     paintChat();
                 })
                 .subscribe(st => { chat.joined = st === 'SUBSCRIBED'; });
@@ -1097,7 +1131,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function checkLive(p) {
         const m = W && W.state && W.state.m;
         if (!p || !m || !m.players.includes(p.user_id) || typeof p.id !== 'string' || p.id.length > 40) return null;
-        if (p.kind === 'reaction' && CHAT_EMOJI.includes(p.emoji)) return { id: p.id, match_id: m.id, user_id: p.user_id, kind: 'reaction', emoji: p.emoji, created_at: new Date().toISOString() };
+        if (p.kind === 'reaction' && CHAT_EMOJI.includes(p.emoji)) return { id: p.id, match_id: m.id, user_id: p.user_id, kind: 'reaction', emoji: p.emoji, target: typeof p.target === 'string' && p.target.length <= 40 ? p.target : null, created_at: new Date().toISOString() };
         if (p.kind === 'comment' && typeof p.body === 'string' && p.body.trim()) return { id: p.id, match_id: m.id, user_id: p.user_id, kind: 'comment', body: p.body.trim().slice(0, 300), created_at: new Date().toISOString() };
         return null;
     }
@@ -1107,8 +1141,8 @@ document.addEventListener('DOMContentLoaded', () => {
         chat.list.push(row);
         if (chat.list.length > 200) chat.list.shift();
         if (!W || W.chat !== chat) return;
-        if (row.kind === 'reaction') floatReaction(row);
-        else if (!chat.open && row.user_id !== myId()) chat.unread++;
+        if (row.kind === 'reaction' && !row.target) floatReaction(row);
+        else if (row.kind === 'comment' && !chat.open && row.user_id !== myId()) chat.unread++;
         paintChat();
     }
     function floatReaction(row) {
@@ -1147,15 +1181,21 @@ document.addEventListener('DOMContentLoaded', () => {
         const list = d.querySelector('.wpc-list');
         const near = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
         const items = chat.list;
-        list.innerHTML = items.length ? items.map(x => {
+        const shown = items.filter(x => !(x.kind === 'reaction' && x.target));
+        list.innerHTML = shown.length ? shown.map(x => {
             const mine = x.user_id === myId();
             const time = new Date(x.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-            return x.kind === 'reaction'
-                ? `<p class="wpc-rx">${esc(firstName(x.user_id))} reacted ${esc(x.emoji)} <time>${time}</time></p>`
-                : `<div class="wpc-msg${mine ? ' mine' : ''}" data-wpc="msg" data-id="${esc(x.id)}" ${mine ? 'role="button" tabindex="0" aria-label="Your message — tap to delete"' : ''}>
-                        ${I.avatar(who(x.user_id), 'sm')}<div><span class="wpc-who">${esc(firstName(x.user_id))} <time>${time}</time></span><p></p></div></div>`;
+            if (x.kind === 'reaction') return `<p class="wpc-rx">${esc(firstName(x.user_id))} reacted ${esc(x.emoji)} <time>${time}</time></p>`;
+            const rx = reactsOn(chat, x.id);
+            const chips = Object.entries(rx).map(([e, rows]) => {
+                const meToo = rows.some(r => r.user_id === myId());
+                const names = rows.map(r => firstName(r.user_id)).join(', ');
+                return `<button type="button" class="wpc-chip${meToo ? ' on' : ''}" data-wpc="chip" data-id="${esc(x.id)}" data-emoji="${e}" aria-pressed="${meToo}" aria-label="${esc(CHAT_NAMES[e] || e)} by ${esc(names)}${meToo ? ' — tap to remove yours' : ''}" title="${esc(names)}">${e}<b>${rows.length}</b></button>`;
+            }).join('');
+            return `<div class="wpc-msg${mine ? ' mine' : ''}" data-wpc="msg" data-id="${esc(x.id)}" role="button" tabindex="0" aria-label="${esc(firstName(x.user_id))}: tap to react${mine ? ' or delete' : ''}">
+                        ${I.avatar(who(x.user_id), 'sm')}<div class="wpc-bub"><div><span class="wpc-who">${esc(firstName(x.user_id))} <time>${time}</time></span><p></p></div>${chips ? `<span class="wpc-chips">${chips}</span>` : ''}</div></div>`;
         }).join('') : `<p class="wpc-empty">Say hi, cheer a good move, or call a bluff — only the players see this.${chat.live ? ' Messages go to whoever has the board open right now.' : ''}</p>`;
-        list.querySelectorAll('.wpc-msg p').forEach((p, i) => { const msgs = items.filter(x => x.kind === 'comment'); if (msgs[i]) p.textContent = msgs[i].body; });
+        list.querySelectorAll('.wpc-msg').forEach(el => { const msg = items.find(x => x.id === el.dataset.id); const p = el.querySelector('p'); if (msg && p) p.textContent = msg.body; });
         if (near || chat.justOpened) { list.scrollTop = list.scrollHeight; chat.justOpened = false; }
         const form = d.querySelector('.wpc-form');
         form.hidden = !canTalk;
@@ -1170,7 +1210,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (chat.sent.length >= 20) return app.showToast('Slow down a little — try again in a moment');
             chat.sent.push(Date.now());
             const row = { id: Math.random().toString(36).slice(2, 14), match_id: W.match, user_id: myId(), created_at: new Date().toISOString(), ...fields };
-            chat.ch.send({ type: 'broadcast', event: 'chat', payload: { id: row.id, user_id: row.user_id, kind: row.kind, body: row.body, emoji: row.emoji } }).catch(() => {});
+            if (fields.target && chat.list.some(x => x.kind === 'reaction' && x.target === fields.target && x.emoji === fields.emoji && x.user_id === row.user_id)) return;
+            chat.ch.send({ type: 'broadcast', event: 'chat', payload: { id: row.id, user_id: row.user_id, kind: row.kind, body: row.body, emoji: row.emoji, target: row.target } }).catch(() => {});
             return chatIn(chat, row);
         }
         const { data, error } = await client.from('diary_wp_chat').insert({ match_id: W.match, ...fields }).select('*').single();
@@ -1195,17 +1236,41 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!CHAT_EMOJI.includes(emoji)) return;
             try { if (navigator.vibrate) navigator.vibrate(8); } catch (err) { /* no haptics */ }
             chatSend({ kind: 'reaction', emoji });
-        } else if (what === 'msg' && el.classList.contains('mine')) {
-            if (!(await app.ask({ title: 'Delete this message?', text: 'It disappears for everyone in the match.', ok: 'Delete', danger: true }))) return;
+        } else if (what === 'msg') {
+            if (e.target.closest('[data-wpc="chip"]')) return;
             const id = el.dataset.id;
-            if (chat.live) chat.ch.send({ type: 'broadcast', event: 'unsay', payload: { id, user_id: myId() } }).catch(() => {});
-            else {
-                const { error } = await client.from('diary_wp_chat').delete().eq('id', id);
-                if (error) return app.showToast('Couldn’t delete it — try again');
-            }
-            chat.list = chat.list.filter(x => x.id !== id);
-            paintChat();
+            const m = W.state.m;
+            const canReact = m && !m.out_players.includes(myId());
+            const pick = () => I.emojiPicker && I.emojiPicker(el.querySelector('.wpc-bub') || el, emoji => toggleMsgReact(id, emoji), {
+                set: CHAT_EMOJI.map(x => [x, CHAT_NAMES[x]]),
+                chosen: new Set(chat.list.filter(x => x.kind === 'reaction' && x.target === id && x.user_id === myId()).map(x => x.emoji))
+            });
+            if (!el.classList.contains('mine')) { if (canReact) pick(); return; }
+            app.openPopover(el, [
+                ...(canReact ? [{ label: 'React', icon: 'i-smile', onClick: () => setTimeout(pick, 0) }] : []),
+                { label: 'Delete message', icon: 'i-trash', danger: true, onClick: async () => {
+                    if (!(await app.ask({ title: 'Delete this message?', text: 'It disappears for everyone in the match.', ok: 'Delete', danger: true }))) return;
+                    unsay(id);
+                } }
+            ]);
+        } else if (what === 'chip') {
+            const m = W.state.m;
+            if (m && m.out_players.includes(myId())) return;
+            toggleMsgReact(el.dataset.id, el.dataset.emoji);
+        } else if (what === 'emoji') {
+            const input = W.dlg.querySelector('.wpc-input');
+            if (!I.emojiPicker || !input) return;
+            I.emojiPicker(el, emoji => {
+                const at = input.selectionStart ?? input.value.length;
+                input.value = (input.value.slice(0, at) + emoji + input.value.slice(input.selectionEnd ?? at)).slice(0, 300);
+                const pos = Math.min(300, at + emoji.length);
+                input.focus();
+                try { input.setSelectionRange(pos, pos); } catch (err) { /* not a text field */ }
+            }, { set: TYPE_EMOJI });
         }
+    }
+    function onChatKey(e) {
+        if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('.wpc-msg')) { e.preventDefault(); e.target.click(); }
     }
     function onChatSubmit(e) {
         if (!e.target.classList.contains('wpc-form')) return;
