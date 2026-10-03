@@ -35,6 +35,32 @@ document.addEventListener('DOMContentLoaded', () => {
     const CHARACTERS = [['none', 'None', '—'], ['woman', 'Presenter (her)', '👩🏾'], ['man', 'Presenter (him)', '👨🏾'],
         ['buddy', 'Buddy', '🟣'], ['kitty', 'Kitty', '🐱'], ['robo', 'Robo', '🤖'], ['sunny', 'Sunny', '🌞']];
     const PRESENTER_VOICE = { woman: 'female', man: 'male' };
+    const CHAR_INFO = { none: 'Just your words', woman: 'Presents in a female voice', man: 'Presents in a male voice', buddy: 'Friendly companion', kitty: 'Playful and soft', robo: 'Techy helper', sunny: 'Bright and cheerful' };
+    const CHAR_GROUPS = [['Presenters', ['woman', 'man']], ['Characters', ['buddy', 'kitty', 'robo', 'sunny']], ['Simple', ['none']]];
+    const LOOK_NAMES = { note: 'Note colour', sunset: 'Sunset', night: 'Night', ocean: 'Ocean', forest: 'Forest', paper: 'Paper' };
+    const TRACK_MOOD = { none: 'Just the voice and your words', calm: 'Soft and slow', uplifting: 'Bright and hopeful', lofi: 'Chill beat', afro: 'Percussive groove', cinematic: 'Swelling and epic', praise: 'Joyful gospel chords', worship: 'Gentle and reflective' };
+    const VOICES = [['off', 'No narrator', 'Music and your words only'], ['female', 'Female', 'Warm · reads your note aloud'], ['male', 'Male', 'Calm · reads your note aloud']];
+    const VOICE_LABEL = { off: 'No narrator', female: 'Female · warm', male: 'Male · calm' };
+    const charOf = k => CHARACTERS.find(c => c[0] === k) || CHARACTERS[0];
+    const trackOf = k => TRACKS.find(t => t[0] === k) || null;
+
+    // ---------- Drafts: your choices for a note are kept on this device and come back next time ----------
+    const DRAFT_KEY = 'cordialNoteMedia';
+    const draftIdOf = n => { let h = 0; const str = `${n.title}|${n.text.slice(0, 400)}`; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0; return String(h); };
+    function loadDraft(id) { try { return (JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}'))[id] || null; } catch (e) { return null; } }
+    function saveDraft() {
+        if (!S) return;
+        try {
+            const all = JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}');
+            const v = S.bg.video;
+            all[S.draftId] = { character: S.character, narrate: S.narrate, look: S.look, speed: S.speed, voice: S.voice, music: v.music === 'mine' ? S.recommended : v.music, volume: v.volume, at: Date.now() };
+            const keep = Object.keys(all).sort((a, b) => all[b].at - all[a].at).slice(0, 30);
+            localStorage.setItem(DRAFT_KEY, JSON.stringify(Object.fromEntries(keep.map(k => [k, all[k]]))));
+        } catch (e) { /* private mode: nothing kept */ }
+    }
+    function dropDraft() {
+        try { const all = JSON.parse(localStorage.getItem(DRAFT_KEY) || '{}'); delete all[S.draftId]; localStorage.setItem(DRAFT_KEY, JSON.stringify(all)); } catch (e) { /* private mode */ }
+    }
 
     // ---------- Narrator voices (diary-tts on the server; needs a Gemini key there) ----------
     const cfg = window.DIARY_CONFIG || {};
@@ -819,6 +845,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Everything that makes sound or draws: stopped when the sheet changes or closes
     function stopAll() {
         if (!S) return;
+        stopTaste();
         cancelAnimationFrame(S.raf);
         if (S.recorder && S.recorder.state !== 'inactive') { S.cancelled = true; S.recorder.stop(); }
         if (S.stream) S.stream.getTracks().forEach(t => t.stop());
@@ -856,6 +883,14 @@ document.addEventListener('DOMContentLoaded', () => {
             bg: { video: { music: rec, volume: 1 }, audio: { music: 'none', volume: 0.5 } }, recommended: rec, musicFile: null, musicName: '', character: 'buddy',
             denoise: true, audience: 'friends', videoBlob: null, audioBlob: null, audioDuration: 0, narrate: 'off', tts: null
         };
+        S.draftId = draftIdOf(n);
+        const d = loadDraft(S.draftId);
+        if (d && note.tab !== 'audio') {
+            Object.assign(S, { character: d.character || S.character, narrate: d.narrate || 'off', look: LOOKS[d.look] !== undefined ? d.look : 'note', speed: SPEEDS[d.speed] ? d.speed : 'normal', voice: !!d.voice });
+            if (trackOf(d.music)) S.bg.video.music = d.music;
+            if (typeof d.volume === 'number') S.bg.video.volume = d.volume;
+            S.restored = true;
+        }
         paint();
         if (!dlg.open) dlg.showModal();
         checkTTS(); // find out early whether narrator voices are available
@@ -863,10 +898,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function paint() {
         stopAll();
+        S.sheet = null;
         dlg.innerHTML = `
             <form method="dialog" class="nm-card" novalidate>
                 <header class="nm-head">
-                    <h3 id="nm-h">Share your note as…</h3>
+                    <h3 id="nm-h">${S.tab === 'audio' ? 'Create note audio' : 'Create note video'}</h3>
                     <button type="button" class="icon-btn" data-nm="close" aria-label="Close">${ic('i-close')}</button>
                 </header>
                 <nav class="nm-tabs" role="tablist" aria-label="Format">
@@ -878,77 +914,238 @@ document.addEventListener('DOMContentLoaded', () => {
         if (S.tab === 'video') startPreview(false);
     }
 
-    // ---------- Video ----------
+    // ---------- Video: a small studio. Preview first, one row per choice, each opening its own sheet ----------
+    const totalSecs = () => Math.round(slidesFor(S.note).length * SPEEDS[S.speed]);
     function videoHTML() {
-        const secs = Math.round(slidesFor(S.note).length * SPEEDS[S.speed]);
+        const secs = totalSecs();
         if (S.videoBlob) {
             return `
-                <div class="nm-video">
+                <div class="nm-video nm-studio">
                     <div class="nm-stage"><video class="nm-canvas" src="${URL.createObjectURL(S.videoBlob)}" controls playsinline loop></video></div>
-                    <div class="nm-controls">
-                        <p class="nm-done">${ic('i-check')}Your video is ready — ${S.videoSecs || secs} seconds.</p>
-                        <button type="button" class="primary-btn nm-wide" data-nm="post-video">${ic('i-reel')}Post to the Feed as a reel</button>
-                        <button type="button" class="ghost-btn nm-wide" data-nm="save-video">Save to this device</button>
-                        <button type="button" class="link-btn" data-nm="redo-video">Change it and make it again</button>
+                    <div class="nm-side">
+                        <div class="nm-ready" role="status">
+                            <span class="nm-ready-ic" aria-hidden="true">${ic('i-check')}</span>
+                            <span><strong>Your video is ready</strong><small>${S.videoSecs || secs} seconds · play it above</small></span>
+                        </div>
+                        <div class="nm-rows">
+                            <button type="button" class="nm-row" data-nm="save-video"><span class="nm-row-k">Save to this device</span><span class="nm-row-v">${S.videoType === 'video/mp4' ? 'MP4' : 'WebM'}</span><span class="nm-chev" aria-hidden="true">›</span></button>
+                            <button type="button" class="nm-row" data-nm="redo-video"><span class="nm-row-k">Change it</span><span class="nm-row-v">Back to the studio</span><span class="nm-chev" aria-hidden="true">›</span></button>
+                        </div>
                     </div>
-                </div>`;
+                </div>
+                <footer class="nm-action"><button type="button" class="primary-btn nm-wide" data-nm="post-video">${ic('i-reel')}Post to the Feed as a reel</button></footer>`;
         }
         return `
-            <div class="nm-video">
+            <div class="nm-video nm-studio">
                 <div class="nm-stage">
                     <canvas class="nm-canvas" width="720" height="1280" aria-label="Video preview"></canvas>
                     <button type="button" class="nm-play" data-nm="preview" aria-label="${S.previewing ? 'Stop the preview' : 'Play the preview with sound'}">${S.previewing ? '<span class="nm-stop" aria-hidden="true"></span>' : ic('i-play')}<span>${S.previewing ? 'Stop' : 'Preview with sound'}</span></button>
                     <div class="nm-progress" hidden><span></span><small>Making your video…</small></div>
                 </div>
-                <div class="nm-controls">
-                    <div class="field"><span>Character</span>
-                        <div class="nm-chars" role="radiogroup" aria-label="Character">${CHARACTERS.map(([k, label, emoji]) => `
-                            <button type="button" role="radio" aria-checked="${S.character === k}" class="nm-char" data-nm="char" data-char="${k}"><span aria-hidden="true">${emoji}</span>${label}</button>`).join('')}
-                        </div>
-                    </div>
-                    <div class="field"><span>Narrator voice</span>
-                        <div class="nm-seg" role="radiogroup" aria-label="Narrator voice">
-                            ${[['off', '🔇 None'], ['female', '👩🏾 Female'], ['male', '👨🏾 Male']].map(([k, l]) => `<button type="button" role="radio" aria-checked="${S.narrate === k}" data-nm="narrate" data-voice="${k}">${l}</button>`).join('')}
-                        </div>
-                        ${S.narrate !== 'off' && ttsReady === false ? `<p class="nm-hint">Tap “Preview with sound” to hear the presenter read your note in ${S.narrate === 'male' ? 'a male' : 'a female'} voice from this device. Saving that voice inside the video needs Cordial’s voice service (coming soon) — until then the video shows the presenter speaking the words, or switch on “Add my voice” and read it yourself.</p>`
-                            : S.narrate !== 'off' ? '<p class="nm-hint">A natural voice reads your note, and each slide lasts as long as it’s being read. Tap “Preview with sound” to hear it.</p>' : ''}
-                    </div>
-                    ${musicPicker('Music')}
-                    <div class="field"><span>Look</span>
-                        <div class="nm-looks" role="radiogroup" aria-label="Look">${Object.keys(LOOKS).map(k => {
-                            const [a, b] = palette(k, S.note.color);
-                            return `<button type="button" role="radio" aria-checked="${S.look === k}" class="nm-look" data-nm="look" data-look="${k}" style="background:linear-gradient(135deg,${a},${b})" aria-label="${k === 'note' ? 'Note colour' : k}"></button>`;
-                        }).join('')}</div>
-                    </div>
-                    <div class="field"><span>Pace</span>
-                        <div class="nm-seg" role="radiogroup" aria-label="Pace">${Object.keys(SPEEDS).map(k => `<button type="button" role="radio" aria-checked="${S.speed === k}" data-nm="speed" data-speed="${k}">${k[0].toUpperCase() + k.slice(1)}</button>`).join('')}</div>
-                    </div>
-                    <label class="nm-switch"><input type="checkbox" data-nm="voice"${S.voice && !narrating() ? ' checked' : ''}${narrating() ? ' disabled' : ''}><span><strong>Add my voice</strong>${narrating() ? '<small>Off while the narrator reads your note.</small>' : ''}<small>Read along while it records — the slides are your prompt. Background noise is filtered out${M().music !== 'none' ? ', and the music is mixed in underneath (use headphones to hear it)' : ''}.</small></span></label>
-                    <p class="nm-meta">${slidesFor(S.note).length} slides · ${narrating() ? 'as long as the narration' : `about ${secs} seconds`}</p>
-                    <button type="button" class="primary-btn nm-wide" data-nm="make-video">${ic('i-sparkle')}Make my video</button>
-                </div>
-            </div>`;
+                <div class="nm-side">${sideHTML()}</div>
+            </div>
+            <div class="nm-sheet-wrap" hidden></div>
+            <footer class="nm-action">
+                <p class="nm-meta">${metaText()}</p>
+                <button type="button" class="primary-btn nm-wide" data-nm="make-video">${ic('i-sparkle')}<span>Create video</span></button>
+            </footer>`;
     }
-
-    // Music choice (used by both tabs): built-in tracks, gospel included, or your own audio file
-    function musicPicker(label) {
+    const metaText = () => `${slidesFor(S.note).length} slides · ${narrating() ? 'as long as the narration' : `about ${totalSecs()} seconds`}`;
+    function row(sheet, label, value, extra = '') {
+        return `<div class="nm-row-wrap">
+            <button type="button" class="nm-row" data-nm="sheet" data-sheet="${sheet}" aria-haspopup="dialog"><span class="nm-row-k">${label}</span><span class="nm-row-v">${value}</span><span class="nm-chev" aria-hidden="true">›</span></button>${extra}</div>`;
+    }
+    function musicLabel() {
         const m = M();
-        const trackBtn = ([k, name, emoji]) => `
-            <button type="button" role="radio" aria-checked="${m.music === k}" class="nm-track" data-nm="music" data-music="${k}">
-                <span aria-hidden="true">${emoji}</span>${name}${k === S.recommended && S.tab !== 'audio' ? '<small>suits your note</small>' : ''}
-            </button>`;
+        if (m.music === 'mine') return `${ic('i-music')}${esc(S.musicName || 'Your audio')}`;
+        const t = trackOf(m.music);
+        return t && t[0] !== 'none' ? `<span class="nm-row-em" aria-hidden="true">${t[2]}</span>${t[1]}` : 'No music';
+    }
+    // The rows to the side of (or under) the preview: redrawn in place, so the preview keeps playing
+    function sideHTML() {
+        const ch = charOf(S.character);
+        const [a, b] = palette(S.look, S.note.color);
+        const rec = trackOf(S.recommended);
+        const showRec = rec && M().music !== S.recommended && M().music !== 'mine';
         return `
-            <div class="field"><span>${label}</span>
-                <button type="button" class="nm-upload${m.music === 'mine' ? ' on' : ''}" data-nm="upload">
-                    <span class="nm-upload-ic" aria-hidden="true">📁</span>
-                    <span class="nm-upload-text"><strong>${m.music === 'mine' && S.musicFile ? esc(S.musicName) : 'Upload your own audio'}</strong><small>${m.music === 'mine' && S.musicFile ? 'Playing your audio · tap to change it' : 'A song, beat or instrumental from your device — MP3, M4A, WAV'}</small></span>
-                </button>
-                <div class="nm-tracks" role="radiogroup" aria-label="${label}">${TRACKS.map(trackBtn).join('')}</div>
-                ${m.music !== 'none' ? `<label class="nm-volume"><span>Volume <output>${Math.round(m.volume * 100)}%</output></span><input type="range" min="0" max="1.5" step="0.05" value="${m.volume}" data-nm="volume" aria-label="${label} volume"></label>` : ''}
+            ${S.restored ? `<p class="nm-restored">${ic('i-check')}<span>Picked up where you left off</span><button type="button" class="link-btn" data-nm="reset">Start fresh</button></p>` : ''}
+            ${showRec ? `<div class="nm-recommend"><span class="nm-row-em" aria-hidden="true">${rec[2]}</span><span><small>Recommended for this note</small><strong>${rec[1]}</strong></span><button type="button" class="nm-chip" data-nm="use-rec">Use</button></div>` : ''}
+            <div class="nm-rows">
+                ${row('character', 'Character', `<span class="nm-row-em" aria-hidden="true">${ch[2]}</span>${ch[0] === 'none' ? 'None' : ch[1]}`)}
+                ${row('voice', 'Voice', VOICE_LABEL[S.narrate], S.narrate !== 'off' ? `<button type="button" class="nm-sample" data-nm="sample" data-voice="${S.narrate}" aria-label="Hear a sample of the ${S.narrate} voice">${ic('i-play')}</button>` : '')}
+                ${row('music', 'Music', musicLabel())}
+                ${row('look', 'Look', `<span class="nm-swatch" style="background:linear-gradient(135deg,${a},${b})" aria-hidden="true"></span>${LOOK_NAMES[S.look]}`)}
+                ${row('advanced', 'Advanced settings', `${S.speed[0].toUpperCase() + S.speed.slice(1)} pace${S.voice && !narrating() ? ' · your voice' : ''}`)}
             </div>`;
     }
+    function refreshSide() {
+        const side = dlg.querySelector('.nm-studio .nm-side');
+        if (side && !S.videoBlob) side.innerHTML = sideHTML();
+        const meta = dlg.querySelector('.nm-action .nm-meta');
+        if (meta) meta.textContent = metaText();
+        const row = dlg.querySelector('.nm-audio [data-sheet="music"] .nm-row-v');
+        if (row) row.innerHTML = musicLabel();
+    }
 
-    // The final mix goes through a limiter, so music + voice can be loud without distorting
+    // ---------- Sheets ----------
+    function sheetHTML(kind) {
+        const head = title => `<div class="nm-grab" aria-hidden="true"><i></i></div><header class="nm-sheet-head"><h4 id="nm-sheet-h">${title}</h4><button type="button" class="nm-done-btn" data-nm="sheet-done">Done</button></header>`;
+        const tick = on => (on ? `<span class="nm-tick" aria-hidden="true">${ic('i-check')}</span>` : '');
+        if (kind === 'character') {
+            return head('Choose a character') + CHAR_GROUPS.map(([g, keys]) => `
+                <h5 class="nm-group">${g}</h5>
+                <div class="nm-grid" role="radiogroup" aria-label="${g}">${keys.map(k => { const c = charOf(k); const on = S.character === k; return `
+                    <button type="button" role="radio" aria-checked="${on}" class="nm-tile" data-nm="char" data-char="${k}">
+                        <span class="nm-tile-av" aria-hidden="true">${c[2]}</span><strong>${k === 'none' ? 'No character' : c[1]}</strong><small>${CHAR_INFO[k]}</small>${tick(on)}
+                    </button>`; }).join('')}</div>`).join('');
+        }
+        if (kind === 'voice') {
+            return head('Narrator voice') + `
+                <div class="nm-list" role="radiogroup" aria-label="Narrator voice">${VOICES.map(([k, name, desc]) => { const on = S.narrate === k; return `
+                    <div class="nm-item${on ? ' on' : ''}">
+                        <button type="button" role="radio" aria-checked="${on}" class="nm-item-main" data-nm="narrate" data-voice="${k}"><span><strong>${name}</strong><small>${desc}</small></span>${tick(on)}</button>
+                        ${k !== 'off' ? `<button type="button" class="nm-item-play" data-nm="sample" data-voice="${k}" aria-label="Hear a sample of the ${name.toLowerCase()} voice">${ic('i-play')}</button>` : ''}
+                    </div>`; }).join('')}</div>
+                <p class="nm-hint">${ttsReady === false
+                    ? 'Samples and previews use this device’s voice. Putting the voice inside the saved video needs Cordial’s voice service — until then the presenter mouths the words, or turn on “Add my voice” in Advanced settings and read it yourself.'
+                    : 'Samples use this device’s voice; your video is read in Cordial’s natural voice, and each slide stays up as long as it’s being read.'}</p>`;
+        }
+        if (kind === 'music') {
+            const m = M();
+            const list = TRACKS.map(([k, name, emoji]) => { const on = m.music === k; const tasting = S.tasting === k; return `
+                <div class="nm-item${on ? ' on' : ''}">
+                    ${k !== 'none' ? `<button type="button" class="nm-item-play${tasting ? ' playing' : ''}" data-nm="taste" data-music="${k}" aria-label="${tasting ? 'Stop' : 'Hear'} ${name}">${tasting ? '<span class="nm-stop" aria-hidden="true"></span>' : ic('i-play')}</button>` : `<span class="nm-item-play ghost" aria-hidden="true">${ic('i-volume-off')}</span>`}
+                    <button type="button" role="radio" aria-checked="${on}" class="nm-item-main" data-nm="music" data-music="${k}"><span><strong>${name}${k === S.recommended && S.tab !== 'audio' ? ' <em class="nm-pick">Recommended</em>' : ''}</strong><small>${TRACK_MOOD[k]}${k !== 'none' ? ' · loops to fit' : ''}</small></span>${tick(on)}</button>
+                </div>`; }).join('');
+            const mine = m.music === 'mine' && S.musicFile;
+            return head(S.tab === 'audio' ? 'Background music' : 'Music') + `
+                <div class="nm-list" role="radiogroup" aria-label="Music">${list}</div>
+                ${mine ? `
+                    <div class="nm-item on nm-mine"><span class="nm-item-play ghost" aria-hidden="true">${ic('i-music')}</span><span class="nm-item-main static"><span><strong>${esc(S.musicName)}</strong><small>Your audio</small></span>${tick(true)}</span></div>
+                    <div class="nm-mine-acts"><button type="button" class="nm-chip" data-nm="upload">Replace</button><button type="button" class="nm-chip" data-nm="music" data-music="none">Remove</button></div>`
+                    : `<button type="button" class="nm-add" data-nm="upload">${ic('i-plus')}<span><strong>Add from device</strong><small>MP3, M4A or WAV · up to 20 MB</small></span></button>`}
+                ${m.music !== 'none' ? `<label class="nm-volume"><span>Music volume <output>${Math.round(m.volume * 100)}%</output></span><input type="range" min="0" max="1.5" step="0.05" value="${m.volume}" data-nm="volume" aria-label="Music volume"></label>` : ''}`;
+        }
+        if (kind === 'look') {
+            return head('Look') + `
+                <div class="nm-looks2" role="radiogroup" aria-label="Look">${Object.keys(LOOKS).map(k => { const [a, b, c] = palette(k, S.note.color); const on = S.look === k; return `
+                    <button type="button" role="radio" aria-checked="${on}" class="nm-look-tile" data-nm="look" data-look="${k}">
+                        <span class="nm-look-thumb" style="background:linear-gradient(160deg,${a},${b});color:${c || '#fff'}"><b>Aa</b><i></i><i></i></span>
+                        <span>${LOOK_NAMES[k]}</span>${tick(on)}
+                    </button>`; }).join('')}</div>`;
+        }
+        // Advanced
+        return head('Advanced settings') + `
+            <div class="field"><span>Pace</span>
+                <div class="nm-seg" role="radiogroup" aria-label="Pace">${Object.keys(SPEEDS).map(k => `<button type="button" role="radio" aria-checked="${S.speed === k}" data-nm="speed" data-speed="${k}">${k[0].toUpperCase() + k.slice(1)}</button>`).join('')}</div>
+            </div>
+            <label class="nm-switch"><input type="checkbox" data-nm="voice"${S.voice && !narrating() ? ' checked' : ''}${narrating() ? ' disabled' : ''}><span><strong>Add my voice</strong>${narrating() ? '<small>Off while the narrator reads your note.</small>' : ''}<small>Read along while it records — the slides are your prompt. Background noise is filtered out${M().music !== 'none' ? ', and the music dips under you (use headphones to hear it)' : ''}.</small></span></label>
+            <button type="button" class="nm-reset" data-nm="reset">Reset all settings</button>`;
+    }
+    function openSheet(kind) {
+        const wrap = dlg.querySelector('.nm-sheet-wrap');
+        if (!wrap) return;
+        S.sheet = kind;
+        wrap.innerHTML = `<div class="nm-sheet-back" data-nm="sheet-done"></div><div class="nm-sheet" role="dialog" aria-modal="true" aria-labelledby="nm-sheet-h">${sheetHTML(kind)}</div>`;
+        wrap.hidden = false;
+        dragToClose(wrap.querySelector('.nm-sheet'));
+        (wrap.querySelector('[aria-checked="true"]') || wrap.querySelector('.nm-done-btn'))?.focus({ preventScroll: true });
+    }
+    function refreshSheet() {
+        const sh = dlg.querySelector('.nm-sheet');
+        if (!S.sheet || !sh) return;
+        const top = sh.scrollTop;
+        sh.innerHTML = sheetHTML(S.sheet);
+        sh.scrollTop = top;
+    }
+    function closeSheet() {
+        const wrap = dlg.querySelector('.nm-sheet-wrap');
+        const was = S.sheet;
+        S.sheet = null;
+        stopTaste();
+        if (!wrap || wrap.hidden) return;
+        wrap.classList.add('closing');
+        setTimeout(() => { wrap.hidden = true; wrap.classList.remove('closing'); wrap.innerHTML = ''; }, 200);
+        dlg.querySelector(`[data-sheet="${was}"]`)?.focus({ preventScroll: true });
+    }
+    function dragToClose(card) {
+        if (!card) return;
+        let d = null;
+        card.addEventListener('pointerdown', e => {
+            if (!e.target.closest('.nm-grab, .nm-sheet-head') || e.target.closest('button')) return;
+            d = { y0: e.clientY, t0: e.timeStamp, id: e.pointerId, y: 0 };
+            card.setPointerCapture(e.pointerId);
+            card.style.transition = 'none';
+        });
+        card.addEventListener('pointermove', e => {
+            if (!d || e.pointerId !== d.id) return;
+            d.y = Math.max(0, e.clientY - d.y0);
+            card.style.transform = `translateY(${d.y}px)`;
+        });
+        const end = e => {
+            if (!d || e.pointerId !== d.id) return;
+            const g = d;
+            d = null;
+            card.style.transition = '';
+            const v = (g.y / Math.max(1, e.timeStamp - g.t0)) * 1000;
+            if (g.y > 90 || v > 800) closeSheet();
+            else card.style.transform = '';
+        };
+        card.addEventListener('pointerup', end);
+        card.addEventListener('pointercancel', end);
+    }
+
+    // A choice changed: keep it, redraw what shows it, and let the preview pick it up straight away
+    function changed() {
+        saveDraft();
+        if (S.restored) S.restored = false;
+        if (!S.sheet) return paint();
+        refreshSheet();
+        refreshSide();
+        if (S.tab === 'video' && !S.previewing) { cancelAnimationFrame(S.raf); startPreview(false); }
+    }
+
+    // ---------- Hearing things before choosing them ----------
+    function taste(kind) {
+        if (!AC) return;
+        const was = S.tasting;
+        stopTaste();
+        if (was === kind) return refreshSheet();
+        stopSound();
+        refreshPlay();
+        const ac = S.tasteAc = new AC();
+        const g = ac.createGain();
+        g.gain.value = Math.max(0.3, M().volume);
+        g.connect(ac.destination);
+        S.tasteEngine = musicEngine(ac, g, kind);
+        S.tasting = kind;
+        S.tasteTimer = setTimeout(() => { stopTaste(); refreshSheet(); }, 8000);
+        refreshSheet();
+    }
+    function stopTaste() {
+        if (!S) return;
+        clearTimeout(S.tasteTimer);
+        if (S.tasteEngine) { S.tasteEngine.stop(); S.tasteEngine = null; }
+        if (S.tasteAc) { const a = S.tasteAc; S.tasteAc = null; setTimeout(() => a.close().catch(() => {}), 400); }
+        S.tasting = null;
+    }
+    function sample(gender) {
+        if (!('speechSynthesis' in window)) return app.showToast('Voice samples aren’t supported in this browser');
+        stopTaste();
+        stopSound();
+        refreshPlay();
+        const first = slidesFor(S.note).find(sl => sl.kind !== 'end');
+        const text = String(first ? first.text : 'This is how your note will sound.').split(/(?<=[.!?])\s/)[0].slice(0, 160);
+        const u = new SpeechSynthesisUtterance(text);
+        const voice = deviceVoice(gender);
+        if (voice) { u.voice = voice; u.lang = voice.lang; }
+        u.rate = 0.98;
+        u.pitch = gender === 'female' ? (voice && FEMALE.test(voice.name) ? 1 : 1.25) : (voice && MALE.test(voice.name) ? 1 : 0.8);
+        speechSynthesis.cancel();
+        speechSynthesis.speak(u);
+    }
+
+        // The final mix goes through a limiter, so music + voice can be loud without distorting
     function mixBus(ac, dest) {
         const lim = ac.createDynamicsCompressor();
         lim.threshold.value = -4; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.002; lim.release.value = 0.12;
@@ -1067,14 +1264,17 @@ document.addEventListener('DOMContentLoaded', () => {
         const slides = slidesFor(S.note);
         let per = SPEEDS[S.speed];
         const bar = dlg.querySelector('.nm-progress');
-        const controls = dlg.querySelector('.nm-controls');
+        const controls = dlg.querySelector('.nm-side');
+        const go = dlg.querySelector('[data-nm="make-video"]');
         bar.hidden = false;
         dlg.querySelector('.nm-play').hidden = true;
         controls.classList.add('busy');
+        if (go) { go.disabled = true; go.querySelector('span').textContent = 'Creating your video…'; }
         const fail = msg => {
             bar.hidden = true;
             dlg.querySelector('.nm-play').hidden = false;
             controls.classList.remove('busy');
+            if (go) { go.disabled = false; go.querySelector('span').textContent = 'Create video'; }
             if (ac) ac.close().catch(() => {});
             app.showToast(msg);
             startPreview(false);
@@ -1149,7 +1349,9 @@ document.addEventListener('DOMContentLoaded', () => {
             // The music dips while the narrator speaks
             if (voiceSrc && S.musicGain && !S.fading) S.musicGain.gain.setTargetAtTime(lv > 0.05 ? M().volume * 0.35 : M().volume, ac.currentTime, 0.1);
             draw(ctx, slides, t, per, pal, S.character, lv);
-            bar.querySelector('span').style.width = `${Math.min(100, (t / total) * 100)}%`;
+            const pct = Math.min(100, (t / total) * 100);
+            bar.querySelector('span').style.width = `${pct}%`;
+            if (go) go.querySelector('span').textContent = `Creating your video… ${Math.round(pct)}%`;
             if (S.musicGain && t > total - 1.2 && !S.fading) { S.fading = true; S.musicGain.gain.setTargetAtTime(0.0001, S.ac.currentTime, 0.35); } // fade the music out at the end
             if (t < total + 0.3) S.raf = requestAnimationFrame(frame);
             else if (recorder.state !== 'inactive') recorder.stop();
@@ -1187,7 +1389,7 @@ document.addEventListener('DOMContentLoaded', () => {
             S.musicFile = file;
             S.musicName = String(file.name || 'Your audio').replace(/\.[a-z0-9]+$/i, '').slice(0, 28);
             M().music = 'mine';
-            paint();
+            if (S.sheet) { refreshSheet(); refreshSide(); } else paint();
             audition();
         };
         input.click();
@@ -1215,7 +1417,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <button type="button" class="link-btn" data-nm="redo-audio">Record again</button>`
                 : `
                     <label class="nm-switch"><input type="checkbox" data-nm="denoise"${S.denoise ? ' checked' : ''}><span><strong>Silence background noise</strong><small>For a clean voice-over: filters out hum, fans, traffic and chatter, and silences the gaps between your words.</small></span></label>
-                    ${musicPicker('Background music (optional)')}
+                    <div class="nm-rows">${row('music', 'Background music', musicLabel())}</div>
                     ${M().music !== 'none' ? '<p class="nm-meta">The music is mixed in under your voice and dips while you speak. Use headphones to hear it as you record.</p>' : ''}
                     <div class="nm-meter" aria-hidden="true"><i></i><span class="nm-gate">Listening…</span></div>
                     <div class="nm-rec-row">
@@ -1224,7 +1426,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         <span class="nm-timer-cap">max 10 min</span>
                     </div>
                     <p class="nm-meta">Tap record and read your note aloud. It scrolls as you go.</p>`}
-            </div>`;
+            </div>
+            <div class="nm-sheet-wrap" hidden></div>`;
     }
 
     async function toggleRecord(btn) {
@@ -1348,18 +1551,32 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!el || !S) return;
         const what = el.dataset.nm;
         if (what === 'close') { dlg.close(); }
+        else if (what === 'sheet') openSheet(el.dataset.sheet);
+        else if (what === 'sheet-done') closeSheet();
+        else if (what === 'taste') taste(el.dataset.music);
+        else if (what === 'sample') sample(el.dataset.voice);
+        else if (what === 'use-rec') { M().music = S.recommended; changed(); refreshSide(); audition(); }
+        else if (what === 'reset') {
+            const custom = S.character !== 'buddy' || S.narrate !== 'off' || S.look !== 'note' || S.speed !== 'normal' || S.voice || M().music !== S.recommended;
+            if (custom && !(await app.ask({ title: 'Reset all settings?', text: 'Character, voice, music, look and pace go back to Cordial’s suggestions for this note.', ok: 'Reset' }))) return;
+            Object.assign(S, { character: 'buddy', narrate: 'off', look: 'note', speed: 'normal', voice: false, restored: false, sheet: null });
+            S.bg.video = { music: S.recommended, volume: 1 };
+            dropDraft();
+            paint();
+        }
         else if (what === 'tab') { if (S.recorder && S.recorder.state === 'recording') return; S.tab = el.dataset.tab; paint(); }
-        else if (what === 'look') { S.look = el.dataset.look; paint(); }
-        else if (what === 'speed') { S.speed = el.dataset.speed; paint(); }
+        else if (what === 'look') { S.look = el.dataset.look; changed(); }
+        else if (what === 'speed') { S.speed = el.dataset.speed; changed(); }
         else if (what === 'char') {
             S.character = el.dataset.char;
             // A presenter reads in their own voice (when voices are available)
             if (PRESENTER_VOICE[S.character]) { await checkTTS(); S.narrate = PRESENTER_VOICE[S.character]; }
-            paint();
-        } else if (what === 'narrate') { S.narrate = el.dataset.voice; await checkTTS(); paint(); }
+            changed();
+        } else if (what === 'narrate') { S.narrate = el.dataset.voice; await checkTTS(); changed(); }
         else if (what === 'music') {
+            stopTaste();
             M().music = el.dataset.music;
-            paint();
+            changed();
             audition();
         } else if (what === 'upload') pickMusic();
         else if (what === 'preview') {
@@ -1369,7 +1586,7 @@ document.addEventListener('DOMContentLoaded', () => {
             refreshPlay();
             if (!playing && M().music === 'none') app.showToast('Pick some music to hear it — or add your voice when you make the video');
         } else if (what === 'make-video') makeVideo();
-        else if (what === 'redo-video') { S.videoBlob = null; paint(); }
+        else if (what === 'redo-video') { S.videoBlob = null; S.sheet = null; paint(); }
         else if (what === 'save-video') {
             const f = videoFile();
             const a = document.createElement('a');
@@ -1417,14 +1634,19 @@ document.addEventListener('DOMContentLoaded', () => {
             const out = e.target.closest('.nm-volume')?.querySelector('output');
             if (out) out.textContent = `${Math.round(M().volume * 100)}%`;
             if (S.musicGain && S.ac) S.musicGain.gain.setTargetAtTime(M().volume, S.ac.currentTime, 0.05);
+            clearTimeout(S.volSave);
+            S.volSave = setTimeout(saveDraft, 400);
         }
     });
     dlg.addEventListener('change', e => {
-        if (e.target.dataset.nm === 'voice') S.voice = e.target.checked;
+        if (e.target.dataset.nm === 'voice') { S.voice = e.target.checked; saveDraft(); refreshSide(); }
         if (e.target.dataset.nm === 'denoise') S.denoise = e.target.checked;
     });
     dlg.addEventListener('close', () => { stopAll(); });
-    dlg.addEventListener('cancel', e => { if (S && S.recorder && S.recorder.state === 'recording') e.preventDefault(); });
+    dlg.addEventListener('cancel', e => {
+        if (S && S.recorder && S.recorder.state === 'recording') return e.preventDefault();
+        if (S && S.sheet) { e.preventDefault(); closeSheet(); } // Escape closes the open sheet first
+    });
 
     // ---------- Picking a note (from the Feed) ----------
     function pickNote(anchor) {
