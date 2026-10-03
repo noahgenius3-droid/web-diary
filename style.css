@@ -16513,3 +16513,7 @@ body.chat-open .alert-ask { bottom: calc(92px + env(safe-area-inset-bottom, 0px)
     .pf-head .pf-photo { grid-row: auto; justify-self: start; }
     .pf-head .pf-names { padding-top: 10px; }
 }
+
+/* ---------- Multi-photo posts: frame follows the first photo; nothing is ever cropped ---------- */
+.post-media .carousel:not([data-count="1"]) .slide { aspect-ratio: var(--ar, 4 / 5); height: auto; }
+.post-media .carousel:not([data-count="1"]) .slide img { width: 100%; height: 100%; max-height: none; object-fit: contain; }

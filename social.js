@@ -5008,6 +5008,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (counter) counter.textContent = `${index + 1}/${track.children.length}`;
     }, true);
 
+    // A post with several photos takes its frame shape from the first photo (between 4:5 tall and
+    // 1.91:1 wide), so landscape slides and screenshots show whole instead of being cropped.
+    content.addEventListener('load', e => {
+        const img = e.target;
+        if (img.tagName !== 'IMG' || !img.naturalWidth) return;
+        const track = img.closest('.post-media .carousel');
+        if (!track || track.dataset.count === '1' || track.style.getPropertyValue('--ar')) return;
+        if (img.closest('.slide') !== track.firstElementChild) return;
+        const ar = Math.min(1.91, Math.max(0.8, img.naturalWidth / img.naturalHeight));
+        track.style.setProperty('--ar', ar.toFixed(3));
+    }, true);
+
     // Zoom into a post's photos: every photo of that post, starting from the one you touched.
     // The viewer handles pinch / double-tap / wheel zoom, so the feed itself never zooms or jumps.
     function openZoom(slide, opts = {}) {
