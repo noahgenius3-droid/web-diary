@@ -16854,3 +16854,9 @@ html.kb-open .sp-chat-form { padding-bottom: 8px; }
 .sp-ticker-ic .i { width: 15px; height: 15px; }
 .sp-panel { background: #1b1a23; }
 .sp-controls { margin-top: 6px; }
+
+/* Menus: an On/Off value on the right of a switch row; a checked row reads as selected (icon + state, not colour alone) */
+.pop-item .pop-val { margin-left: auto; padding-left: 16px; color: var(--text-muted); font-size: 0.8rem; font-weight: 600; }
+.pop-item[aria-checked="true"] .pop-val { color: var(--accent); }
+.pop-item.is-checked[role="menuitemradio"] { font-weight: 700; }
+.pop-item.is-checked[role="menuitemradio"] .i { color: var(--accent); }

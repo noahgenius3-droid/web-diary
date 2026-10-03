@@ -568,6 +568,8 @@ document.addEventListener('DOMContentLoaded', () => {
         openChannel();
         keepAwake();
         mediaSession();
+        callAudioSession(true);
+        refreshOutputs();
         if (call.communityId) isModerator(call.communityId, me()).then(v => { if (call) call.amModerator = v; });
 
         showPanel();
@@ -715,8 +717,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     peer.audio = document.createElement('audio');
                     peer.audio.autoplay = true;
                     peer.audio.setAttribute('playsinline', '');
-                    peer.audio.muted = !call.speaker;
-                    if (call.sinkId && peer.audio.setSinkId) peer.audio.setSinkId(call.sinkId).catch(() => {});
+                    peer.audio.muted = !call.speaker || !!peer.mutedForMe;
+                    if (call.sinkId && canRoute && peer.audio.setSinkId) peer.audio.setSinkId(call.sinkId).catch(() => { call.sinkId = ''; paintPanel(); app.showToast('Couldn’t switch audio output'); });
                     $('call-audio').append(peer.audio);
                 }
                 const stream = e.streams[0] || new MediaStream([track]);
@@ -940,6 +942,8 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (e) { /* not every action exists everywhere */ }
     }
     function clearMediaSession() {
+        callAudioSession(false);
+        stopSensor();
         const ms = navigator.mediaSession;
         if (!ms) return;
         ['hangup', 'togglemicrophone', 'togglecamera'].forEach(a => { try { ms.setActionHandler(a, null); } catch (e) {} });
@@ -951,6 +955,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (document.visibilityState === 'visible') {
             if (!call.wake || call.wake.released) keepAwake();
             publish(); // coming back from the background: make sure presence is still published
+            refreshOutputs().then(() => { if (call) { applyAudio(); paintPanel(); } });
+            call.peers.forEach(p => { if (p.audio && p.audio.paused && p.audio.srcObject) p.audio.play().catch(() => askForSoundTap()); });
         } else if (canPip && !document.pictureInPictureElement) {
             // Switching to another app during a video call: keep it on top where the browser allows it
             const v = featuredVideo();
@@ -977,7 +983,7 @@ document.addEventListener('DOMContentLoaded', () => {
         held = null;
         c.local.getAudioTracks().forEach(t => { t.enabled = !c.muted; });
         if (c.cam) c.cam.enabled = true;
-        c.peers.forEach(p => { if (p.audio) p.audio.muted = !c.speaker; });
+        applyAudio(c);
         publish();
         if (c.channel) syncPeers();
         showPanel();
@@ -1144,107 +1150,193 @@ document.addEventListener('DOMContentLoaded', () => {
         paintPanel();
     }
 
-    function setSpeaker(on) {
-        call.speaker = on;
-        call.peers.forEach(p => { if (p.audio) p.audio.muted = !call.speaker; });
-        paintPanel();
-    }
-
-    // ---------- Where the sound goes ----------
-    // Chrome (Android and desktop) can send the call to a chosen output: the loudspeaker, the earpiece when the
-    // phone exposes one, or wired / Bluetooth earphones. iPhone Safari doesn't let websites choose, so there we
-    // explain the Control Centre route picker instead.
+    // ---------- Call audio: one place decides what you hear and where ----------
+    // The state lives on the call:
+    //   call.sinkId   the output you chose ('' = whatever the system uses)
+    //   call.speaker  false = "Mute call sound": everyone's voice is silenced on this device only — your microphone,
+    //                 and what the others see about you, never change (that's the separate Mute button)
+    //   peer.mutedForMe  "Mute for me only" on one person
+    // Every change goes through applyAudio(); the button then reads back what the browser really plays through.
+    // Chrome / Edge (Android and desktop) let a site pick the output; iPhone Safari doesn't, so there the system
+    // route picker is explained instead of showing choices that couldn't work.
     const canRoute = !!(window.HTMLMediaElement && HTMLMediaElement.prototype.setSinkId);
+    const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const EAR_RE = /earpiece|receiver|handset|phone speaker/i;
-    const HEAD_RE = /head|ear(buds|phones)|airpods|buds|bluetooth|bt |wired|jabra|bose|sony|beats/i;
+    const HEAD_RE = /head|ear(buds|phones)|airpods|buds|bluetooth|bt |hands-?free|wired|usb|jabra|bose|sony|beats/i;
     let outputs = [];
     async function refreshOutputs() {
         if (!canRoute || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return outputs = [];
         try { outputs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audiooutput' && d.deviceId !== 'communications'); } catch (e) { outputs = []; }
         return outputs;
     }
-    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
-        navigator.mediaDevices.addEventListener('devicechange', async () => {
-            const before = outputs.map(d => d.deviceId).join();
-            await refreshOutputs();
-            if (call && before && outputs.map(d => d.deviceId).join() !== before) {
-                const head = outputs.find(d => HEAD_RE.test(d.label));
-                if (head) app.showToast(`${head.label} connected`);
-                paintPanel();
+    const haptic = () => { try { if (navigator.vibrate) navigator.vibrate(8); } catch (e) { /* no haptics here */ } };
+    const cleanName = d => String((d && d.label) || '').replace(/^Default - /, '').replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)$/i, '').trim();
+    const routeKind = d => (!d ? 'speaker' : EAR_RE.test(d.label) ? 'ear' : HEAD_RE.test(d.label) ? 'head' : 'speaker');
+
+    // Put the state onto every person's sound; resolves false if the browser refused an output
+    function applyAudio(c = call) {
+        if (!c) return Promise.resolve(true);
+        const jobs = [];
+        c.peers.forEach(p => {
+            if (!p.audio) return;
+            p.audio.muted = !c.speaker || !!p.mutedForMe;
+            if (canRoute && p.audio.setSinkId && (p.audio.sinkId || '') !== (c.sinkId || '')) {
+                jobs.push(p.audio.setSinkId(c.sinkId || '').then(() => true, () => false));
             }
         });
+        return Promise.all(jobs).then(r => r.every(Boolean));
     }
-    const routeKind = d => (!d ? 'speaker' : EAR_RE.test(d.label) ? 'ear' : HEAD_RE.test(d.label) ? 'head' : 'speaker');
-    function currentRoute() {
-        const d = outputs.find(x => x.deviceId === call.sinkId) || (call.sinkId ? null : outputs.find(x => x.deviceId === 'default'));
-        const kind = routeKind(d);
-        const label = kind === 'ear' ? 'Phone' : kind === 'head' ? (d.label.replace(/\s*\(.*\)$/, '').replace(/^Default - /, '').slice(0, 14) || 'Earphones') : 'Speaker';
-        return { kind, label, icon: kind === 'ear' ? 'i-phone' : kind === 'head' ? 'i-headphones' : 'i-speaker' };
+    // What the sound really plays through right now (not just what was asked for)
+    function actualSink() {
+        if (!call) return '';
+        for (const [, p] of call.peers) if (p.audio && typeof p.audio.sinkId === 'string') return p.audio.sinkId;
+        return call.sinkId || '';
     }
-    function setSink(id) {
+    async function setRoute(id, quiet) {
+        if (!call) return;
+        const before = call.sinkId;
         call.sinkId = id;
-        call.peers.forEach(p => { if (p.audio && p.audio.setSinkId) p.audio.setSinkId(id).catch(() => {}); });
+        const ok = await applyAudio();
+        if (!ok) {
+            call.sinkId = before;
+            await applyAudio();
+            app.showToast('Couldn’t switch audio output');
+        } else if (!quiet) haptic();
         paintPanel();
     }
+    function setSpeaker(on) {
+        if (!call) return;
+        call.speaker = on;
+        applyAudio();
+        haptic();
+        paintPanel();
+        app.showToast(on ? 'Call sound is back on' : 'Call sound muted — they can still hear you');
+    }
+    function currentRoute() {
+        if (!canRoute) return { kind: 'system', label: 'Audio', icon: 'i-speaker' };
+        const id = actualSink();
+        const d = outputs.find(x => x.deviceId === (id || 'default')) || null;
+        const kind = routeKind(d);
+        const name = cleanName(d);
+        const label = kind === 'ear' ? 'Phone' : kind === 'head' ? (/airpods/i.test(name) ? 'AirPods' : /bluetooth|bt |hands-?free/i.test(name) ? 'Bluetooth' : name.slice(0, 14) || 'Earphones') : 'Speaker';
+        return { kind, label, name: name || label, icon: kind === 'ear' ? 'i-phone' : kind === 'head' ? 'i-headphones' : 'i-speaker' };
+    }
+
+    // Earbuds connected or gone mid-call: keep the call, pick something sensible, say what happened
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+        navigator.mediaDevices.addEventListener('devicechange', async () => {
+            const before = new Map(outputs.map(d => [d.deviceId, d]));
+            await refreshOutputs();
+            if (!call || !canRoute) return;
+            const now = new Set(outputs.map(d => d.deviceId));
+            if (call.sinkId && !now.has(call.sinkId)) {
+                const gone = before.get(call.sinkId);
+                const other = outputs.find(d => d.deviceId !== 'default' && routeKind(d) === 'head');
+                await setRoute(other ? other.deviceId : '', true);
+                app.showToast(`${cleanName(gone) || 'Your audio device'} disconnected. Audio switched to ${currentRoute().label === 'Phone' ? 'the phone' : currentRoute().label.toLowerCase() === 'speaker' ? 'the speaker' : currentRoute().label}.`);
+            } else if (before.size) {
+                const added = outputs.find(d => !before.has(d.deviceId) && d.deviceId !== 'default' && routeKind(d) === 'head');
+                if (added) app.showToast(`${cleanName(added)} connected`);
+                if (!call.sinkId) await applyAudio(); // following the system: let the new default take over
+            }
+            paintPanel();
+        });
+    }
+
+    // The Audio menu: real outputs (one can be chosen), then two separate switches
     async function routeMenu(anchor) {
         if (!call) return;
         await refreshOutputs();
-        const items = [];
+        const items = [{ heading: 'Audio output' }];
         if (canRoute && outputs.length) {
+            const activeId = actualSink() || 'default';
+            const activeName = cleanName(outputs.find(d => d.deviceId === activeId));
             const seen = new Set();
             outputs.forEach((d, i) => {
-                const kind = routeKind(d);
-                const name = (d.label || `Speaker ${i + 1}`).replace(/^Default - /, '');
-                if (seen.has(name)) return;
+                const name = cleanName(d) || `Speaker ${i + 1}`;
+                if (seen.has(name)) return; // "Default - X" and "X" are the same device
                 seen.add(name);
-                const on = call.sinkId ? call.sinkId === d.deviceId : d.deviceId === 'default';
-                items.push({ label: kind === 'ear' ? 'Phone (earpiece)' : name, icon: on ? 'i-check' : kind === 'ear' ? 'i-phone' : kind === 'head' ? 'i-headphones' : 'i-speaker', onClick: () => setSink(d.deviceId) });
+                const kind = routeKind(d);
+                const on = name === activeName;
+                items.push({
+                    label: kind === 'ear' ? 'Phone (earpiece)' : name, role: 'menuitemradio', checked: on,
+                    icon: on ? 'i-check' : kind === 'ear' ? 'i-phone' : kind === 'head' ? 'i-headphones' : 'i-speaker',
+                    onClick: () => setRoute(d.deviceId === 'default' ? '' : d.deviceId)
+                });
             });
         } else {
-            items.push({ label: 'Speaker, iPhone or AirPods…', icon: 'i-speaker', onClick: () => app.showToast('On iPhone, open Control Centre and tap the audio button (next to the volume) to switch between Speaker, iPhone and AirPods', null, 7000) });
+            items.push({
+                label: isIOS ? 'Speaker, iPhone or AirPods' : 'Chosen by your phone', icon: 'i-speaker',
+                onClick: () => app.showToast(isIOS
+                    ? 'iPhone picks the call’s audio itself: open Control Centre, press the sound card and tap the AirPlay icon to choose Speaker, iPhone or AirPods'
+                    : 'This browser lets your phone choose: use the volume panel’s output switcher for speaker, earpiece or Bluetooth', null, 8000)
+            });
         }
-        items.push({ label: 'Hold to my ear', icon: 'i-ear', onClick: () => earMode(true) });
-        items.push({ label: call.speaker ? 'Mute call sound' : 'Turn call sound back on', icon: call.speaker ? 'i-volume-off' : 'i-speaker', onClick: () => setSpeaker(!call.speaker) });
+        items.push({ sep: true });
+        const earOn = !$('call-ear').hidden || !!earSensor;
+        items.push({ label: hasProximity ? 'Hold to my ear' : 'Screen guard for my ear', role: 'menuitemcheckbox', checked: earOn, value: earOn ? 'On' : 'Off', icon: 'i-ear', onClick: () => earMode(!earOn) });
+        items.push({ label: 'Mute call sound', role: 'menuitemcheckbox', checked: !call.speaker, value: call.speaker ? 'Off' : 'On', icon: 'i-volume-off', onClick: () => setSpeaker(!call.speaker) });
         app.openPopover(anchor, items);
     }
-    // Hold-to-ear: a dark screen (no accidental cheek taps) and, where the phone offers it, the earpiece
+
+    // Hold to my ear. With a proximity sensor (where the browser offers one) the screen guard follows the phone
+    // to and from your ear on its own; without one, it's a screen guard you turn on (double-tap to wake), so a
+    // cheek can't press anything. Either way the sound moves to the earpiece when the phone lists one.
+    const hasProximity = 'ProximitySensor' in window;
     let earBefore = null;
+    let earSensor = null;
     function earMode(on) {
         if (!call) return;
         const box = $('call-ear');
         if (on) {
-            earBefore = call.sinkId || null;
+            earBefore = call.sinkId || '';
             const ear = outputs.find(d => EAR_RE.test(d.label));
-            if (ear) setSink(ear.deviceId);
-            box.hidden = false;
+            if (ear) setRoute(ear.deviceId, true);
             $('call-ear-status').textContent = statusText().text;
+            haptic();
+            if (hasProximity && !earSensor) {
+                try {
+                    earSensor = new window.ProximitySensor({ frequency: 4 });
+                    earSensor.addEventListener('reading', () => { box.hidden = !earSensor.near; });
+                    earSensor.addEventListener('error', () => { stopSensor(); box.hidden = false; });
+                    earSensor.start();
+                    app.showToast('Hold the phone to your ear — the screen switches off until you move it away');
+                } catch (e) { stopSensor(); box.hidden = false; }
+            } else box.hidden = false;
         } else {
+            stopSensor();
             box.hidden = true;
-            if (earBefore !== null || call.sinkId) setSink(earBefore || 'default');
+            if (earBefore !== null && call.sinkId !== earBefore) setRoute(earBefore, true);
             earBefore = null;
         }
+        paintPanel();
+    }
+    function stopSensor() {
+        if (!earSensor) return;
+        try { earSensor.stop(); } catch (e) { /* already stopped */ }
+        earSensor = null;
     }
     (() => {
         const box = $('call-ear');
         let last = 0;
-        box.addEventListener('pointerup', () => { const now = Date.now(); if (now - last < 350) earMode(false); last = now; });
-        box.addEventListener('dblclick', () => earMode(false));
+        box.addEventListener('pointerup', () => { if (earSensor) return; const now = Date.now(); if (now - last < 350) earMode(false); last = now; });
+        box.addEventListener('dblclick', () => { if (!earSensor) earMode(false); });
     })();
 
-    // Desktop browsers can route the call to a chosen speaker or headset
-    async function pickOutput(anchor) {
-        if (!call || !HTMLMediaElement.prototype.setSinkId) return;
-        let devices = [];
-        try { devices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audiooutput'); } catch (e) {}
-        if (!devices.length) return app.showToast('No other speakers found');
-        app.openPopover(anchor, devices.map((d, i) => ({
-            label: `${call.sinkId === d.deviceId ? '✓ ' : ''}${d.label || `Speaker ${i + 1}`}`,
-            icon: 'i-speaker',
-            onClick: () => {
-                call.sinkId = d.deviceId;
-                call.peers.forEach(p => { if (p.audio && p.audio.setSinkId) p.audio.setSinkId(d.deviceId).catch(() => {}); });
+    // iPhone: run the call in Safari's call audio session (microphone + playback together), and hand the
+    // phone's audio back to normal when the call ends. Interruptions (a phone call, Siri) are recovered from.
+    function callAudioSession(on) {
+        try { if (navigator.audioSession) navigator.audioSession.type = on ? 'play-and-record' : 'auto'; } catch (e) { /* older Safari */ }
+    }
+    if (navigator.audioSession && 'onstatechange' in navigator.audioSession) {
+        navigator.audioSession.addEventListener('statechange', () => {
+            if (!call) return;
+            if (navigator.audioSession.state === 'interrupted') app.showToast('Call sound paused by your phone — it comes back when the interruption ends');
+            else if (navigator.audioSession.state === 'active') {
+                applyAudio();
+                call.peers.forEach(p => { if (p.audio && p.audio.paused && p.audio.srcObject) p.audio.play().catch(() => askForSoundTap()); });
             }
-        })));
+        });
     }
 
     // ---------- Moderation (group calls) ----------
@@ -1292,9 +1384,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (peer && peer.audio) {
             items.push({
-                label: peer.audio.muted ? 'Unmute for me' : 'Mute for me only',
+                label: peer.mutedForMe ? 'Unmute for me' : 'Mute for me only',
                 icon: 'i-speaker',
-                onClick: () => { peer.audio.muted = !peer.audio.muted; }
+                onClick: () => { peer.mutedForMe = !peer.mutedForMe; applyAudio(); haptic(); }
             });
         }
         if (items.length) app.openPopover(anchor, items);
@@ -1619,6 +1711,8 @@ document.addEventListener('DOMContentLoaded', () => {
         setBtn('call-cam', !!call.cam, call.cam ? 'i-video' : 'i-video-off', call.cam ? 'Camera' : 'Camera off');
         const route = currentRoute();
         setBtn('call-speaker', !call.speaker || route.kind !== 'speaker', call.speaker ? route.icon : 'i-volume-off', call.speaker ? route.label : 'Sound off');
+        $('call-speaker').setAttribute('aria-label', `Audio: ${call.speaker ? (route.kind === 'system' ? 'chosen by your phone' : route.name || route.label) : 'call sound muted'}. Change audio`);
+        $('call-speaker').setAttribute('aria-haspopup', 'menu');
         if (!$('call-ear').hidden) $('call-ear-status').textContent = status;
         setBtn('call-share', !!call.screen, 'i-screen', call.screen ? 'Sharing' : 'Share');
         $('call-share').hidden = !canShare;

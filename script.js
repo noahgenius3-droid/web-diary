@@ -2864,9 +2864,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const b = document.createElement('button');
             b.type = 'button';
             b.className = 'pop-item' + (item.tile ? ' pop-tile' : '') + (item.danger ? ' danger' : '') + (item.cls ? ` ${item.cls}` : '');
-            b.setAttribute('role', 'menuitem');
-            b.innerHTML = `<svg class="i"><use href="#${item.icon}"/></svg><span></span>`;
+            b.setAttribute('role', item.role || 'menuitem');
+            if (item.checked !== undefined) { b.setAttribute('aria-checked', String(!!item.checked)); b.classList.toggle('is-checked', !!item.checked); }
+            b.innerHTML = `<svg class="i"><use href="#${item.icon}"/></svg><span></span>${item.value ? '<small class="pop-val"></small>' : ''}`;
             b.querySelector('span').textContent = item.label;
+            if (item.value) b.querySelector('.pop-val').textContent = item.value;
             b.addEventListener('click', () => { closePopover(); item.onClick(); });
             popover.append(b);
         });
