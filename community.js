@@ -202,65 +202,94 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Views ----------
+    // ---------- Groups: the place to find, join and start groups ----------
+    // (They're "communities" in the database; people see them as Groups.)
+    const GROUP_CATS = [['all', 'All'], ['faith', 'Faith', /church|faith|god|pray|bible|gospel|worship|jesus|christ|psalm|grace/], ['education', 'Education', /study|school|learn|exam|educat|class|lesson|university|student/],
+        ['business', 'Business', /business|money|startup|market|sell|finance|invest|brand|hustle/], ['tech', 'Technology', /tech|code|coding|\bai\b|app|software|computer|program|developer/],
+        ['sports', 'Sports', /sport|football|soccer|basketball|run|fitness|gym|cycl|match|league/], ['health', 'Health', /health|wellness|mental|diet|doctor|medic|fitness|sleep/],
+        ['music', 'Music', /music|song|choir|sing|beat|album|artist|praise/], ['entertainment', 'Entertainment', /movie|film|show|series|comedy|celebr|drama|fun/],
+        ['lifestyle', 'Lifestyle', /life|style|food|recipe|travel|fashion|home|family|cook/], ['gaming', 'Gaming', /game|gaming|play|trivia|wordplay|puzzle/],
+        ['art', 'Art', /\bart\b|draw|paint|photo|design|poem|poetry|creative/], ['career', 'Career', /career|job|work|\bcv\b|interview|hiring|intern/]];
+    c.cat = (() => { try { return sessionStorage.getItem('cordialGroupCat') || 'all'; } catch (e) { return 'all'; } })();
+    const catRe = k => (GROUP_CATS.find(x => x[0] === k) || [])[2];
+    const textOf = x => `${x.name} ${x.description || ''}`.toLowerCase();
+    const inCat = (k, x) => k === 'all' || (catRe(k) ? catRe(k).test(textOf(x)) : true);
+    const interests = () => { try { const v = JSON.parse(localStorage.getItem(`cordialInterests:${me()}`) || 'null'); return Array.isArray(v) ? v : []; } catch (e) { return []; } };
+    const short = n => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K` : String(n));
+
     app.views.communities = () => {
-        app.setTitle('Communities');
-        const blocked = gate('Create or join communities to share notes and updates with people who care about the same things.');
+        app.setTitle('Groups');
+        const blocked = gate('Create or join groups to share notes and updates with people who care about the same things.');
         if (blocked) return blocked;
         if (c.list === null) {
-            if (c.loadError) return retryBlock('Couldn’t load your communities', 'cm-retry-list');
+            if (c.loadError) return retryBlock('Couldn’t load your groups', 'cm-retry-list');
             loadCommunities();
-            return '<p class="muted">Loading communities…</p>';
+            return `<div class="gx"><div class="gx-head"><h2 class="notes-title">Groups</h2></div><div class="ex-row ex-cc-rail">${'<span class="ex-cc skel"></span>'.repeat(3)}</div></div>`;
         }
         const q = c.query.trim().toLowerCase();
-        const match = x => !q || `${x.name} ${x.description || ''}`.toLowerCase().includes(q);
-        const mine = c.list.filter(x => c.memberships.has(x.id) && match(x));
-        const discover = c.list.filter(x => !c.memberships.has(x.id) && x.visibility === 'public' && match(x));
-        const trending = [...c.list.filter(x => x.visibility === 'public')]
-            .sort((a, b) => memberCount(b) - memberCount(a)).slice(0, 6);
-        const filterBtn = (key, label, n) => `<button class="cm-filter" data-action="cm-filter" data-filter="${key}" aria-pressed="${c.filter === key}">${label}${n ? `<span>${n}</span>` : ''}</button>`;
+        const shown = c.list.filter(x => (!q || textOf(x).includes(q)) && inCat(c.cat, x));
+        const joined = x => c.memberships.has(x.id);
+        const mine = shown.filter(joined);
+        const open = shown.filter(x => !joined(x) && x.visibility === 'public');
+        const trending = shown.filter(x => x.visibility === 'public' || joined(x)).sort((a, b) => memberCount(b) - memberCount(a)).slice(0, 10);
+        const top3 = new Set(trending.slice(0, 3).map(x => x.id));
+        const likes = interests();
+        const rec = c.cat === 'all' && likes.length ? open.filter(x => !top3.has(x.id) && likes.some(k => catRe(k) && catRe(k).test(textOf(x)))).slice(0, 10) : [];
+        const fresh = open.filter(x => Date.now() - Date.parse(x.created_at) < 45 * 86400000 && !top3.has(x.id))
+            .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)).slice(0, 10);
+        const sec = (title, body, more = '') => `<section class="gx-sec"><header class="ex-head"><h3>${title}</h3>${more}</header>${body}</section>`;
+        const filtering = q || c.cat !== 'all';
 
         return `
-            <header class="notes-head">
-                <div>
-                    <h2 class="notes-title">Communities</h2>
-                    <p class="muted">Share notes, photos and updates with the groups that matter to you.</p>
-                </div>
-                <div class="head-actions">
+            <div class="gx">
+                <header class="gx-head">
+                    <div><h2 class="notes-title">Groups</h2><p class="muted">Find your people — join a group or start your own.</p></div>
                     <button class="chip" data-action="cm-join-code"><svg class="i"><use href="#i-link"/></svg>Join with code</button>
-                    <button class="create-post" data-action="cm-create"><svg class="i"><use href="#i-plus"/></svg><span>Create community</span></button>
-                </div>
-            </header>
-            <div class="cm-toolbar">
-                <label class="search cm-search">
+                </header>
+                <label class="search gx-search">
                     <svg class="i"><use href="#i-search"/></svg>
-                    <input type="search" id="cm-search" value="${esc(c.query)}" placeholder="Find a community" aria-label="Find a community" enterkeyhint="search">
+                    <input type="search" id="cm-search" value="${esc(c.query)}" placeholder="Search groups" aria-label="Search groups" enterkeyhint="search" autocomplete="off">
                 </label>
-                <div class="cm-filters" role="group" aria-label="Show">
-                    ${filterBtn('all', 'All', 0)}${filterBtn('joined', 'Joined', mine.length)}${filterBtn('discover', 'Discover', discover.length)}
-                </div>
-            </div>
-            ${!q && c.filter !== 'joined' && trending.length ? `
-                <section class="section cm-trending-wrap">
-                    <div class="section-head"><h2>🔥 Trending</h2></div>
-                    <div class="cm-trending">${trending.map(trendCard).join('')}</div>
-                </section>` : ''}
-            <section class="section"${c.filter === 'discover' ? ' hidden' : ''}>
-                <h2>Your communities</h2>
-                <div class="cm-grid">
-                    ${mine.map(card).join('')}
-                    <button class="cm-card cm-new" data-action="cm-create">
-                        <span class="cm-new-icon"><svg class="i"><use href="#i-plus"/></svg></span>
-                        <strong>Start a community</strong><small>Book club, study group, family…</small>
-                    </button>
-                </div>
-            </section>
-            <section class="section"${c.filter === 'joined' ? ' hidden' : ''}>
-                <h2>Discover</h2>
-                ${discover.length
-                    ? `<div class="cm-grid">${discover.map(card).join('')}</div>`
-                    : '<p class="muted small" style="margin-top:12px">No other public communities yet — start the first one!</p>'}
-            </section>`;
+                <div class="ex-cats gx-cats" role="tablist" aria-label="Topics">${GROUP_CATS.map(([k, l]) => `<button type="button" class="ex-cat" role="tab" aria-selected="${c.cat === k}" data-action="gx-cat" data-k="${k}">${l}</button>`).join('')}</div>
+                <button type="button" class="ex-create gx-create" data-action="cm-create"><svg class="i"><use href="#i-plus"/></svg>Create Group</button>
+                ${!shown.length ? `
+                    <div class="chat-onboard gx-empty"><span class="chat-onboard-ic" aria-hidden="true"><svg class="i"><use href="#i-users"/></svg></span>
+                        <strong>No groups found</strong><span>${filtering ? 'We couldn’t find a group matching that. Start one, or look at everything.' : 'There are no groups yet — be the first to start one.'}</span>
+                        <div><button type="button" class="primary-btn" data-action="cm-create">Create Group</button>${filtering ? '<button type="button" class="ghost-btn" data-action="gx-clear">Show all groups</button>' : ''}</div>
+                    </div>` : ''}
+                ${mine.length ? sec(`Your groups <span class="gx-count">${mine.length}</span>`, `<div class="ex-row gx-mine-rail">${mine.map(mineTile).join('')}</div>`) : ''}
+                ${trending.length ? sec('Trending groups', `<div class="ex-row ex-cc-rail">${trending.map(groupCard).join('')}</div>`) : ''}
+                ${rec.length ? sec('Recommended for you', `<div class="ex-row ex-cc-rail">${rec.map(groupCard).join('')}</div>`) : ''}
+                ${fresh.length ? sec('New &amp; growing', `<div class="ex-row ex-cc-rail">${fresh.map(groupCard).join('')}</div>`) : ''}
+                ${open.length ? sec('Browse all groups', `<div class="cm-grid">${open.map(card).join('')}</div>`) : ''}
+            </div>`;
     };
+
+    // A group you're in: emoji tile, name, size and your role — one tap into it
+    function mineTile(cm) {
+        const role = roleOf(cm.id);
+        return `
+            <button type="button" class="gx-mine" data-action="cm-open" data-id="${esc(cm.id)}" aria-label="Open ${esc(cm.name)}">
+                <span class="gx-mine-tile c-${esc(cm.color)}" aria-hidden="true">${esc(cm.emoji || '👥')}</span>
+                <strong>${esc(cm.name)}</strong>
+                <small>${short(memberCount(cm))} ${memberCount(cm) === 1 ? 'member' : 'members'}${role && role !== 'member' ? ` · ${ROLE_LABEL[role] || ''}` : ''}</small>
+            </button>`;
+    }
+    // The big card: a cover in the group's colours, member count, two lines about it, Join (or Open)
+    function groupCard(cm) {
+        const n = memberCount(cm);
+        const role = roleOf(cm.id);
+        return `
+            <article class="ex-cc c-${esc(cm.color)}" style="--g: var(--deep, #6366f1)">
+                <button type="button" class="ex-cc-open" data-action="cm-open" data-id="${esc(cm.id)}" aria-label="${esc(cm.name)}, ${n} ${n === 1 ? 'member' : 'members'}">
+                    <span class="ex-cc-cover"><span class="ex-cc-emoji" aria-hidden="true">${esc(cm.emoji || '👥')}</span><span class="ex-cc-count"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg>${short(n)}</span>${cm.visibility === 'private' ? '<span class="gx-lock" title="Invite-only">🔒</span>' : ''}</span>
+                    <strong>${esc(cm.name)}</strong>
+                    <small>${esc((cm.description || (cm.visibility === 'private' ? 'An invite-only group' : 'A group on Cordial')).slice(0, 110))}</small>
+                </button>
+                ${role ? `<button type="button" class="chip small ex-cc-btn" data-action="cm-open" data-id="${esc(cm.id)}">Open</button>`
+                    : `<button type="button" class="chip small ex-cc-btn" data-action="cm-join" data-id="${esc(cm.id)}"><svg class="i"><use href="#i-plus"/></svg>Join</button>`}
+            </article>`;
+    }
 
     function retryBlock(title, action) {
         return `
@@ -998,6 +1027,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------- Actions ----------
     Object.assign(app.actions, {
         'cm-open': el => app.setView('community', { communityId: el.dataset.id }),
+        'gx-cat': el => { c.cat = el.dataset.k; try { sessionStorage.setItem('cordialGroupCat', c.cat); } catch (e) { /* private mode */ } app.render(); },
+        'gx-clear': () => { c.cat = 'all'; c.query = ''; try { sessionStorage.setItem('cordialGroupCat', 'all'); } catch (e) { /* private mode */ } app.render(); },
         'cm-back': () => app.setView('communities'),
         'cm-retry-list': () => { c.loadError = false; loadCommunities(); app.render(); },
         'cm-retry-open': () => { c.openError = null; app.render(); },

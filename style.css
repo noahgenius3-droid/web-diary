@@ -17442,3 +17442,36 @@ dialog.nm-people::backdrop { background: rgba(0, 0, 0, 0.5); }
 @media (prefers-reduced-motion: reduce) { .ex-cc-cover, .ex-cr-photo, .ex-cat { transition: none; } }
 .ex-cc-btn[data-action="ex-join"] { background: #fff; color: #111; border: 0; font-weight: 700; }
 .ex-cc-btn[data-action="cm-open"] { background: rgba(0, 0, 0, 0.35); color: #fff; border: 0; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+
+/* =====================================================================
+   Groups: find, join and start groups (search, topics, your groups, trending, recommended, new)
+   ===================================================================== */
+.gx { max-width: 1100px; margin: 0 auto; }
+.gx-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.gx-head .notes-title { margin: 0; }
+.gx-head p { margin: 4px 0 0; }
+.gx-search { margin: 0 0 12px; min-height: 48px; border-radius: 16px; }
+.gx-cats { margin-bottom: 14px; }
+.gx-create { margin-bottom: 8px; }
+.gx-sec { margin-top: 26px; }
+.gx-sec .ex-head h3 { display: inline-flex; align-items: center; gap: 8px; }
+.gx-count { min-width: 22px; height: 22px; padding: 0 7px; border-radius: 999px; background: var(--input); color: var(--text-muted); font-size: 0.76rem; font-weight: 700; line-height: 22px; text-align: center; }
+.gx-empty { margin: 22px 0; }
+/* Your groups: compact tiles you scroll through */
+.gx-mine-rail { gap: 12px; }
+.gx-mine { flex: none; display: grid; justify-items: start; gap: 4px; width: 132px; padding: 0; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.gx-mine-tile { display: grid; place-items: center; width: 132px; height: 96px; border-radius: 18px; background: linear-gradient(140deg, var(--card, #c7d2fe), var(--deep, #6366f1)); font-size: 2.4rem; transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1); }
+.gx-mine strong { max-width: 100%; margin-top: 4px; font-size: 0.92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gx-mine small { color: var(--text-muted); font-size: 0.76rem; }
+.gx-mine:active .gx-mine-tile { transform: scale(0.97); }
+@media (hover: hover) and (pointer: fine) { .gx-mine:hover .gx-mine-tile { transform: translateY(-2px); } }
+.gx-mine:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 18px; }
+/* Group covers use the group's own colours */
+.ex-cc[class*=" c-"] .ex-cc-cover { background: radial-gradient(120% 90% at 20% 10%, color-mix(in srgb, var(--card, #c7d2fe) 85%, #fff 15%), transparent 60%), linear-gradient(140deg, var(--card, #c7d2fe), var(--deep, #6366f1)); }
+.gx-lock { position: absolute; z-index: 1; top: 10px; right: 10px; padding: 3px 8px; border-radius: 10px; background: rgba(0, 0, 0, 0.32); font-size: 0.8rem; }
+.ex-cc-btn[data-action="cm-join"] { background: #fff; color: #111; border: 0; font-weight: 700; }
+@media (max-width: 760px) {
+    .gx-head .chip { flex: none; }
+    .gx-mine, .gx-mine-tile { width: 116px; }
+    .gx-mine-tile { height: 84px; }
+}

@@ -452,7 +452,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return `
             <section class="ex-interests" aria-labelledby="ex-int-h">
                 <h3 id="ex-int-h">What are you interested in?</h3>
-                <p>Pick a few — Explore will put them first. You can change this any time.</p>
+                <p>Pick a few — Explore and Groups will put them first. You can change this any time.</p>
                 <div class="ex-int-chips" role="group" aria-label="Interests">${CATS.slice(1).map(([k, l]) => `<button type="button" class="ex-int${picked.has(k) ? ' on' : ''}" data-action="ex-interest" data-k="${k}" aria-pressed="${picked.has(k)}">${l}</button>`).join('')}</div>
                 <div class="ex-int-acts"><button type="button" class="link-btn" data-action="ex-interests-skip">Not now</button><button type="button" class="primary-btn small" data-action="ex-interests-save"${picked.size ? '' : ' disabled'}>Show me</button></div>
             </section>`;
@@ -465,21 +465,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!interests && !E.skipInterests) out.push(interestsCard());
         // Categories (remembered for this visit) and a clear way to start a community
         out.push(`<div class="ex-cats" role="tablist" aria-label="Topics">${CATS.map(([k, l]) => `<button type="button" class="ex-cat" role="tab" aria-selected="${cat === k}" data-action="ex-cat" data-k="${k}">${l}</button>`).join('')}</div>`);
-        if (window.diaryCommunities) out.push('<button type="button" class="ex-create" data-action="cm-create"><svg class="i"><use href="#i-plus"/></svg>Create Community</button>');
         const few = (s.friends || []).length < 3;
         const peopleRail = people.length ? `<section class="ex-sec">${fyHead(few ? 'People you may know' : 'People you may know', seeAll('data-action="ex-tab" data-tab="people"', 'View all'))}<div class="ex-row ex-people-rail">${people.slice(0, 12).map(personCard).join('')}</div></section>` : '';
         if (few && peopleRail) out.push(peopleRail); // new here: people first, so Explore never feels empty
-        // Communities: trending, and the ones that match what you said you like
-        const groups = (E.groups || []).filter(g => inCat(cat, `${g.name} ${g.description || ''}`));
-        const trending = groups.slice().sort((a, b) => (b.size || 0) - (a.size || 0) || (b.joined ? -1 : 0)).slice(0, 10);
-        if (E.groups === null) out.push(`<section class="ex-sec">${fyHead('Trending communities')}<div class="ex-row ex-cc-rail">${'<span class="ex-cc skel"></span>'.repeat(3)}</div></section>`);
-        else if (trending.length) out.push(`<section class="ex-sec" aria-labelledby="ex-cc-h">${fyHead('Trending communities', seeAll('data-action="ex-tab" data-tab="groups"', 'View all'), 'ex-cc-h')}<div class="ex-row ex-cc-rail">${trending.map(communityCard).join('')}</div></section>`);
-        else if (cat !== 'all') out.push(`<section class="ex-sec"><div class="ex-empty small"><strong>No ${esc(catOf(cat)[1].toLowerCase())} communities yet</strong><span>Be the first to start one.</span><button type="button" class="primary-btn small" data-action="cm-create">Create Community</button></div></section>`);
-        if (cat === 'all' && interests && interests.length && E.groups) {
-            const top3 = new Set(trending.slice(0, 3).map(g => g.id));
-            const rec = E.groups.filter(g => !g.joined && !top3.has(g.id) && interests.some(k => inCat(k, `${g.name} ${g.description || ''}`))).slice(0, 10);
-            if (rec.length) out.push(`<section class="ex-sec">${fyHead('Recommended for you')}<div class="ex-row ex-cc-rail">${rec.map(communityCard).join('')}</div></section>`);
-        }
         // Creators
         const creators = topCreators(cat);
         if (creators.length) out.push(`<section class="ex-sec" aria-labelledby="ex-cr-h">${fyHead('Top creators', '', 'ex-cr-h')}<div class="ex-row ex-cr-rail">${creators.map(creatorCard).join('')}</div></section>`);
