@@ -17475,3 +17475,58 @@ dialog.nm-people::backdrop { background: rgba(0, 0, 0, 0.5); }
     .gx-mine, .gx-mine-tile { width: 116px; }
     .gx-mine-tile { height: 84px; }
 }
+
+/* =====================================================================
+   Feed v3: each post a clean rounded card — header, photos (collage), caption, #tags, actions
+   ===================================================================== */
+body[data-view="feed"] .feed-v2 .feed-list .post.ig {
+    margin: 0; padding: 14px 14px 10px; border: 0; border-radius: 22px;
+    background: var(--surface);
+    box-shadow: var(--shadow-sm, 0 2px 3px -1px rgba(0, 0, 0, 0.1)), 0 0 0 1px color-mix(in srgb, var(--text) 9%, transparent);
+}
+body[data-view="feed"] .feed-v2 .feed-list .post.ig + .post.ig,
+body[data-view="feed"] .feed-v2 .feed-list > * + .post.ig { margin-top: 14px; }
+@media (hover: hover) and (pointer: fine) {
+    body[data-view="feed"] .feed-v2 .feed-list .post.ig:hover { box-shadow: var(--shadow, 0 6px 16px -10px rgba(0, 0, 0, 0.35)), 0 0 0 1px color-mix(in srgb, var(--text) 12%, transparent); }
+}
+body[data-view="feed"] .feed-v2 .post.ig .post-head { padding: 0 0 12px; }
+body[data-view="feed"] .feed-v2 .post.ig .post-head .avatar.md { width: 44px; height: 44px; }
+body[data-view="feed"] .feed-v2 .post.ig .post-who strong { font-size: 0.98rem; }
+body[data-view="feed"] .feed-v2 .post.ig .post-media { margin: 0; border-radius: 16px; overflow: hidden; }
+body[data-view="feed"] .feed-v2 .post.ig .post-caption.under-media { padding: 12px 2px 0; }
+body[data-view="feed"] .feed-v2 .post.ig .post-caption.text-only { padding: 0 2px 4px; }
+body[data-view="feed"] .feed-v2 .post.ig .post-text { font-size: 1rem; line-height: 1.55; }
+body[data-view="feed"] .feed-v2 .post.ig .cap-title { display: block; margin-bottom: 4px; font-size: 1.04rem; }
+.post-caption .read-more { padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-weight: 700; cursor: pointer; }
+.post-tags { margin: 8px 0 0; font-size: 0.92rem; font-weight: 600; line-height: 1.6; }
+.post-tags a, .post-tags .tag-link { color: var(--accent); text-decoration: none; margin-right: 6px; }
+body[data-view="feed"] .feed-v2 .post-actions { padding: 10px 0 0; margin: 0 -6px; }
+body[data-view="feed"] .feed-v2 .post.ig .comments { padding: 6px 2px 0; }
+body[data-view="feed"] .feed-v2 .post.ig .post-when { padding: 0 2px; }
+body[data-view="feed"] .feed-v2 .post.ig .repost-line { padding: 0 0 10px; }
+@media (max-width: 760px) {
+    body[data-view="feed"] .feed-v2 .feed-list .post.ig { padding: 12px 12px 8px; border-radius: 20px; }
+    body[data-view="feed"] .feed-v2 .feed-list .post.ig + .post.ig,
+    body[data-view="feed"] .feed-v2 .feed-list > * + .post.ig { margin-top: 12px; }
+    body[data-view="feed"] .feed-v2 .post.ig .post-head { padding: 0 0 10px; }
+    body[data-view="feed"] .feed-v2 .post.ig .post-media { margin: 0; border-radius: 14px; }
+    body[data-view="feed"] .feed-v2 .post-actions { margin: 0 -4px; }
+}
+
+/* Collage: one large photo, the rest beside it; "+N" on the last tile */
+.post-media.collage { display: grid; gap: 3px; aspect-ratio: 4 / 3; background: transparent; }
+.post-media.collage .c-tile { position: relative; min-width: 0; min-height: 0; padding: 0; border: 0; background: var(--input); cursor: zoom-in; overflow: hidden; aspect-ratio: auto; max-height: none; }
+.post-media.collage .c-tile img { display: block; width: 100%; height: 100%; max-height: none; object-fit: cover; transition: transform 300ms cubic-bezier(0.23, 1, 0.32, 1); }
+@media (hover: hover) and (pointer: fine) { .post-media.collage .c-tile:hover img { transform: scale(1.03); } }
+.post-media.collage .c-hide { display: none; }
+.post-media.collage.n2 { grid-template-columns: 1fr 1fr; }
+.post-media.collage.n3 { grid-template-columns: 3fr 2fr; grid-template-rows: 1fr 1fr; }
+.post-media.collage.n3 .t0 { grid-row: span 2; }
+.post-media.collage.n4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; aspect-ratio: 1 / 1; }
+.post-media.collage.n5 { grid-template-columns: 2fr 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.post-media.collage.n5 .t0 { grid-row: span 2; }
+.c-more { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); color: #fff; font-size: 1.6rem; font-weight: 800; letter-spacing: -0.01em; }
+.post-media.collage .c-tile:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; }
+@media (prefers-reduced-motion: reduce) { .post-media.collage .c-tile img { transition: none; } }
+.post-caption .post-tags { padding: 0; border: 0; background: none; }
+.post-caption .post-tags .hashtag { margin-right: 4px; }

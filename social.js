@@ -4560,6 +4560,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function postMediaHTML(o, photos, extra = '') {
         const key = `${o.kind}:${o.id}`;
+        // Slide decks (📊) and single photos keep the carousel; sets of photos become a collage.
+        // Every photo is in the page (the extras hidden), so tapping any tile opens the viewer on all of them.
+        if (photos.length >= 2 && !/^📊/.test(o.title || '')) {
+            const shown = Math.min(photos.length, photos.length === 4 ? 4 : 5);
+            const more = photos.length - shown;
+            return `
+            <div class="post-media collage n${Math.min(shown, 5)}" data-like-kind="${o.kind}" data-like-id="${esc(o.id)}">
+                ${photos.map((ph, i) => `
+                    <button type="button" class="slide c-tile t${i}${i >= shown ? ' c-hide' : ''}" data-action="post-photo" data-key="${esc(key)}" data-bucket="${o.bucket}" data-img="${esc(ph.path)}" aria-label="Photo ${i + 1} of ${photos.length}${i === shown - 1 && more ? `, and ${more} more` : ''}"${i >= shown ? ' tabindex="-1" aria-hidden="true"' : ''}>
+                        <img data-path="${esc(ph.path)}" data-bucket="${o.bucket}" alt="" loading="lazy">
+                        ${i === shown - 1 && more ? `<span class="c-more" aria-hidden="true">+${more}</span>` : ''}
+                    </button>`).join('')}
+                <span class="burst" aria-hidden="true"><svg class="i"><use href="#i-heart-fill"/></svg></span>
+                ${extra}
+            </div>`;
+        }
         return `
             <div class="post-media" data-like-kind="${o.kind}" data-like-id="${esc(o.id)}">
                 <div class="carousel" data-count="${photos.length}">
@@ -4640,17 +4656,22 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function postCaptionHTML(o, photos, full) {
-        const { name } = postPerson(o);
-        const body = linkTags(o.html ? Rich.sanitize(o.html) : esc(o.body || ''));
-        const long = !full && ((o.body || '').length > 280 || (o.body || '').split('\n').length > 5);
+        // Hashtags at the very end of a plain post get their own line under the text (once, not twice)
+        let raw = o.body || '';
+        let tail = '';
+        if (!o.html) {
+            const m = raw.match(/(?:\s+#[\p{L}\p{N}_]+)+\s*$/u);
+            if (m && raw.slice(0, m.index).trim()) { tail = m[0].trim(); raw = raw.slice(0, m.index); }
+        }
+        const body = linkTags(o.html ? Rich.sanitize(o.html) : esc(raw));
+        const long = !full && (raw.length > 280 || raw.split('\n').length > 5);
         return `
-            <div class="post-caption${photos.length && !full ? '' : ' text-only'}">
-                ${photos.length && !full ? `<strong class="cap-name">${name}</strong> ` : ''}
+            <div class="post-caption${photos.length && !full ? ' under-media' : ' text-only'}">
                 ${o.title ? `<strong class="cap-title">${esc(o.title)}</strong>` : ''}
                 <div class="post-text rich-content${long ? ' clamped toggleable' : ''}"${long ? ' data-action="toggle-text" title="Tap to expand or collapse"' : ''}>${body}</div>
-                ${long ? '<button class="read-more" data-action="expand-post">more</button>' : ''}
-            </div>
-`; // #tags are already links inside the text, so no second row of them
+                ${long ? '<button class="read-more" data-action="expand-post">read more</button>' : ''}
+                ${tail ? `<p class="post-tags">${linkTags(esc(tail))}</p>` : ''}
+            </div>`;
     }
 
     // A note shared from Notes has a title and no media; a Playnote result is the #trivia share (or the word/thought of the day)
@@ -4798,9 +4819,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${photos.length ? postMediaHTML(o, photos, snd ? mediaSoundHTML(o.audio, snd) : '') : postVariant(o, photos) === 'note' ? noteCardHTML(o) : postVariant(o, photos) === 'playnote' ? playnoteCardHTML(o) : postCaptionHTML(o, photos, false)}
                 ${photos.length && snd ? '' : audioCardHTML(o.audio)}
                 ${o.bodyExtra || ''}
+                ${photos.length ? postCaptionHTML(o, photos, false) : ''}
                 <div class="post-actions">${postActionsHTML(o)}</div>
                 <div class="react-sum-row" data-react-sum>${reactSummaryHTML(o.kind, o.id, o.likes)}</div>
-                ${photos.length ? postCaptionHTML(o, photos, false) : ''}
                 ${timeBelow ? `<p class="post-when">${timeHTML}${snd && o.audience === 'public' ? ' · <svg class="i aud" aria-label="Everyone can see this"><use href="#i-globe"/></svg>' : ''}${snd && o.mood ? ` · ${MOOD_EMOJI[o.mood] || ''}` : ''}${photos.length ? lic : ''}</p>` : ''}
                 ${o.extraHTML || ''}
                 ${commentsBlock(o.kind, o.id, o.commentCount, o.canComment)}
@@ -5279,7 +5300,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!text) return;
         const collapsed = text.classList.toggle('clamped');
         const button = text.parentElement.querySelector('.read-more');
-        if (button) button.textContent = collapsed ? 'more' : 'less';
+        if (button) button.textContent = collapsed ? 'read more' : 'show less';
         // Collapsing a long post can leave you far below it — bring its top back into view
         const post = text.closest('.post');
         if (collapsed && post && post.getBoundingClientRect().top < 70) {
