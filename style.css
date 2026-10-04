@@ -17686,3 +17686,15 @@ dialog.edit-post .ep-head, dialog.edit-post .ep-tools { border-color: var(--line
 @media (max-width: 460px) {
     .pv-actbar .post-actions .act:not(.like-btn) .act-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
+/* =====================================================================
+   Note titles wrap onto as many lines as they need — never cut off, never scrolling sideways
+   ===================================================================== */
+textarea.editor-title {
+    display: block; box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0;
+    resize: none; overflow: hidden; overflow-wrap: anywhere; word-break: normal; white-space: pre-wrap;
+    font-family: inherit; color: var(--text); line-height: 1.25;
+    border: 0; border-radius: 0; box-shadow: none; outline: none; background: transparent;
+    -webkit-appearance: none; appearance: none;
+}
+.mcard h3, .masonry .mcard h3 { display: block; -webkit-line-clamp: unset; overflow: visible; overflow-wrap: anywhere; }
+.cap-title, .nsc-title, .pn-title, .pp-title { overflow-wrap: anywhere; white-space: normal; }

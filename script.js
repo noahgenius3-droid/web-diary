@@ -1769,6 +1769,7 @@ document.addEventListener('DOMContentLoaded', () => {
         Object.assign(editing, { shownSections: new Set(), showGoals: !!defaults.showGoals, changed: false, created: false });
 
         edTitle.value = note ? note.title : (defaults.title || '');
+        requestAnimationFrame(fitTitle);
         edBody.innerHTML = Rich.sanitize(note ? note.html : (defaults.html || ''), { allowMedia: true });
         Media.hydrate(edBody);
         $('editor-toolbar').classList.remove('fmt-open');
@@ -2355,7 +2356,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     edBody.addEventListener('input', changed);
-    edTitle.addEventListener('input', changed);
+    // The title wraps onto as many lines as it needs (one line of text — no line breaks — but never cut off)
+    function fitTitle() {
+        if (/\n/.test(edTitle.value)) edTitle.value = edTitle.value.replace(/\s*\n+\s*/g, ' ');
+        edTitle.style.height = 'auto';
+        edTitle.style.height = edTitle.scrollHeight + 'px';
+    };
+    edTitle.addEventListener('input', () => { fitTitle(); changed(); });
+    let titleW = 0;
+    if (window.ResizeObserver) new ResizeObserver(([en]) => { const w = Math.round(en.contentRect.width); if (w !== titleW && editor.open) { titleW = w; fitTitle(); } }).observe(edTitle);
+    window.addEventListener('orientationchange', () => setTimeout(fitTitle, 300));
     // Tapping the empty page below the writing puts you at the end of the note (like a notepad)
     $('editor-form').addEventListener('click', e => {
         if (e.target !== e.currentTarget || window.innerWidth > 760 || editor.classList.contains('diluted')) return;
@@ -3091,7 +3101,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // The AI assistant reads and writes the open entry through this
         editorApi: {
             getTitle: () => edTitle.value,
-            setTitle(value) { edTitle.value = value; changed(); },
+            setTitle(value) { edTitle.value = value; fitTitle(); changed(); },
             getText: () => Rich.toText(edBody.innerHTML),
             setText(text) { edBody.innerHTML = Rich.textToHTML(text); changed(); },
             appendText(text) {
