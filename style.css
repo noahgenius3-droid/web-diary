@@ -17658,3 +17658,31 @@ dialog.edit-post .ep-head, dialog.edit-post .ep-tools { border-color: var(--line
     .feed-bar { background: var(--bg); box-shadow: 0 0 0 100vmax var(--bg); }
     .topbar-dock .feed-bar { background: none; box-shadow: none; }
 }
+/* =====================================================================
+   One action bar: Like · Comment · Reshare · Share. Cards show icons + counts; the post page adds the words.
+   ===================================================================== */
+.post.ig .post-actions .act-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.post-actions .reshare-btn[aria-pressed="true"] { color: #16a34a; }
+.post-actions .act { touch-action: manipulation; }
+/* Post page: the bar sits right under the post, before the comments */
+.pv-actbar { margin: 12px -6px 4px; padding: 4px 0 2px; border-top: 1px solid var(--line-soft, var(--border)); border-bottom: 1px solid var(--line-soft, var(--border)); }
+.pv-actbar .post-actions { display: flex; align-items: center; gap: 2px; padding: 0; flex-wrap: nowrap; }
+.pv-actbar .post-actions .act { flex: 1 1 0; min-width: 0; min-height: 44px; justify-content: center; gap: 6px; padding: 0 4px; white-space: nowrap; }
+.pv-actbar .post-actions .save-btn { flex: none; width: 44px; margin-left: 0; }
+.pv-actbar .act-label { font-size: 0.86rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; }
+.pv-actbar .act-count:empty { display: none; }
+.pv-actbar .pv-stats { padding: 0 6px 6px; }
+.pv-actbar .pv-stats:empty { display: none; }
+@media (max-width: 360px) { .pv-actbar .act-label { font-size: 0.78rem; } .pv-actbar .post-actions .act { gap: 4px; } }
+/* The docked composer is solid (no frosted haze) */
+.pv-foot { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; border-top-color: var(--line-soft, var(--border)); }
+.pv-actbar { border-bottom: 0; }
+.pv-actbar .post-actions { justify-content: space-between; }
+.pv-actbar .post-actions .act { flex: 0 1 auto; padding: 0 8px; }
+.pv-actbar .post-actions .save-btn { width: 40px; padding: 0; }
+@media (max-width: 360px) { .pv-actbar .post-actions .act { padding: 0 5px; } }
+.pv-actbar .post-actions .act { min-width: 44px; }
+.pv-actbar .act-label { overflow: visible; }
+@media (max-width: 460px) {
+    .pv-actbar .post-actions .act:not(.like-btn) .act-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}

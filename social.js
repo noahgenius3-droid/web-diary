@@ -4860,13 +4860,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const friend = s.friends.some(f => f.id === post.author);
         const items = [{ heading: 'Share' }];
         if (mine) {
-            items.push({ label: 'Reshare to the Feed', icon: 'i-repost', onClick: () => reshareOwn(post.id) });
             if (window.diaryStories && window.diaryStories.shareEntry) items.push({ label: 'Add to your story', icon: 'i-plus', onClick: () => window.diaryStories.shareEntry(post.local_id, post.title || post.body, post) });
         } else {
-            if (post.allow_reposts !== false && friend) {
-                const on = (post.reposts || []).some(r => r.user_id === me);
-                items.push({ label: on ? 'Undo repost' : 'Repost to your friends', icon: 'i-repost', onClick: () => toggleRepost(post.id) });
-            }
             if (window.diaryStories && window.diaryStories.shareText && text) items.push({ label: 'Add to your story', icon: 'i-plus', onClick: () => window.diaryStories.shareText(text.slice(0, 500), post.color) });
         }
         if (window.diaryNoteShare && window.diaryNoteShare.send) items.push({ label: 'Send to a friend', icon: 'i-send', onClick: () => window.diaryNoteShare.send({ title: post.title || `A post from ${name}`, text: `${text}\n\n${link}`.slice(0, 4000), color: post.color }) });
@@ -4880,23 +4875,66 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function postActionsHTML(o) {
         const me = s.profile.id;
-        const { profile } = postPerson(o);
         const key = `${o.kind}:${o.id}`;
+        const reposts = o.reposts || [];
+        const reshared = reposts.some(r => r.user_id === me);
         return `
             ${likeButtonHTML(o.kind, o.id, o.likes)}
-            <button class="act" data-action="post-open" data-key="${esc(key)}" data-focus="input" aria-label="Comment${o.commentCount ? ` — ${o.commentCount} so far` : ''}"><svg class="i"><use href="#i-chat"/></svg><span class="act-count">${o.commentCount || ''}</span></button>
-            ${o.kind === 'entry' ? `<button class="act share-btn" data-action="post-share" data-id="${esc(o.id)}" aria-haspopup="menu" aria-label="Repost or share${o.reposts.length ? ` — reposted ${o.reposts.length} ${o.reposts.length === 1 ? 'time' : 'times'}` : ''}"><svg class="i"><use href="#i-repost"/></svg><span class="act-count">${o.reposts.length || ''}</span></button>` : ''}
-            ${o.kind === 'entry' && window.diaryNoteShare && window.diaryNoteShare.send ? `<button class="act send-btn" data-action="post-send" data-id="${esc(o.id)}" aria-label="Send to a friend"><svg class="i"><use href="#i-send"/></svg></button>` : ''}
-            ${o.kind === 'entry' ? '' : o.canRepost ? (() => {
-                const on = o.reposts.some(r => r.user_id === me);
-                return `<button class="act repost-btn" data-action="repost" data-id="${esc(o.id)}" aria-pressed="${on}" aria-label="${on ? 'Undo repost' : 'Repost to your friends'}"><svg class="i"><use href="#i-repost"/></svg><span class="act-count">${o.reposts.length || ''}</span></button>`;
-            })() : ''}
-            ${o.kind !== 'entry' && o.canShareOwn ? `<button class="act repost-btn" data-action="share-own" data-id="${esc(o.id)}" aria-haspopup="menu" aria-pressed="${o.reposts.some(r => r.user_id === me)}" aria-label="Share: reshare or add to your story"><svg class="i"><use href="#i-repost"/></svg><span class="act-count">${o.reposts.length || ''}</span></button>` : ''}
-            ${o.kind === 'entry' || o.mine || !s.friends.some(f => f.id === o.author) ? '' : `<button class="act" data-action="message-friend" data-id="${esc(o.author)}" aria-label="Message ${esc(profile.display_name)}"><svg class="i"><use href="#i-send"/></svg></button>`}
+            <button class="act" data-action="post-open" data-key="${esc(key)}" data-focus="input" aria-label="Comment${o.commentCount ? ` — ${o.commentCount} so far` : ''}"><svg class="i"><use href="#i-chat"/></svg><span class="act-label">Comment</span><span class="act-count">${o.commentCount || ''}</span></button>
+            <button class="act reshare-btn" data-action="post-reshare" data-kind="${o.kind}" data-id="${esc(o.id)}" aria-pressed="${reshared}" aria-label="${reshared ? 'Reshared — tap to undo' : 'Reshare'}${reposts.length ? ` — reshared ${reposts.length} ${reposts.length === 1 ? 'time' : 'times'}` : ''}"><svg class="i"><use href="#i-repost"/></svg><span class="act-label">Reshare</span><span class="act-count">${reposts.length || ''}</span></button>
+            <button class="act share-btn" data-action="post-share" data-kind="${o.kind}" data-id="${esc(o.id)}" aria-haspopup="menu" aria-label="Share"><svg class="i"><use href="#i-send"/></svg><span class="act-label">Share</span></button>
             ${o.kind === 'entry' ? `
                 <button class="act save-btn" data-action="save-post" data-id="${esc(o.id)}" aria-pressed="${o.saved}" aria-label="${o.saved ? 'Remove from Saved' : 'Save post'}">
                     <svg class="i"><use href="#${o.saved ? 'i-bookmark-fill' : 'i-bookmark'}"/></svg>
                 </button>` : ''}`;
+    }
+
+    // Reshare: your own post goes back to the top of your friends' Feed; a friend's post is reposted (tap again to undo).
+    // A group post can go to your Feed or story — but only from public groups.
+    function reshare(anchor, kind, id) {
+        const me = s.profile.id;
+        if (kind === 'entry') {
+            const post = findPost('entry', id);
+            if (!post) return;
+            if (post.author === me) return reshareOwn(post.id).then(() => app.showToast('Reshared to your friends’ Feed'));
+            const name = ((post.author_profile && post.author_profile.display_name) || 'They').split(' ')[0];
+            if (post.allow_reposts === false) return app.showToast(`${name} turned off reposts for this post`);
+            if (!s.friends.some(f => f.id === post.author)) return app.showToast('You can reshare posts from your friends');
+            const on = (post.reposts || []).some(r => r.user_id === me);
+            return toggleRepost(post.id).then(() => app.showToast(on ? 'Reshare removed' : 'Reshared to your friends'));
+        }
+        const post = findPost('post', id);
+        if (!post) return;
+        const group = window.diaryCommunities && window.diaryCommunities.current ? window.diaryCommunities.current() : null;
+        if (group && group.visibility === 'private') return app.showToast('Posts in invite-only groups stay in the group — share the link with members instead');
+        const text = [post.title, post.body].filter(x => x && String(x).trim()).join('\n\n');
+        const from = group ? group.name : 'a group';
+        const link = postLink('post', post.id);
+        app.openPopover(anchor, [
+            { heading: 'Reshare' },
+            { label: 'Share to your Feed', icon: 'i-repost', onClick: async () => {
+                const quoted = `${text.slice(0, 1500)}${text.length > 1500 ? '…' : ''}\n\n— shared from ${from}: ${link}`;
+                try {
+                    await app.createEntry({ text: quoted, shared: true, audience: 'friends', origin: 'post' });
+                    app.showToast('Shared to your Feed');
+                } catch (e) { app.showToast('Couldn’t share that — try again'); }
+            } },
+            ...(window.diaryStories && window.diaryStories.shareText && text ? [{ label: 'Add to your story', icon: 'i-plus', onClick: () => window.diaryStories.shareText(text.slice(0, 500), post.color) }] : [])
+        ]);
+    }
+
+    // Share a group post: send it to a friend, copy its link, or the phone's share sheet
+    function openGroupPostShare(anchor, id) {
+        const post = findPost('post', id);
+        if (!post) return;
+        const link = postLink('post', post.id);
+        const text = [post.title, post.body].filter(x => x && String(x).trim()).join('\n\n');
+        const name = (post.author_profile && post.author_profile.display_name) || 'a member';
+        const items = [{ heading: 'Share' }];
+        if (window.diaryNoteShare && window.diaryNoteShare.send) items.push({ label: 'Send to a friend', icon: 'i-send', onClick: () => window.diaryNoteShare.send({ title: post.title || `A post from ${name}`, text: `${text}\n\n${link}`.slice(0, 4000), color: post.color }) });
+        items.push({ label: 'Copy link', icon: 'i-link', onClick: () => copyText(link, 'Link copied') });
+        if (navigator.share) items.push({ label: 'More ways to share…', icon: 'i-share', onClick: () => navigator.share({ title: post.title || 'A post on Cordial', text: text.slice(0, 200), url: link }).catch(() => {}) });
+        app.openPopover(anchor, items);
     }
 
     function renderPost(o) {
@@ -5473,11 +5511,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div data-pd="extra">${o.extraHTML || ''}</div>
                     <p class="pv-date">${esc(fullDate(o.createdAt))}</p>
                 </article>
+                <div class="pv-actbar">
+                    <div class="post-actions" data-pd="actions">${postActionsHTML(o)}</div>
+                    <div class="pv-stats" data-pd="stats" data-react-sum>${reactSummaryHTML(o.kind, o.id, o.likes)}</div>
+                </div>
                 ${commentsBlock(o.kind, o.id, o.commentCount, o.canComment, 'full')}
             </div>
             <footer class="pv-foot">
-                <div class="post-actions" data-pd="actions">${postActionsHTML(o)}</div>
-                <div class="pv-stats" data-pd="stats" data-react-sum>${reactSummaryHTML(o.kind, o.id, o.likes)}</div>
                 ${o.canComment ? `
                     <div class="pv-emojis" role="group" aria-label="Add an emoji">
                         ${QUICK_EMOJI.map(e => `<button type="button" data-pv="emoji" data-emoji="${e}" aria-label="Add ${e}">${e}</button>`).join('')}
@@ -5509,7 +5549,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const o = s.rendered.get(key);
         if (!pv || !o) return;
         if (pv.open && s.detail === key) {
-            if (opts.focus === 'input') $('pv-input')?.focus();
+            if (opts.focus === 'input') {
+                pv.querySelector('.pv-c-head, .comments')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                $('pv-input')?.focus({ preventScroll: true });
+            }
             return;
         }
         const shell = $('pv-shell');
@@ -5702,7 +5745,7 @@ document.addEventListener('DOMContentLoaded', () => {
             burst.classList.remove('pop');
             void burst.offsetWidth;
             burst.classList.add('pop');
-            const btn = pv.querySelector('.pv-foot .like-btn');
+            const btn = pv.querySelector('.pv-actbar .like-btn');
             if (btn && btn.getAttribute('aria-pressed') !== 'true') btn.click();
         });
         pv.addEventListener('scroll', e => {
@@ -6787,7 +6830,8 @@ document.addEventListener('DOMContentLoaded', () => {
             // Turning a photo's sound on keeps sound on while you scroll (like Instagram); off turns it off
             if (el.classList.contains('media-sound')) s.soundOn = el.classList.contains('playing');
         },
-        'post-share': el => openPostShare(el, el.dataset.id),
+        'post-share': el => (el.dataset.kind === 'post' ? openGroupPostShare(el, el.dataset.id) : openPostShare(el, el.dataset.id)),
+        'post-reshare': el => reshare(el, el.dataset.kind || 'entry', el.dataset.id),
         'feed-more': () => { s.feedShown = (s.feedShown || FEED_PAGE) + FEED_PAGE; app.render(); },
         'feed-retry': () => { s.feed = null; s.feedError = false; app.render(); },
         'note-source': el => { closePost(); app.openNote(el.dataset.id); },
