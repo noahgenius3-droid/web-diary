@@ -17566,3 +17566,85 @@ dialog.edit-post::backdrop { background: rgba(0, 0, 0, 0.5); }
 .pc-fmt { display: inline-flex; gap: 2px; }
 .pc-fmt .pc-tool { min-width: 36px; justify-content: center; padding-inline: 8px; }
 .pc-fmt .pc-tool b, .pc-fmt .pc-tool i { font-family: Georgia, 'Times New Roman', serif; font-size: 1.05rem; line-height: 1; }
+
+/* =====================================================================
+   Lighter lines: on the Feed and profiles, borders recede (content first, structure second, borders last)
+   ===================================================================== */
+body[data-view="feed"], body[data-view="profile"] {
+    --line-soft: color-mix(in srgb, var(--text) 6%, transparent);
+    --line-faint: color-mix(in srgb, var(--text) 4%, transparent);
+    --border: var(--line-soft);
+    --border-strong: color-mix(in srgb, var(--text) 10%, transparent);
+}
+/* Post cards: one hairline, a whisper of lift, nothing else */
+body[data-view="feed"] .feed-v2 .feed-list .post.ig,
+body[data-view="profile"] .post.ig {
+    box-shadow: 0 0 0 1px var(--line-soft), 0 1px 2px rgba(20, 24, 40, 0.03);
+}
+@media (hover: hover) and (pointer: fine) {
+    body[data-view="feed"] .feed-v2 .feed-list .post.ig:hover { box-shadow: 0 0 0 1px var(--line-soft), 0 4px 14px -8px rgba(20, 24, 40, 0.12); }
+}
+:root[data-theme="dark"] body[data-view="feed"] .feed-v2 .feed-list .post.ig,
+:root[data-theme="dark"] body[data-view="profile"] .post.ig { box-shadow: 0 0 0 1px var(--line-soft); }
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) body[data-view="feed"] .feed-v2 .feed-list .post.ig,
+    :root:not([data-theme="light"]) body[data-view="profile"] .post.ig { box-shadow: 0 0 0 1px var(--line-soft); }
+}
+/* Photos: no frame of their own — the image is the edge */
+body[data-view="feed"] .post-media, body[data-view="profile"] .post-media { border: 0; box-shadow: none; outline: 0; }
+/* Comment box, search and composer: filled, not outlined */
+body[data-view="feed"] .comment-form, body[data-view="profile"] .comment-form { border-color: transparent; background: var(--input); box-shadow: none; }
+body[data-view="feed"] .comment-form:focus-within, body[data-view="profile"] .comment-form:focus-within { border-color: var(--line-soft); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent); }
+body[data-view="feed"] .feed-search, body[data-view="feed"] .search { border-color: transparent; box-shadow: none; }
+body[data-view="feed"] .post-composer { box-shadow: 0 0 0 1px var(--line-soft); border-color: transparent; }
+body[data-view="feed"] .post-composer textarea { border-color: transparent; }
+/* Buttons and chips: hairlines only */
+body[data-view="feed"] .chip, body[data-view="profile"] .chip,
+body[data-view="feed"] .ghost-btn, body[data-view="profile"] .ghost-btn,
+body[data-view="feed"] .icon-btn.outline, body[data-view="profile"] .icon-btn.outline { border-color: var(--line-soft); }
+/* Comment threads: quiet separators */
+body[data-view="feed"] .comments, body[data-view="feed"] .comment, body[data-view="profile"] .comment { border-color: var(--line-faint); }
+/* Sheets and modals opened from the Feed or a profile: soft edge, softer shadow */
+body[data-view="feed"] dialog, body[data-view="profile"] dialog,
+body[data-view="feed"] .popover, body[data-view="profile"] .popover { border-color: var(--line-soft); }
+body[data-view="feed"] .sheet-dialog, body[data-view="profile"] .sheet-dialog, dialog.edit-post {
+    box-shadow: 0 0 0 1px var(--line-soft), 0 -8px 32px -12px rgba(0, 0, 0, 0.18);
+}
+dialog.edit-post .ep-head, dialog.edit-post .ep-tools { border-color: var(--line-faint); }
+/* Hashtag line sits flush with the caption */
+.post.ig .post-caption .post-tags { padding: 0; }
+
+/* =====================================================================
+   Profile tabs: flush, fixed under the top bar, no gap, no bounce
+   ===================================================================== */
+.pf-tabs {
+    /* Solid pill (no see-through blur), and a band of page colour around it so nothing shows through the
+       little gap above or beside it while it's stuck. The band is a shadow, so it never widens the page. */
+    background: color-mix(in srgb, var(--text) 5%, var(--bg));
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+    box-shadow: 0 0 0 100vmax var(--bg);
+    clip-path: inset(-12px -16px -6px -16px);
+    gap: 2px;
+    overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: manipulation;
+}
+.pf-tab {
+    flex: 1 1 0; min-width: 0; padding: 0 4px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-size: clamp(0.78rem, 3.5vw, 0.92rem);
+    touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+}
+.pf-tab[aria-selected="true"] { box-shadow: 0 1px 2px rgba(20, 24, 40, 0.08), 0 2px 6px -2px rgba(20, 24, 40, 0.1); }
+.pf-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Switching to a short tab never pulls the page up under the bar, so the bar stays put */
+.pf-body { min-height: calc(100dvh - var(--topbar-h, 0px) - 72px); }
+/* Comment box always fits its card (it was sizing to its contents and poking out on narrow phones) */
+.comments .comment-form { box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; }
+.comments .comment-form input { width: 0; }
+/* Desktop: the page itself scrolls, so the main column must not become a scroll box of its own
+   (overflow-x: hidden did that, and the top bar, feed tabs and profile tabs then scrolled away instead of sticking) */
+@media (min-width: 761px) {
+    body, .main-col { overflow-x: clip; }
+    .pf-tabs { box-shadow: 0 0 0 100vmax var(--panel); background: color-mix(in srgb, var(--text) 5%, var(--panel)); }
+}
