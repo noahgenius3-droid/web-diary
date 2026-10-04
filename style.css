@@ -17277,3 +17277,111 @@ dialog.vid-confirm::backdrop { background: rgba(0, 0, 0, 0.6); }
 .react-bar.as-sheet .react-actions button.danger .i { color: inherit; }
 .react-bar.as-sheet .react-actions button:active { background: var(--panel, var(--input)); }
 @media (prefers-reduced-motion: reduce) { .react-bar.as-sheet, .msg-menu-scrim { animation: none !important; } }
+
+/* =====================================================================
+   Chat inbox v2: a big quiet title, light category pills, search, one list (chats + groups), swipe and hold
+   ===================================================================== */
+.inbox-list { position: relative; --row-bg: var(--surface); }
+.chat-top { display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 12px; padding: 14px 16px 8px; }
+.chat-title { grid-column: 1; margin: 0; font-size: clamp(1.7rem, 6vw, 2rem); font-weight: 800; letter-spacing: -0.025em; line-height: 1.1; }
+.chat-sub { grid-column: 1; grid-row: 2; margin-top: 2px; color: var(--text-muted); font-size: 0.8rem; }
+.chat-pill { grid-column: 2; grid-row: 1 / span 2; display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 999px; background: var(--input); }
+.chat-pill-btn, .chat-pill-me { display: grid; place-items: center; width: 42px; height: 42px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--text); cursor: pointer; touch-action: manipulation; transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background 140ms ease; }
+.chat-pill-btn .i { width: 21px; height: 21px; }
+.chat-pill-me .avatar.sm { width: 34px; height: 34px; }
+.chat-pill-btn:active, .chat-pill-me:active { transform: scale(0.92); }
+@media (hover: hover) and (pointer: fine) { .chat-pill-btn:hover { background: color-mix(in srgb, var(--text) 8%, transparent); } }
+
+.chat-cats { display: flex; gap: 6px; padding: 6px 16px 10px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+.chat-cats::-webkit-scrollbar { display: none; }
+.chat-cat { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding: 0 15px; border: 0; border-radius: 999px; background: none; color: var(--text-muted); font: inherit; font-size: 0.92rem; font-weight: 600; cursor: pointer; touch-action: manipulation; transition: background 160ms ease, color 160ms ease; }
+.chat-cat[aria-selected="true"] { background: var(--input); color: var(--text); font-weight: 700; }
+.chat-cat .badge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: var(--on-accent, #fff); font-size: 0.68rem; font-weight: 800; line-height: 18px; text-align: center; }
+.chat-cat:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.inbox-list .inbox-search { margin: 0 16px 12px; min-height: 46px; border-radius: 999px; }
+.inbox-list .add-friend { margin: 0 16px 12px; }
+
+/* Search results: People · Groups · Messages */
+.chat-results { padding: 0 8px 12px; }
+.chat-results[hidden] { display: none; }
+.inbox-list.searching .convo-list, .inbox-list.searching .chat-cats, .inbox-list.searching .inbox-foot { display: none; }
+.cr-sec h4 { margin: 12px 12px 4px; color: var(--text-muted); font-size: 0.74rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
+.cr-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 8px 12px; border: 0; border-radius: 14px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.cr-row > span:last-child { display: grid; min-width: 0; }
+.cr-row strong { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 0.95rem; }
+.cr-row strong time { color: var(--text-muted); font-size: 0.74rem; font-weight: 500; flex: none; }
+.cr-row small { color: var(--text-muted); font-size: 0.84rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cr-row mark { background: color-mix(in srgb, var(--accent) 26%, transparent); color: var(--text); border-radius: 3px; padding: 0 1px; }
+@media (hover: hover) and (pointer: fine) { .cr-row:hover { background: var(--input); } }
+.cr-note { margin: 16px 12px; color: var(--text-muted); font-size: 0.88rem; }
+
+/* Group rows */
+.gc-av { display: grid; place-items: center; color: #fff; font-size: 1.25rem; font-weight: 700; }
+.avatar.sm.gc-av { font-size: 0.95rem; }
+
+/* Empty: a real start, not a blank screen */
+.chat-onboard { display: grid; justify-items: center; gap: 6px; margin: 28px 16px; padding: 26px 20px; border-radius: 22px; background: var(--input); text-align: center; }
+.chat-onboard-ic { display: grid; place-items: center; width: 56px; height: 56px; margin-bottom: 6px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.chat-onboard-ic .i { width: 26px; height: 26px; }
+.chat-onboard strong { font-size: 1.08rem; }
+.chat-onboard > span:not(.chat-onboard-ic) { color: var(--text-muted); font-size: 0.9rem; line-height: 1.45; max-width: 300px; }
+.chat-onboard > div { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 10px; }
+
+/* New chat button (above the bottom bar on phones, in the list's corner on desktop) */
+.inbox-list .inbox-fab { display: grid; place-items: center; position: absolute; right: 16px; bottom: 16px; z-index: 6; width: 56px; height: 56px; border: 0; border-radius: 50%; background: var(--accent); color: var(--on-accent, #fff); box-shadow: 0 14px 30px -12px color-mix(in srgb, var(--accent) 80%, transparent); cursor: pointer; touch-action: manipulation; transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1); }
+.inbox-list .inbox-fab .i { width: 23px; height: 23px; }
+.inbox-list .inbox-fab:active { transform: scale(0.93); }
+
+/* Swipe actions: hidden behind the row until a sideways swipe reveals them */
+.convo-list .convo-wrap { position: relative; overflow: hidden; }
+.convo-list .convo-wrap > :not(.sw-acts) { transform: translateX(var(--sx, 0px)); transition: transform 240ms cubic-bezier(0.32, 0.72, 0, 1); }
+.convo-list .convo-wrap.swiping > :not(.sw-acts) { transition: none; }
+.convo-list .convo-wrap.swiping > .convo, .convo-list .convo-wrap.swiped > .convo { background: var(--row-bg); }
+.sw-acts { position: absolute; top: 0; bottom: 0; z-index: 0; display: flex; width: 152px; }
+.sw-acts.left { left: 0; }
+.sw-acts.right { right: 0; }
+.sw-act { flex: 1; display: grid; place-content: center; justify-items: center; gap: 4px; border: 0; color: #fff; font: inherit; font-size: 0.74rem; font-weight: 700; cursor: pointer; }
+.sw-act .i { width: 20px; height: 20px; }
+.sw-act.blue { background: #3b82f6; } .sw-act.amber { background: #d97706; } .sw-act.grey { background: #52525b; } .sw-act.violet { background: #7c3aed; }
+.convo-list .convo-wrap.held > .convo { background: var(--input); }
+@media (pointer: coarse) { .convo-list .convo-wrap, .convo-list .convo-wrap * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; } }
+@media (prefers-reduced-motion: reduce) { .convo-list .convo-wrap > :not(.sw-acts) { transition: none; } }
+
+/* New message sheet */
+dialog.nm-people { width: min(480px, 100vw); max-height: min(720px, 92dvh); padding: 0; border: 1px solid var(--border); border-radius: 24px; background: var(--surface); color: var(--text); }
+dialog.nm-people::backdrop { background: rgba(0, 0, 0, 0.5); }
+.nmp-card { display: flex; flex-direction: column; max-height: inherit; }
+.nmp-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 12px 6px 18px; }
+.nmp-head h3 { margin: 0; font-size: 1.15rem; }
+.nmp-search { margin: 4px 16px 8px; min-height: 44px; border-radius: 999px; }
+.nmp-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 8px 16px; }
+.nmp-body h4 { margin: 12px 10px 6px; color: var(--text-muted); font-size: 0.74rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
+.nmp-online { display: flex; gap: 12px; overflow-x: auto; padding: 2px 10px 6px; scrollbar-width: none; }
+.nmp-face { display: grid; justify-items: center; gap: 4px; flex: none; width: 62px; padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-size: 0.78rem; cursor: pointer; }
+.nmp-face span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nmp-face .avatar.lg { width: 54px; height: 54px; }
+.nmp-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 58px; padding: 6px 10px; border: 0; border-radius: 14px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.nmp-row > span:nth-child(2) { flex: 1; display: grid; min-width: 0; }
+.nmp-row small { color: var(--text-muted); font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nmp-row.static { cursor: default; }
+@media (hover: hover) and (pointer: fine) { .nmp-row:not(.static):hover { background: var(--input); } }
+
+@media (max-width: 760px) {
+    /* The clean layout replaces the purple header */
+    body[data-view="messages"] .inbox-list { background: var(--bg); border-radius: 0; --row-bg: var(--bg); }
+    body[data-view="messages"] .inbox-sheet { margin-top: 0; padding-top: 0; border-radius: 0; background: transparent; }
+    .chat-top { padding-top: 8px; }
+    .inbox-list .inbox-fab { position: fixed; right: 18px; bottom: calc(86px + env(safe-area-inset-bottom, 0px)); width: 58px; height: 58px; }
+    dialog.nm-people { width: 100vw; max-width: 100vw; margin: auto 0 0; border-radius: 24px 24px 0 0; border-width: 1px 0 0; animation: nmp-up 320ms cubic-bezier(0.32, 0.72, 0, 1); }
+    @keyframes nmp-up { from { transform: translateY(100%); } }
+}
+@media (prefers-reduced-motion: reduce) { dialog.nm-people { animation: none; } }
+
+/* Inbox: the app bar already says Chat on phones; only the side a swipe reveals shows */
+@media (max-width: 760px) { .inbox-list .chat-top { display: none; } body[data-view="messages"] .inbox-list { border: 0; box-shadow: none; } body[data-view="messages"] .inbox-sheet { padding-top: 4px; } }
+.convo-wrap:not(.sw-r) .sw-acts.left, .convo-wrap.sw-r .sw-acts.right { visibility: hidden; }
+.chat-top .chat-title { display: none; }
+.chat-top .chat-sub { grid-row: 1; margin: 0; font-size: 0.86rem; }
+@media (min-width: 761px) { .inbox-list .inbox-fab { bottom: 52px; } }
+@media (max-width: 760px) { body[data-view="messages"] .inbox { border: 0; box-shadow: none; background: none; } }

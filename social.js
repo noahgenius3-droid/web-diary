@@ -2441,14 +2441,15 @@ document.addEventListener('DOMContentLoaded', () => {
         client.rpc('diary_register_device', { p_device: deviceId(), p_label: deviceLabel() }).then(() => {}, () => {});
     }
 
-    function convoMenu(anchor, friendId) {
+    function convoMenu(anchor, friendId, lead = []) {
         const p = prefOf('dm', friendId);
         const friend = s.friends.find(f => f.id === friendId);
         const muted = isMuted('dm', friendId);
         const unread = s.unread[friendId] || p.marked_unread;
         app.openPopover(anchor, [
+            ...lead,
             { label: p.pinned_at ? 'Unpin chat' : 'Pin chat', icon: 'i-pin-note', onClick: () => {
-                const pinned = [...s.prefs.values()].filter(r => r.kind === 'dm' && r.pinned_at).length;
+                const pinned = [...s.prefs.values()].filter(r => r.pinned_at).length;
                 if (!p.pinned_at && pinned >= 5) return app.showToast('You can pin up to 5 chats');
                 setPref('dm', friendId, { pinned_at: p.pinned_at ? null : new Date().toISOString() });
             } },
@@ -5775,7 +5776,7 @@ document.addEventListener('DOMContentLoaded', () => {
             app.setTitle('Messages');
             return GUEST_WALL('Chat with friends', 'Messages, calls and friends need a free account. It takes a minute, and you’ll keep your name, games and diary.');
         }
-        app.setTitle('Messages');
+        app.setTitle('Chat');
         const blocked = gate('Chat privately with friends and see what they’re writing.');
         if (blocked) return blocked;
 
@@ -5786,10 +5787,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${label}${count ? `<span class="badge">${count}</span>` : ''}
             </button>`;
 
+        // Categories (light pills), groups alongside direct chats, and one list sorted by pins then recent activity
+        const tabKey = s.inboxTab === 'chats' ? 'all' : s.inboxTab;
+        const groupsOn = !!window.diaryCommunities;
+        if (groupsOn && s.gcList === undefined) loadInboxGroups();
+        const anyArchived = [...s.prefs.values()].some(r => r.archived);
+        const cats = [['all', 'All'], ['direct', 'Direct'], ...(groupsOn ? [['groups', 'Groups']] : []), ['unread', 'Unread', unreadCount + gcUnreadCount()],
+            ...(window.diaryCalls && window.diaryCalls.historyHTML ? [['calls', 'Calls']] : []), ['requests', 'Requests', s.incoming.length], ...(anyArchived ? [['archived', 'Archived']] : [])];
         let rows;
-        if (s.inboxTab === 'calls' && window.diaryCalls && window.diaryCalls.historyHTML) {
+        if (tabKey === 'calls' && window.diaryCalls && window.diaryCalls.historyHTML) {
             rows = window.diaryCalls.historyHTML();
-        } else if (s.inboxTab === 'requests') {
+        } else if (tabKey === 'requests') {
             rows = [
                 ...s.incoming.map(f => `
                     <div class="convo static">${avatar(f, 'md')}
@@ -5808,45 +5816,36 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>`)
             ].join('') || '<p class="inbox-empty">No pending requests.</p>';
         } else {
-            const archived = f => !!prefOf('dm', f.id).archived;
-            const list = sortedFriends().filter(f => s.inboxTab === 'archived' ? archived(f)
-                : s.inboxTab === 'unread' ? (s.unread[f.id] || prefOf('dm', f.id).marked_unread)
-                : !archived(f));
-            const pinned = s.inboxTab === 'all' ? list.filter(f => prefOf('dm', f.id).pinned_at) : [];
-            const rest = pinned.length ? list.filter(f => !prefOf('dm', f.id).pinned_at) : list;
-            rows = (pinned.length
-                ? `<p class="convo-sec">Pinned<span>(${pinned.length})</span></p>${pinned.map(convoRow).join('')}<p class="convo-sec">All chats<span>(${rest.length})</span></p>${rest.map(convoRow).join('')}`
-                : list.map(convoRow).join('')) ||
-                `<p class="inbox-empty">${s.inboxTab === 'unread' ? 'You’re all caught up.' : s.inboxTab === 'archived' ? 'No archived chats. Archive one from its menu (⋯) to tidy your inbox.' : 'No friends yet. Tap + to add someone by username.'}</p>`;
+            const items = inboxItems(tabKey);
+            rows = items.map(it => (it.kind === 'dm' ? convoRow(it.f) : groupRow(it.g))).join('') || inboxEmpty(tabKey);
         }
 
         return `
             <div class="inbox${friend ? ' has-active' : ''}${s.showInfo && friend ? ' show-info' : ''}">
                 <aside class="inbox-list">
-                    ${inboxHero()}
-                    <div class="inbox-head">
-                        <div class="inbox-titles">
-                            <h2>Messages</h2>
-                            <p class="inbox-sub">${inboxSummary()}</p>
+                    <header class="chat-top">
+                        <h2 class="chat-title">Chat</h2>
+                        <span class="chat-sub">${inboxSummary()}</span>
+                        <div class="chat-pill">
+                            <button type="button" class="chat-pill-btn" data-action="chat-search-open" aria-label="Search chats and messages"><svg class="i"><use href="#i-search"/></svg></button>
+                            <button type="button" class="chat-pill-me" data-profile="${esc(s.profile.id)}" aria-label="Your profile">${avatar(s.profile, 'sm')}</button>
                         </div>
-                        <button class="compose-btn refresh-btn" data-action="chat-refresh" aria-label="Refresh chats" title="Refresh chats"><svg class="i"><use href="#i-refresh"/></svg></button>
-                        <button class="compose-btn" data-action="toggle-add" aria-pressed="${s.addOpen}" aria-label="Add a friend by username" title="Add a friend"><svg class="i"><use href="#i-user-plus"/></svg></button>
-                    </div>
+                    </header>
                     <div class="inbox-sheet">
+                    <div class="chat-cats" role="tablist" aria-label="Show">
+                        ${cats.map(([k, label, n]) => `<button type="button" class="chat-cat" role="tab" aria-selected="${tabKey === k}" data-action="inbox-tab" data-tab="${k}">${label}${n ? `<span class="badge">${n > 99 ? '99+' : n}</span>` : ''}</button>`).join('')}
+                    </div>
+                    <label class="search inbox-search">
+                        <svg class="i"><use href="#i-search"/></svg>
+                        <input type="search" id="chat-search" placeholder="Search people, chats and messages" aria-label="Search people, chats and messages" autocomplete="off">
+                    </label>
                     <form class="add-friend" data-form="add-friend"${s.addOpen ? '' : ' hidden'}>
                         <input id="add-friend-input" placeholder="Friend’s username" autocomplete="off" aria-label="Friend's username">
                         <button class="primary-btn">Add</button>
                     </form>
-                    <label class="search inbox-search">
-                        <svg class="i"><use href="#i-search"/></svg>
-                        <input type="search" id="chat-search" placeholder="Search chats and people" aria-label="Search chats">
-                    </label>
-                    ${activeNow()}
-                    <div class="inbox-tabs" role="tablist">
-                        ${tab('all', 'All', 0)}${tab('unread', 'Unread', unreadCount)}${tab('requests', 'Requests', s.incoming.length)}${[...s.prefs.values()].some(r => r.kind === 'dm' && r.archived) ? tab('archived', 'Archived', 0) : ''}${window.diaryCalls && window.diaryCalls.historyHTML ? tab('calls', 'Calls', 0) : ''}
-                    </div>
-                    <div class="convo-list">${rows}</div>
-                    <button type="button" class="inbox-fab" data-action="toggle-add" aria-label="Add a friend by username"><svg class="i"><use href="#i-plus"/></svg></button>
+                    <div class="chat-results" hidden aria-live="polite"></div>
+                    <div class="convo-list" role="list">${rows}</div>
+                    <button type="button" class="inbox-fab" data-action="chat-new" aria-label="New chat" aria-haspopup="menu"><svg class="i"><use href="#i-pencil"/></svg></button>
                     <p class="muted small inbox-foot">You’re <strong>@${esc(s.profile.username)}</strong> — share it so friends can add you.</p>
                     </div>
                 </aside>
@@ -5857,6 +5856,323 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${friend ? infoPane(friend) : ''}
             </div>`;
     };
+
+    // ---------- One inbox: direct chats and groups ----------
+    function gcSeenMap() { try { return JSON.parse(localStorage.getItem(`cordialGcSeen:${s.profile.id}`) || '{}'); } catch (e) { return {}; } }
+    function markGroupSeen(cid) {
+        const map = gcSeenMap();
+        map[cid] = new Date().toISOString();
+        try { localStorage.setItem(`cordialGcSeen:${s.profile.id}`, JSON.stringify(map)); } catch (e) { /* private mode */ }
+    }
+    function gcUnread(g) {
+        const m = (s.gcLast || {})[g.id];
+        if (!m || m.author === s.profile.id || m.deleted_at) return !!prefOf('gc', g.id).marked_unread;
+        const seen = gcSeenMap()[g.id];
+        return prefOf('gc', g.id).marked_unread || !seen || Date.parse(m.created_at) > Date.parse(seen);
+    }
+    const gcUnreadCount = () => (s.gcList || []).filter(g => !prefOf('gc', g.id).archived && gcUnread(g)).length;
+    let gcLoading = null;
+    async function loadInboxGroups(force) {
+        if (!window.diaryCommunities || (gcLoading && !force)) return gcLoading;
+        gcLoading = (async () => {
+            try {
+                const groups = await window.diaryCommunities.myGroups();
+                s.gcList = groups || [];
+                const ids = s.gcList.map(g => g.id);
+                s.gcLast = s.gcLast || {};
+                if (ids.length) {
+                    const { data } = await client.from('diary_community_messages').select('id, community_id, author, body, attachments, created_at, deleted_at')
+                        .in('community_id', ids).order('created_at', { ascending: false }).limit(400);
+                    (data || []).forEach(m => { if (!s.gcLast[m.community_id]) s.gcLast[m.community_id] = m; });
+                    const unknown = [...new Set(Object.values(s.gcLast).map(m => m.author))].filter(id => id && !s.friends.some(f => f.id === id) && !(s.gcPeople || {})[id]);
+                    if (unknown.length) {
+                        const { data: ppl } = await client.from('diary_profiles').select('id, display_name').in('id', unknown.slice(0, 80));
+                        s.gcPeople = Object.assign(s.gcPeople || {}, Object.fromEntries((ppl || []).map(p => [p.id, p.display_name])));
+                    }
+                }
+                watchGroupMessages(ids);
+            } catch (e) { s.gcList = s.gcList || []; }
+            gcLoading = null;
+            if (app.state.view === 'messages') app.requestRender('messages');
+        })();
+        return gcLoading;
+    }
+    // New group messages update the inbox live
+    let gcWatch = null;
+    function watchGroupMessages(ids) {
+        if (gcWatch || !ids.length) return;
+        gcWatch = client.channel(`inbox-gc-${s.profile.id}-${Date.now()}`)
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'diary_community_messages' }, ({ new: m }) => {
+                if (!m || !(s.gcList || []).some(g => g.id === m.community_id)) return;
+                s.gcLast = s.gcLast || {};
+                s.gcLast[m.community_id] = m;
+                if (app.state.view === 'community' && app.state.communityId === m.community_id) markGroupSeen(m.community_id);
+                if (app.state.view === 'messages') app.requestRender('messages');
+            })
+            .subscribe();
+    }
+    function inboxItems(tabKey) {
+        const at = iso => (iso ? Date.parse(iso) : 0);
+        const items = [];
+        if (tabKey !== 'groups') {
+            sortedFriends().forEach(f => {
+                const p = prefOf('dm', f.id);
+                if (tabKey === 'archived' ? !p.archived : p.archived) return;
+                if (tabKey === 'unread' && !(s.unread[f.id] || p.marked_unread)) return;
+                items.push({ kind: 'dm', f, pinned: at(p.pinned_at), at: at(s.last[f.id] && s.last[f.id].created_at) });
+            });
+        }
+        if (tabKey !== 'direct' && s.gcList) {
+            s.gcList.forEach(g => {
+                const p = prefOf('gc', g.id);
+                if (tabKey === 'archived' ? !p.archived : p.archived) return;
+                if (tabKey === 'unread' && !gcUnread(g)) return;
+                items.push({ kind: 'gc', g, pinned: at(p.pinned_at), at: at((s.gcLast[g.id] || {}).created_at) || at(g.created_at) });
+            });
+        }
+        return items.sort((a, b) => (!!b.pinned - !!a.pinned) || (b.pinned - a.pinned) || (b.at - a.at));
+    }
+    function groupRow(g) {
+        const m = (s.gcLast || {})[g.id];
+        const p = prefOf('gc', g.id);
+        const unread = gcUnread(g);
+        const muted = isMuted('gc', g.id);
+        const who = m ? (m.author === s.profile.id ? 'You' : String(((s.friends.find(f => f.id === m.author) || {}).display_name) || (s.gcPeople || {})[m.author] || 'Someone').split(' ')[0]) : '';
+        const preview = m ? (m.deleted_at ? 'Message deleted' : `${who}: ${previewOf(m)}`) : 'No messages yet — say hello';
+        const size = (g.members && g.members[0] && g.members[0].count) || 0;
+        return `
+            <div class="convo-wrap" data-wrap="g:${esc(g.id)}" data-kind="gc" data-id="${esc(g.id)}" data-search="${esc(String(g.name || '').toLowerCase())}">
+                <button class="convo gc-row${unread ? ' unread' : ''}" data-action="open-group" data-id="${esc(g.id)}" aria-label="${esc(g.name)}, group${size ? ` of ${size}` : ''}${unread ? ', unread' : ''}">
+                    <span class="avatar md gc-av" style="background:${avatarColour(g.id)}" aria-hidden="true">${esc(g.emoji || app.initials(g.name || '?'))}</span>
+                    <span class="convo-main">
+                        <span class="convo-top"><strong>${esc(g.name)}${p.pinned_at ? '<svg class="i convo-flag" aria-label="Pinned"><use href="#i-pin-note"/></svg>' : ''}${muted ? '<svg class="i convo-flag" aria-label="Muted"><use href="#i-bell-off"/></svg>' : ''}</strong>${m ? `<time>${shortTime(m.created_at)}</time>` : ''}</span>
+                        <span class="convo-bottom"><span class="convo-preview">${esc(preview)}</span>${unread ? `<span class="badge${muted ? ' muted' : ''}">•</span>` : ''}</span>
+                    </span>
+                </button>
+                <button type="button" class="convo-more" data-action="group-menu" data-id="${esc(g.id)}" aria-label="Chat options for ${esc(g.name)}" aria-haspopup="menu"><svg class="i"><use href="#i-more"/></svg></button>
+            </div>`;
+    }
+    function inboxEmpty(tabKey) {
+        if (tabKey === 'unread') return '<p class="inbox-empty">You’re all caught up.</p>';
+        if (tabKey === 'archived') return '<p class="inbox-empty">No archived chats. Swipe a chat left (or use its ⋯ menu) to archive it.</p>';
+        if (tabKey === 'groups') return `<div class="chat-onboard"><strong>No group chats yet</strong><span>Start a group or join one to chat with more people.</span><div><button type="button" class="primary-btn" data-action="cm-create">New group</button><button type="button" class="ghost-btn" data-action="go-communities">Browse groups</button></div></div>`;
+        return `<div class="chat-onboard"><span class="chat-onboard-ic" aria-hidden="true"><svg class="i"><use href="#i-chat"/></svg></span><strong>Start a conversation</strong><span>Connect with friends, share notes, and stay connected.</span><div><button type="button" class="primary-btn" data-action="go-explore-people">Find friends</button><button type="button" class="ghost-btn" data-action="chat-new">Start a chat</button></div></div>`;
+    }
+    function groupMenu(anchor, cid) {
+        const p = prefOf('gc', cid);
+        const g = (s.gcList || []).find(x => x.id === cid);
+        const muted = isMuted('gc', cid);
+        const unread = g && gcUnread(g);
+        app.openPopover(anchor, [
+            { label: 'Open', icon: 'i-chat', onClick: () => openGroup(cid) },
+            { label: p.pinned_at ? 'Unpin chat' : 'Pin chat', icon: 'i-pin-note', onClick: () => {
+                if (!p.pinned_at && [...s.prefs.values()].filter(r => r.pinned_at).length >= 5) return app.showToast('You can pin up to 5 chats');
+                setPref('gc', cid, { pinned_at: p.pinned_at ? null : new Date().toISOString() });
+            } },
+            { label: unread ? 'Mark as read' : 'Mark as unread', icon: 'i-chat', onClick: () => {
+                if (unread) { markGroupSeen(cid); setPref('gc', cid, { marked_unread: false }); } else setPref('gc', cid, { marked_unread: true });
+            } },
+            muted ? { label: 'Unmute', icon: 'i-bell', onClick: () => setPref('gc', cid, { muted_until: null }) }
+                : { label: 'Mute…', icon: 'i-bell-off', onClick: () => muteMenu(anchor, 'gc', cid) },
+            { label: p.archived ? 'Unarchive' : 'Archive chat', icon: 'i-archive', onClick: () => setPref('gc', cid, { archived: !p.archived }) },
+            { label: 'Group info', icon: 'i-users', onClick: () => app.setView('community', { communityId: cid }) }
+        ]);
+    }
+    function openGroup(cid) {
+        markGroupSeen(cid);
+        if (prefOf('gc', cid).marked_unread) setPref('gc', cid, { marked_unread: false });
+        if (window.diaryCommunities) window.diaryCommunities.showChat(cid);
+        app.setView('community', { communityId: cid });
+    }
+
+    // ---------- New chat: people to message, without an empty screen ----------
+    function newChatMenu(anchor) {
+        app.openPopover(anchor, [
+            { label: 'New message', icon: 'i-chat', onClick: () => setTimeout(openNewMessage, 0) },
+            ...(window.diaryCommunities ? [{ label: 'New group', icon: 'i-users', onClick: () => app.actions['cm-create'] && app.actions['cm-create']() }] : []),
+            { label: 'Add a friend by username', icon: 'i-user-plus', onClick: () => app.actions['toggle-add'] && app.actions['toggle-add']() },
+            { label: 'Refresh chats', icon: 'i-refresh', onClick: () => app.actions['chat-refresh'] && app.actions['chat-refresh']() }
+        ]);
+    }
+    function openNewMessage() {
+        const dlg = document.createElement('dialog');
+        dlg.className = 'nm-people';
+        dlg.setAttribute('aria-labelledby', 'nmp-h');
+        const person = f => `<button type="button" class="nmp-row" data-nmp="chat" data-id="${esc(f.id)}" data-search="${esc(`${f.display_name} ${f.username}`.toLowerCase())}">${avatar(f, 'md')}<span><strong>${esc(f.display_name)}</strong><small>${s.online.has(f.id) ? 'Active now' : `@${esc(f.username)}`}</small></span></button>`;
+        const recent = sortedFriends().filter(f => s.last[f.id]).slice(0, 6);
+        const online = sortedFriends().filter(f => s.online.has(f.id)).slice(0, 12);
+        const all = [...s.friends].sort((a, b) => a.display_name.localeCompare(b.display_name));
+        const few = s.friends.length < 5;
+        const sugg = few ? (s.suggestions || []).slice(0, 6) : [];
+        dlg.innerHTML = `
+            <div class="nmp-card">
+                <header class="nmp-head"><h3 id="nmp-h">New message</h3><button type="button" class="icon-btn" data-nmp="close" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button></header>
+                <label class="search nmp-search"><svg class="i"><use href="#i-search"/></svg><input type="search" placeholder="Search friends" aria-label="Search friends" autocomplete="off"></label>
+                <div class="nmp-body">
+                    ${online.length ? `<section><h4>Online now</h4><div class="nmp-online">${online.map(f => `<button type="button" class="nmp-face" data-nmp="chat" data-id="${esc(f.id)}" aria-label="Message ${esc(f.display_name)}">${avatar(f, 'lg')}<span>${esc(f.display_name.split(' ')[0])}</span></button>`).join('')}</div></section>` : ''}
+                    ${recent.length ? `<section class="nmp-sec"><h4>Recent</h4>${recent.map(person).join('')}</section>` : ''}
+                    ${all.length ? `<section class="nmp-sec nmp-all"><h4>All friends</h4>${all.map(person).join('')}</section>` : ''}
+                    ${(s.gcList || []).length ? `<section class="nmp-sec"><h4>Groups</h4>${s.gcList.slice(0, 8).map(g => `<button type="button" class="nmp-row" data-nmp="group" data-id="${esc(g.id)}" data-search="${esc(String(g.name || '').toLowerCase())}"><span class="avatar md gc-av" style="background:${avatarColour(g.id)}">${esc(g.emoji || app.initials(g.name || '?'))}</span><span><strong>${esc(g.name)}</strong><small>Group</small></span></button>`).join('')}</section>` : ''}
+                    ${sugg.length ? `<section class="nmp-sec"><h4>People you may know</h4>${sugg.map(p => `<div class="nmp-row static">${avatar(p, 'md')}<span><strong>${esc(p.display_name)}</strong><small>${esc(p.reason || `@${p.username}`)}</small></span><button type="button" class="chip accent small" data-nmp="add" data-username="${esc(p.username)}">Add friend</button></div>`).join('')}</section>` : ''}
+                    ${!all.length && !sugg.length ? '<p class="inbox-empty">Add friends to message them — find people you know in Explore.</p>' : ''}
+                </div>
+            </div>`;
+        document.body.append(dlg);
+        dlg.addEventListener('close', () => dlg.remove());
+        dlg.addEventListener('click', e => {
+            if (e.target === dlg) return dlg.close();
+            const b = e.target.closest('[data-nmp]');
+            if (!b) return;
+            const what = b.dataset.nmp;
+            if (what === 'close') return dlg.close();
+            if (what === 'chat') { dlg.close(); if (app.state.view !== 'messages') app.setView('messages'); openChat(b.dataset.id); }
+            else if (what === 'group') { dlg.close(); openGroup(b.dataset.id); }
+            else if (what === 'add') { b.disabled = true; b.textContent = 'Requested'; addFriend(b.dataset.username); }
+        });
+        dlg.querySelector('input').addEventListener('input', e => {
+            const q = e.target.value.trim().toLowerCase();
+            dlg.querySelectorAll('.nmp-row[data-search]').forEach(r => { r.hidden = !!q && !r.dataset.search.includes(q); });
+            dlg.querySelectorAll('.nmp-sec').forEach(sec => { sec.hidden = !!q && !sec.querySelector('.nmp-row:not([hidden])'); });
+            const onl = dlg.querySelector('.nmp-online'); if (onl) onl.closest('section').hidden = !!q;
+        });
+        dlg.showModal();
+        if (window.matchMedia('(pointer: fine)').matches) dlg.querySelector('input').focus();
+    }
+
+    // ---------- Searching everything: people, groups, and what was said ----------
+    let searchSeq = 0;
+    async function chatSearch(q) {
+        const box = content.querySelector('.chat-results');
+        const list = content.querySelector('.inbox-list');
+        if (!box || !list) return;
+        const query = q.trim().toLowerCase();
+        list.classList.toggle('searching', query.length >= 2);
+        box.hidden = query.length < 2;
+        if (query.length < 2) { box.innerHTML = ''; return; }
+        const seq = ++searchSeq;
+        const people = s.friends.filter(f => `${f.display_name} ${f.username}`.toLowerCase().includes(query)).slice(0, 6);
+        const groups = (s.gcList || []).filter(g => String(g.name || '').toLowerCase().includes(query)).slice(0, 4);
+        const sec = (title, body) => (body ? `<section class="cr-sec"><h4>${title}</h4>${body}</section>` : '');
+        const paint = (msgs, gmsgs, loading) => {
+            box.innerHTML = sec('People', people.map(f => `<button type="button" class="cr-row" data-action="open-chat" data-id="${esc(f.id)}">${avatar(f, 'sm')}<span><strong>${esc(f.display_name)}</strong><small>@${esc(f.username)}</small></span></button>`).join(''))
+                + sec('Groups', groups.map(g => `<button type="button" class="cr-row" data-action="open-group" data-id="${esc(g.id)}"><span class="avatar sm gc-av" style="background:${avatarColour(g.id)}">${esc(g.emoji || app.initials(g.name || '?'))}</span><span><strong>${esc(g.name)}</strong><small>Group</small></span></button>`).join(''))
+                + sec('Messages', (msgs || []).map(m => {
+                    const other = m.sender === s.profile.id ? m.recipient : m.sender;
+                    const f = s.friends.find(x => x.id === other);
+                    if (!f) return '';
+                    return `<button type="button" class="cr-row" data-action="chat-jump" data-friend="${esc(other)}" data-id="${esc(m.id)}" data-at="${esc(m.created_at)}">${avatar(f, 'sm')}<span><strong>${esc(f.display_name)} <time>${shortTime(m.created_at)}</time></strong><small>${snippetAround(Rich.toText(m.body || ''), query)}</small></span></button>`;
+                }).join('') + (gmsgs || []).map(m => {
+                    const g = (s.gcList || []).find(x => x.id === m.community_id);
+                    if (!g) return '';
+                    return `<button type="button" class="cr-row" data-action="group-jump" data-cid="${esc(m.community_id)}" data-id="${esc(m.id)}"><span class="avatar sm gc-av" style="background:${avatarColour(g.id)}">${esc(g.emoji || app.initials(g.name || '?'))}</span><span><strong>${esc(g.name)} <time>${shortTime(m.created_at)}</time></strong><small>${snippetAround(m.body || '', query)}</small></span></button>`;
+                }).join(''))
+                + (loading ? '<p class="cr-note">Searching messages…</p>' : (!people.length && !groups.length && !(msgs || []).length && !(gmsgs || []).length ? `<p class="cr-note">No results for “${esc(q.trim())}”.</p>` : ''));
+        };
+        paint(null, null, true);
+        clearTimeout(chatSearch.t);
+        chatSearch.t = setTimeout(async () => {
+            const like = `%${query.replace(/[%_\\]/g, m => `\\${m}`)}%`;
+            const gids = (s.gcList || []).map(g => g.id);
+            const [dm, gc] = await Promise.all([
+                client.from('diary_messages').select('id, sender, recipient, body, created_at').ilike('body', like).is('deleted_at', null).order('created_at', { ascending: false }).limit(20),
+                gids.length ? client.from('diary_community_messages').select('id, community_id, body, created_at').in('community_id', gids).ilike('body', like).is('deleted_at', null).order('created_at', { ascending: false }).limit(10) : Promise.resolve({ data: [] })
+            ]).catch(() => [{ data: [] }, { data: [] }]);
+            if (seq !== searchSeq) return;
+            paint(dm && dm.data, gc && gc.data, false);
+        }, 280);
+    }
+    function snippetAround(text, q) {
+        const t = String(text || '').replace(/\s+/g, ' ');
+        const i = t.toLowerCase().indexOf(q);
+        if (i < 0) return esc(t.slice(0, 80));
+        const start = Math.max(0, i - 28);
+        const pre = (start ? '…' : '') + t.slice(start, i), hit = t.slice(i, i + q.length), post = t.slice(i + q.length, i + q.length + 50);
+        return `${esc(pre)}<mark>${esc(hit)}</mark>${esc(post)}${t.length > i + q.length + 50 ? '…' : ''}`;
+    }
+
+    // ---------- Swipe and hold on a chat row ----------
+    // Swipe right: read / unread and pin. Swipe left: mute and archive. Hold: the chat's menu.
+    // A swipe only starts when the finger clearly moves sideways, so scrolling the list never triggers it.
+    function swipeActs(wrap) {
+        const kind = wrap.dataset.kind === 'gc' ? 'gc' : 'dm';
+        const id = kind === 'gc' ? wrap.dataset.id : wrap.dataset.wrap;
+        const p = prefOf(kind, id);
+        const unread = kind === 'gc' ? gcUnread((s.gcList || []).find(g => g.id === id) || {}) : (s.unread[id] || p.marked_unread);
+        const muted = isMuted(kind, id);
+        const btn = (act, icon, label, cls = '') => `<button type="button" class="sw-act ${cls}" data-action="convo-swipe" data-act="${act}" data-kind="${kind}" data-id="${esc(id)}"><svg class="i"><use href="#${icon}"/></svg><span>${label}</span></button>`;
+        return `<div class="sw-acts left">${btn(unread ? 'read' : 'unread', 'i-chat', unread ? 'Read' : 'Unread', 'blue')}${btn('pin', 'i-pin-note', p.pinned_at ? 'Unpin' : 'Pin', 'amber')}</div>
+                <div class="sw-acts right">${btn('mute', muted ? 'i-bell' : 'i-bell-off', muted ? 'Unmute' : 'Mute', 'grey')}${btn('archive', 'i-archive', p.archived ? 'Unarchive' : 'Archive', 'violet')}</div>`;
+    }
+    function closeSwipes(except) {
+        content.querySelectorAll('.convo-wrap.swiped').forEach(w => { if (w !== except) { w.classList.remove('swiped'); w.style.setProperty('--sx', '0px'); setTimeout(() => { if (!w.classList.contains('swiped')) w.querySelectorAll('.sw-acts').forEach(a => a.remove()); }, 220); } });
+    }
+    let rowPress = null;
+    content.addEventListener('pointerdown', e => {
+        const wrap = e.target.closest('.convo-list .convo-wrap');
+        if (!wrap || e.pointerType === 'mouse' || e.target.closest('.sw-act')) { if (!e.target.closest('.sw-act')) closeSwipes(); return; }
+        closeSwipes(wrap);
+        rowPress = { wrap, x: e.clientX, y: e.clientY, dx: 0, base: wrap.classList.contains('swiped') ? parseFloat(wrap.style.getPropertyValue('--sx')) || 0 : 0, mode: null, id: e.pointerId };
+        rowPress.hold = setTimeout(() => {
+            if (!rowPress || rowPress.mode) return;
+            rowPress.mode = 'held';
+            if (navigator.vibrate) navigator.vibrate(10);
+            try { document.getSelection().removeAllRanges(); } catch (err) { /* nothing selected */ }
+            wrap.classList.add('held');
+            setTimeout(() => wrap.classList.remove('held'), 600);
+            const more = wrap.querySelector('.convo-more');
+            if (wrap.dataset.kind === 'gc') groupMenu(more || wrap, wrap.dataset.id);
+            else rowMenu(more || wrap, wrap.dataset.wrap);
+        }, 480);
+    });
+    content.addEventListener('pointermove', e => {
+        if (!rowPress || e.pointerId !== rowPress.id) return;
+        const dx = e.clientX - rowPress.x, dy = e.clientY - rowPress.y;
+        if (!rowPress.mode) {
+            if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { clearTimeout(rowPress.hold); rowPress = null; return; } // scrolling
+            if (Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+            clearTimeout(rowPress.hold);
+            rowPress.mode = 'swipe';
+            if (!rowPress.wrap.querySelector('.sw-acts')) rowPress.wrap.insertAdjacentHTML('afterbegin', swipeActs(rowPress.wrap));
+            rowPress.wrap.classList.add('swiping');
+        }
+        if (rowPress.mode !== 'swipe') return;
+        const raw = rowPress.base + dx;
+        const lim = 168;
+        const x = Math.abs(raw) > lim ? Math.sign(raw) * (lim + (Math.abs(raw) - lim) * 0.25) : raw; // resist past the actions
+        rowPress.dx = x;
+        rowPress.wrap.style.setProperty('--sx', `${x}px`);
+        rowPress.wrap.classList.toggle('sw-r', x > 0); // only the side being revealed shows
+    });
+    const endRowPress = () => {
+        if (!rowPress) return;
+        const p = rowPress;
+        rowPress = null;
+        clearTimeout(p.hold);
+        if (p.mode === 'held') { p.wrap.dataset.noTap = '1'; setTimeout(() => delete p.wrap.dataset.noTap, 350); return; }
+        if (p.mode !== 'swipe') return;
+        p.wrap.classList.remove('swiping');
+        p.wrap.dataset.noTap = '1';
+        setTimeout(() => delete p.wrap.dataset.noTap, 350);
+        const open = Math.abs(p.dx) > 64 ? Math.sign(p.dx) * 152 : 0;
+        p.wrap.style.setProperty('--sx', `${open}px`);
+        p.wrap.classList.toggle('swiped', !!open);
+        if (!open) setTimeout(() => { if (!p.wrap.classList.contains('swiped')) p.wrap.querySelectorAll('.sw-acts').forEach(a => a.remove()); }, 220);
+    };
+    content.addEventListener('pointerup', endRowPress);
+    content.addEventListener('pointercancel', endRowPress);
+    // A tap that ended a swipe or a hold doesn't also open the chat
+    content.addEventListener('click', e => {
+        const wrap = e.target.closest('.convo-wrap');
+        if (wrap && wrap.dataset.noTap && !e.target.closest('.sw-act')) { e.stopPropagation(); e.preventDefault(); }
+    }, true);
+    content.addEventListener('contextmenu', e => { if (e.target.closest('.convo-list .convo-wrap') && e.pointerType !== 'mouse') e.preventDefault(); });
+    function rowMenu(anchor, friendId) {
+        const friend = s.friends.find(f => f.id === friendId);
+        convoMenu(anchor, friendId, friend ? [
+            { label: 'Open chat', icon: 'i-chat', onClick: () => openChat(friendId) },
+            { label: 'View profile', icon: 'i-user', onClick: () => (window.diaryProfile ? window.diaryProfile.open(friendId) : app.setView('profile', { profileId: friendId })) }
+        ] : []);
+    }
 
     function inboxHero() {
         const firstName = esc(String(s.profile.display_name || s.profile.username || '').split(' ')[0]);
@@ -5946,7 +6262,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const preview = m ? `${mine ? 'You: ' : ''}${previewOf(m)}` : 'Say hello 👋';
         // The row opens the chat; the phone beside it starts a voice call straight from the inbox
         return `
-            <div class="convo-wrap" data-wrap="${esc(f.id)}" data-search="${esc(`${f.display_name} ${f.username}`.toLowerCase())}">
+            <div class="convo-wrap" data-wrap="${esc(f.id)}" data-kind="dm" data-search="${esc(`${f.display_name} ${f.username}`.toLowerCase())}">
                 <button class="convo${f.id === s.activeFriend ? ' active' : ''}${unread ? ' unread' : ''}" data-action="open-chat" data-id="${esc(f.id)}">
                     ${avatar(f, 'md')}
                     <span class="convo-main">
@@ -6468,6 +6784,30 @@ document.addEventListener('DOMContentLoaded', () => {
             addFriend(el.dataset.username);
         },
         'suggest-dismiss': el => dismissSuggestion(el.dataset.id),
+        'open-group': el => openGroup(el.dataset.id),
+        'group-menu': el => groupMenu(el, el.dataset.id),
+        'chat-new': el => newChatMenu(el),
+        'chat-search-open': () => { const i = $('chat-search'); if (i) { i.focus(); i.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } },
+        'go-communities': () => app.setView('communities'),
+        'chat-jump': el => { if (app.state.view !== 'messages') app.setView('messages'); openChat(el.dataset.friend); setTimeout(() => jumpToMessage(el.dataset.friend, el.dataset.id, el.dataset.at), 300); },
+        'group-jump': el => { if (window.diaryGroupChat && window.diaryGroupChat.jump) window.diaryGroupChat.jump(el.dataset.cid, el.dataset.id); openGroup(el.dataset.cid); },
+        'convo-swipe': el => {
+            const { act, kind, id } = el.dataset;
+            const p = prefOf(kind, id);
+            closeSwipes();
+            if (act === 'pin') {
+                if (!p.pinned_at && [...s.prefs.values()].filter(r => r.pinned_at).length >= 5) return app.showToast('You can pin up to 5 chats');
+                setPref(kind, id, { pinned_at: p.pinned_at ? null : new Date().toISOString() });
+            } else if (act === 'read') {
+                setPref(kind, id, { marked_unread: false });
+                if (kind === 'gc') markGroupSeen(id); else markRead(id);
+            } else if (act === 'unread') setPref(kind, id, { marked_unread: true });
+            else if (act === 'mute') { if (isMuted(kind, id)) setPref(kind, id, { muted_until: null }); else muteMenu(el, kind, id); }
+            else if (act === 'archive') {
+                setPref(kind, id, { archived: !p.archived });
+                if (!p.archived) app.showToast('Chat archived', () => setPref(kind, id, { archived: false }));
+            }
+        },
         'chat-play-video': async el => {
             const box = el.closest('.msg-video');
             const v = box && box.querySelector('video');
@@ -6840,6 +7180,7 @@ document.addEventListener('DOMContentLoaded', () => {
             content.querySelectorAll('.convo-wrap[data-search]').forEach(row => {
                 row.hidden = !!q && !row.dataset.search.includes(q);
             });
+            chatSearch(e.target.value); // people, groups and messages
         }
     });
 
