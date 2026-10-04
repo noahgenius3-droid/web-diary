@@ -17385,3 +17385,60 @@ dialog.nm-people::backdrop { background: rgba(0, 0, 0, 0.5); }
 .chat-top .chat-sub { grid-row: 1; margin: 0; font-size: 0.86rem; }
 @media (min-width: 761px) { .inbox-list .inbox-fab { bottom: 52px; } }
 @media (max-width: 760px) { body[data-view="messages"] .inbox { border: 0; box-shadow: none; background: none; } }
+
+/* =====================================================================
+   Explore discovery: topic pills, Create Community, community cards, creators, interests
+   ===================================================================== */
+.ex-cats { display: flex; gap: 8px; margin: 2px 0 14px; padding: 2px 2px 4px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; scroll-snap-type: x proximity; }
+.ex-cats::-webkit-scrollbar { display: none; }
+.ex-cat { flex: none; min-height: 40px; padding: 0 18px; border: 0; border-radius: 14px; background: var(--input); color: var(--text-muted); font: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer; scroll-snap-align: start; touch-action: manipulation; transition: background 160ms ease, color 160ms ease, transform 120ms cubic-bezier(0.23, 1, 0.32, 1); }
+.ex-cat[aria-selected="true"] { background: var(--accent); color: var(--on-accent, #fff); font-weight: 700; }
+.ex-cat:active { transform: scale(0.96); }
+.ex-cat:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.ex-create { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 54px; margin: 0 0 20px; border: 0; border-radius: 16px; background: var(--text); color: var(--bg); font: inherit; font-size: 1rem; font-weight: 700; cursor: pointer; touch-action: manipulation; transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1); }
+.ex-create .i { width: 20px; height: 20px; }
+.ex-create:active { transform: scale(0.98); }
+
+/* Community cards: a cover from the community's colour and emoji, member count, two lines about it, Join */
+.ex-cc-rail { gap: 14px; scroll-snap-type: x mandatory; }
+.ex-cc { position: relative; flex: none; display: grid; align-content: start; gap: 0; width: min(260px, 72vw); scroll-snap-align: start; }
+.ex-cc.skel { height: 250px; border-radius: 20px; background: var(--input); animation: pulse 1.4s ease-in-out infinite; }
+.ex-cc-open { display: grid; gap: 6px; padding: 0; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.ex-cc-cover { position: relative; display: grid; place-items: center; height: 156px; border-radius: 20px; overflow: hidden;
+    background: radial-gradient(120% 90% at 20% 10%, color-mix(in srgb, var(--g) 70%, #fff 30%), transparent 60%), linear-gradient(140deg, var(--g), color-mix(in srgb, var(--g) 55%, #000 45%));
+    transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1); }
+.ex-cc-cover::after { content: ""; position: absolute; inset: 0; background-image: radial-gradient(rgba(255, 255, 255, 0.12) 1.5px, transparent 1.5px); background-size: 16px 16px; opacity: 0.6; }
+.ex-cc-emoji { position: relative; z-index: 1; font-size: 3.6rem; filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.3)); }
+.ex-cc-count { position: absolute; z-index: 1; top: 10px; left: 10px; display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 10px; background: rgba(0, 0, 0, 0.32); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); color: #fff; font-size: 0.82rem; font-weight: 700; }
+.ex-cc-count .i { width: 14px; height: 14px; }
+.ex-cc-open strong { margin-top: 8px; font-size: 1rem; line-height: 1.25; }
+.ex-cc-open small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--text-muted); font-size: 0.84rem; line-height: 1.45; }
+.ex-cc-btn { position: absolute; top: 112px; right: 10px; z-index: 2; box-shadow: 0 6px 16px -8px rgba(0, 0, 0, 0.5); }
+.ex-cc-open:active .ex-cc-cover { transform: scale(0.98); }
+@media (hover: hover) and (pointer: fine) { .ex-cc-open:hover .ex-cc-cover { transform: translateY(-2px); } }
+
+/* Creators: big photos, name, a line of numbers, Follow */
+.ex-cr-rail { gap: 14px; }
+.ex-cr { flex: none; display: grid; justify-items: center; gap: 4px; width: 104px; text-align: center; }
+.ex-cr-photo { padding: 0; border: 0; border-radius: 22px; background: none; cursor: pointer; transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1); }
+.ex-cr-photo .avatar.xl { width: 92px; height: 92px; border-radius: 22px; font-size: 1.6rem; }
+.ex-cr-photo .avatar.xl img { border-radius: 22px; }
+.ex-cr-photo:active { transform: scale(0.96); }
+.ex-cr strong { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; margin-top: 4px; font-size: 0.92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ex-cr strong .vtick { width: 14px; height: 14px; }
+.ex-cr small { color: var(--text-muted); font-size: 0.74rem; }
+.ex-cr .chip { margin-top: 4px; min-height: 32px; }
+
+/* What are you interested in? */
+.ex-interests { margin: 0 0 18px; padding: 18px; border-radius: 20px; background: linear-gradient(140deg, color-mix(in srgb, var(--accent) 18%, var(--surface)), var(--surface)); box-shadow: 0 0 0 1px var(--border); }
+.ex-interests h3 { margin: 0; font-size: 1.12rem; }
+.ex-interests p { margin: 4px 0 12px; color: var(--text-muted); font-size: 0.88rem; }
+.ex-int-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.ex-int { min-height: 38px; padding: 0 14px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text); font: inherit; font-size: 0.88rem; font-weight: 600; cursor: pointer; transition: background 140ms ease, border-color 140ms ease; }
+.ex-int.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
+.ex-int.on::before { content: "✓ "; }
+.ex-int-acts { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 14px; }
+@media (prefers-reduced-motion: reduce) { .ex-cc-cover, .ex-cr-photo, .ex-cat { transition: none; } }
+.ex-cc-btn[data-action="ex-join"] { background: #fff; color: #111; border: 0; font-weight: 700; }
+.ex-cc-btn[data-action="cm-open"] { background: rgba(0, 0, 0, 0.35); color: #fff; border: 0; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }

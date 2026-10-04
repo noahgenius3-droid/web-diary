@@ -394,8 +394,102 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>`;
     }
 
+    // ---------- Discovery: interests, communities, creators ----------
+    const CATS = [['all', 'All'], ['faith', 'Faith', /church|faith|god|pray|bible|gospel|worship|jesus|christ|psalm|grace/], ['education', 'Education', /study|school|learn|exam|educat|class|lesson|university|student/],
+        ['business', 'Business', /business|money|startup|market|sell|finance|invest|brand|hustle/], ['tech', 'Technology', /tech|code|coding|\bai\b|app|software|computer|program|developer/],
+        ['sports', 'Sports', /sport|football|soccer|basketball|run|fitness|gym|cycl|match|league/], ['health', 'Health', /health|wellness|mental|diet|doctor|medic|fitness|sleep/],
+        ['music', 'Music', /music|song|choir|sing|beat|album|artist|praise/], ['entertainment', 'Entertainment', /movie|film|show|series|comedy|celebr|drama|fun/],
+        ['lifestyle', 'Lifestyle', /life|style|food|recipe|travel|fashion|home|family/], ['gaming', 'Gaming', /game|gaming|play|trivia|wordplay|puzzle/],
+        ['art', 'Art', /\bart\b|draw|paint|photo|design|poem|poetry|creative/], ['career', 'Career', /career|job|work|\bcv\b|interview|hiring|intern/]];
+    E.cat = (() => { try { return sessionStorage.getItem('cordialExCat') || 'all'; } catch (e) { return 'all'; } })();
+    const catOf = k => CATS.find(c => c[0] === k) || CATS[0];
+    const inCat = (k, text) => k === 'all' || (catOf(k)[2] && catOf(k)[2].test(String(text || '').toLowerCase()));
+    const INTERESTS_KEY = () => `cordialInterests:${s.profile.id}`;
+    function myInterests() { try { const v = JSON.parse(localStorage.getItem(INTERESTS_KEY()) || 'null'); return Array.isArray(v) ? v : null; } catch (e) { return null; } }
+    function saveInterests(list) { try { localStorage.setItem(INTERESTS_KEY(), JSON.stringify(list)); } catch (e) { /* private mode */ } }
+
+    // People whose posts your circle loves most lately (likes, comments and reposts, newer counting more)
+    function topCreators(cat) {
+        const by = new Map();
+        (s.feed || []).forEach(p => {
+            if (!p.author || p.author === s.profile.id || Date.now() - Date.parse(p.shared_at) > 45 * 86400000) return;
+            if (!inCat(cat, `${p.title || ''} ${p.body || ''}`)) return;
+            const cur = by.get(p.author) || { p: { id: p.author, ...(p.author_profile || {}) }, posts: 0, likes: 0, heat: 0 };
+            cur.posts++; cur.likes += (p.likes || []).length; cur.heat += score(p);
+            by.set(p.author, cur);
+        });
+        return [...by.values()].sort((a, b) => b.heat - a.heat).slice(0, 12);
+    }
+
+    function communityCard(g) {
+        const size = g.size || 0;
+        return `
+            <article class="ex-cc" style="--g:${esc(g.color || '#6366f1')}">
+                <button type="button" class="ex-cc-open" data-action="cm-open" data-id="${esc(g.id)}" aria-label="${esc(g.name)}, ${size} ${size === 1 ? 'member' : 'members'}">
+                    <span class="ex-cc-cover"><span class="ex-cc-emoji" aria-hidden="true">${esc(g.emoji || '👥')}</span><span class="ex-cc-count"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg>${size >= 1000 ? `${(size / 1000).toFixed(size >= 10000 ? 0 : 1)}K` : size}</span></span>
+                    <strong>${esc(g.name)}</strong>
+                    <small>${esc((g.description || (g.visibility === 'private' ? 'A private community' : 'A community on Cordial')).slice(0, 110))}</small>
+                </button>
+                ${g.joined ? `<button type="button" class="chip small ex-cc-btn" data-action="cm-open" data-id="${esc(g.id)}">Open</button>`
+                    : `<button type="button" class="chip accent small ex-cc-btn" data-action="ex-join" data-id="${esc(g.id)}"><svg class="i"><use href="#i-plus"/></svg>Join</button>`}
+            </article>`;
+    }
+
+    function creatorCard(c) {
+        const p = c.p;
+        const friend = (s.friends || []).some(f => f.id === p.id);
+        return `
+            <div class="ex-cr">
+                <button type="button" class="ex-cr-photo" data-profile="${esc(p.id)}" aria-label="${esc(p.display_name || 'Creator')}’s profile">${avatar(p, 'xl')}</button>
+                <strong>${esc(String(p.display_name || 'Someone').split(' ')[0])}${I.tick ? I.tick(p.id) : ''}</strong>
+                <small>${c.likes} ${c.likes === 1 ? 'like' : 'likes'} · ${c.posts} ${c.posts === 1 ? 'post' : 'posts'}</small>
+                ${friend ? `<button type="button" class="chip small" data-action="message-friend" data-id="${esc(p.id)}">Message</button>` : I.followButton(p, 'chip small accent') || ''}
+            </div>`;
+    }
+
+    function interestsCard() {
+        const picked = new Set(E.pickInterests || []);
+        return `
+            <section class="ex-interests" aria-labelledby="ex-int-h">
+                <h3 id="ex-int-h">What are you interested in?</h3>
+                <p>Pick a few — Explore will put them first. You can change this any time.</p>
+                <div class="ex-int-chips" role="group" aria-label="Interests">${CATS.slice(1).map(([k, l]) => `<button type="button" class="ex-int${picked.has(k) ? ' on' : ''}" data-action="ex-interest" data-k="${k}" aria-pressed="${picked.has(k)}">${l}</button>`).join('')}</div>
+                <div class="ex-int-acts"><button type="button" class="link-btn" data-action="ex-interests-skip">Not now</button><button type="button" class="primary-btn small" data-action="ex-interests-save"${picked.size ? '' : ' disabled'}>Show me</button></div>
+            </section>`;
+    }
+
     function forYou({ loading, posts, reels, people }) {
         const out = [];
+        const cat = E.cat;
+        const interests = myInterests();
+        if (!interests && !E.skipInterests) out.push(interestsCard());
+        // Categories (remembered for this visit) and a clear way to start a community
+        out.push(`<div class="ex-cats" role="tablist" aria-label="Topics">${CATS.map(([k, l]) => `<button type="button" class="ex-cat" role="tab" aria-selected="${cat === k}" data-action="ex-cat" data-k="${k}">${l}</button>`).join('')}</div>`);
+        if (window.diaryCommunities) out.push('<button type="button" class="ex-create" data-action="cm-create"><svg class="i"><use href="#i-plus"/></svg>Create Community</button>');
+        const few = (s.friends || []).length < 3;
+        const peopleRail = people.length ? `<section class="ex-sec">${fyHead(few ? 'People you may know' : 'People you may know', seeAll('data-action="ex-tab" data-tab="people"', 'View all'))}<div class="ex-row ex-people-rail">${people.slice(0, 12).map(personCard).join('')}</div></section>` : '';
+        if (few && peopleRail) out.push(peopleRail); // new here: people first, so Explore never feels empty
+        // Communities: trending, and the ones that match what you said you like
+        const groups = (E.groups || []).filter(g => inCat(cat, `${g.name} ${g.description || ''}`));
+        const trending = groups.slice().sort((a, b) => (b.size || 0) - (a.size || 0) || (b.joined ? -1 : 0)).slice(0, 10);
+        if (E.groups === null) out.push(`<section class="ex-sec">${fyHead('Trending communities')}<div class="ex-row ex-cc-rail">${'<span class="ex-cc skel"></span>'.repeat(3)}</div></section>`);
+        else if (trending.length) out.push(`<section class="ex-sec" aria-labelledby="ex-cc-h">${fyHead('Trending communities', seeAll('data-action="ex-tab" data-tab="groups"', 'View all'), 'ex-cc-h')}<div class="ex-row ex-cc-rail">${trending.map(communityCard).join('')}</div></section>`);
+        else if (cat !== 'all') out.push(`<section class="ex-sec"><div class="ex-empty small"><strong>No ${esc(catOf(cat)[1].toLowerCase())} communities yet</strong><span>Be the first to start one.</span><button type="button" class="primary-btn small" data-action="cm-create">Create Community</button></div></section>`);
+        if (cat === 'all' && interests && interests.length && E.groups) {
+            const top3 = new Set(trending.slice(0, 3).map(g => g.id));
+            const rec = E.groups.filter(g => !g.joined && !top3.has(g.id) && interests.some(k => inCat(k, `${g.name} ${g.description || ''}`))).slice(0, 10);
+            if (rec.length) out.push(`<section class="ex-sec">${fyHead('Recommended for you')}<div class="ex-row ex-cc-rail">${rec.map(communityCard).join('')}</div></section>`);
+        }
+        // Creators
+        const creators = topCreators(cat);
+        if (creators.length) out.push(`<section class="ex-sec" aria-labelledby="ex-cr-h">${fyHead('Top creators', '', 'ex-cr-h')}<div class="ex-row ex-cr-rail">${creators.map(creatorCard).join('')}</div></section>`);
+        if (!few && peopleRail) out.push(peopleRail);
+        // Topics
+        const tags = trendingTags();
+        if (tags.length) out.push(`<section class="ex-sec">${fyHead('Trending topics', seeAll('data-action="ex-tab" data-tab="posts"', 'View all'))}<div class="ex-topics wrap">${tags.slice(0, 10).map(([t]) => `<button type="button" class="ex-topic" data-action="ex-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('')}</div></section>`);
+        // Posts and notes in this category
+        posts = posts.filter(p => inCat(cat, `${p.title || ''} ${p.body || ''}`));
+        people = []; // already shown above
         // 1. The single most-loved post, given room to breathe
         if (loading) out.push('<section class="ex-sec"><span class="ex-feature skel"></span></section>');
         else if (posts.length) out.push(`<section class="ex-sec" aria-labelledby="ex-top-h">${fyHead('Most loved today', '', 'ex-top-h')}${featureCard(posts[0])}</section>`);
@@ -429,7 +523,6 @@ document.addEventListener('DOMContentLoaded', () => {
             </button>`).join('')}</div></section>`);
         if (reels.length) out.push(`<section class="ex-sec">${fyHead('Popular reels', seeAll('data-action="go-reels"', 'Open Reels'))}<div class="ex-row">${reels.slice(0, 10).map(reelTile).join('')}</div></section>`);
         if (window.diaryPlay) out.push(window.diaryPlay.exploreSection());
-        if (people.length) out.push(`<section class="ex-sec">${fyHead('People you may know', seeAll('data-action="ex-tab" data-tab="people"'))}<div class="ex-row ex-people-rail">${people.slice(0, 12).map(personCard).join('')}</div></section>`);
         out.push(newsSection('world', true));
         // 5. Everything else, one tap away
         out.push(`
@@ -522,7 +615,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         </label>
                         <button type="button" class="link-btn ex-cancel" data-action="ex-cancel">Cancel</button>
                     </div>
-                    ${tags.length && tab === 'all' ? `<div class="ex-topics" aria-label="Trending topics">${tags.slice(0, 8).map(([t]) => `<button type="button" class="ex-topic" data-action="ex-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('')}</div>` : ''}
                 </section>
                 ${tabsHTML}
                 <div id="ex-body" aria-live="polite">${E.searching ? (q ? searchResults(q) : searchIdle()) : q ? searchResults(q) : body}</div>
@@ -584,6 +676,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
     Object.assign(app.actions, {
         'ex-news-kind': el => { N.kind = el.dataset.kind; app.render(); },
+        'ex-cat': el => { E.cat = el.dataset.k; try { sessionStorage.setItem('cordialExCat', E.cat); } catch (e) { /* private mode */ } app.render(); },
+        'ex-join': (el, e) => {
+            if (!app.actions['cm-join']) return;
+            el.disabled = true;
+            el.innerHTML = 'Joined ✓';
+            app.actions['cm-join'](el, e || { stopPropagation() {} });
+            setTimeout(() => { E.groups = null; loadGroups(); }, 1200);
+        },
+        'ex-interest': el => {
+            const set = new Set(E.pickInterests || []);
+            if (set.has(el.dataset.k)) set.delete(el.dataset.k); else set.add(el.dataset.k);
+            E.pickInterests = [...set];
+            el.classList.toggle('on', set.has(el.dataset.k));
+            el.setAttribute('aria-pressed', String(set.has(el.dataset.k)));
+            const save = document.querySelector('[data-action="ex-interests-save"]');
+            if (save) save.disabled = !set.size;
+        },
+        'ex-interests-save': () => { saveInterests(E.pickInterests || []); app.showToast('Explore is tuned to your interests ✨'); app.render(); },
+        'ex-interests-skip': () => { E.skipInterests = true; app.render(); },
         'ex-news-open': el => { E.tab = 'news'; N.kind = el.dataset.kind; app.render(); document.querySelector('.main-col').scrollTo({ top: 0 }); },
         'ex-news-retry': () => {
             [...N.results.keys()].forEach(k => { const v = N.results.get(k); if (v.error || !v.items) N.results.delete(k); });
