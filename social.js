@@ -2096,19 +2096,35 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${Rich.toText(m.body || '') && !m.vanish ? `<button type="button" data-action="msg-copy" data-id="${esc(String(id))}"><svg class="i"><use href="#i-notes"/></svg>Copy</button>` : ''}
                 ${!mine && Rich.toText(m.body || '') ? `<button type="button" data-action="msg-translate" data-id="${esc(String(id))}"><svg class="i"><use href="#i-sparkle"/></svg>Translate</button>` : ''}
                 ${!mine && !String(id).startsWith('tmp-') ? `<button type="button" data-action="msg-report" data-id="${esc(String(id))}"><svg class="i"><use href="#i-flag"/></svg>Report</button>` : ''}
-                ${mine && canEdit(m) && Rich.toText(m.body || '') ? `<button type="button" data-action="msg-edit" data-id="${esc(String(id))}"><svg class="i"><use href="#i-edit"/></svg>Edit</button>` : ''}
+                ${mine && canEdit(m) && Rich.toText(m.body || '') ? `<button type="button" data-action="msg-edit" data-id="${esc(String(id))}"><svg class="i"><use href="#i-pencil"/></svg>Edit</button>` : ''}
+                ${Rich.toText(m.body || '') && !m.vanish ? `<button type="button" data-action="msg-save-note" data-id="${esc(String(id))}"><svg class="i"><use href="#i-bookmark"/></svg>Save to notes</button>` : ''}
                 <button type="button" class="danger" data-action="msg-delete" data-id="${esc(String(id))}"><svg class="i"><use href="#i-trash"/></svg>Delete</button>
             </div>`;
-        el.querySelector('.msg-card').append(bar);
+        // Whatever the long press may have started selecting is let go: the message is the thing you're holding
+        try { const sel = document.getSelection(); if (sel && !sel.isCollapsed) sel.removeAllRanges(); } catch (e) { /* nothing selected */ }
+        if (window.matchMedia('(max-width: 760px)').matches) {
+            // Phones: a sheet over the chat (outside the bubble, so it's never cut off at the top of the screen)
+            bar.classList.add('as-sheet');
+            const scrim = document.createElement('div');
+            scrim.className = 'msg-menu-scrim';
+            document.body.append(scrim, bar);
+            bar.addEventListener('click', e => {
+                const b = e.target.closest('[data-action]');
+                if (!b || !app.actions[b.dataset.action]) return;
+                app.actions[b.dataset.action](b, e);
+                if (b.dataset.action !== 'msg-delete') closeReactBar();
+            });
+        } else {
+            el.querySelector('.msg-card').append(bar);
+        }
         el.classList.add('menu-open');
         if (navigator.vibrate) navigator.vibrate(12);
     }
 
     function closeReactBar() {
-        content.querySelectorAll('.react-bar').forEach(b => {
-            b.closest('.msg')?.classList.remove('menu-open');
-            b.remove();
-        });
+        document.querySelectorAll('.react-bar').forEach(b => b.remove());
+        document.querySelectorAll('.msg-menu-scrim').forEach(x => x.remove());
+        content.querySelectorAll('.msg.menu-open').forEach(m => m.classList.remove('menu-open'));
     }
 
     document.addEventListener('pointerdown', e => {
@@ -6645,6 +6661,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 nameOf: id => (friend && friend.id === id ? friend.display_name : ''),
                 onRestored: () => loadThread(s.activeFriend)
             });
+        },
+        'msg-save-note': async el => {
+            closeReactBar();
+            const m = findMessage(el.dataset.id);
+            const text = m && Rich.toText(m.body || '');
+            if (!text) return;
+            const who = m.sender === s.profile.id ? 'Me' : (((s.friends || []).find(f => f.id === m.sender) || {}).display_name || 'A friend');
+            const when = new Date(m.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+            try {
+                await app.createEntry({ title: `💬 ${who}`, text: `${text}\n\n— ${who}, ${when}`, shared: false });
+                app.showToast('Saved to your notes 🔖');
+            } catch (e) { app.showToast('Couldn’t save it — try again'); }
         },
         'msg-copy': async el => {
             closeReactBar();

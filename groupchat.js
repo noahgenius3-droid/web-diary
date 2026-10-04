@@ -1003,6 +1003,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (mine && m.body && Date.now() - Date.parse(m.created_at) < 24 * 3600 * 1000) items.push({ label: 'Edit', icon: 'i-edit', onClick: () => startEdit(m) });
             if (!mine && window.diarySafety) items.push({ label: 'Report', icon: 'i-flag', onClick: () => window.diarySafety.report('gc', m.id, { who: personOf(m.author).display_name }) });
             if (m.body) items.push({ label: 'Copy text', icon: 'i-file', onClick: () => navigator.clipboard.writeText(m.body).then(() => app.showToast('Copied'), () => {}) });
+            if (m.body) items.push({ label: 'Save to notes', icon: 'i-bookmark', onClick: async () => {
+                const who = mine ? 'Me' : (personOf(m.author).display_name || 'Someone');
+                const when = new Date(m.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+                try { await app.createEntry({ title: `💬 ${who} · ${(cm() && cm().name) || 'Group'}`, text: `${m.body}\n\n— ${who}, ${when}`, shared: false }); app.showToast('Saved to your notes 🔖'); }
+                catch (e) { app.showToast('Couldn’t save it — try again'); }
+            } });
             if (m.body && window.Speak && window.Speak.supported) items.push({ label: 'Listen', icon: 'i-volume', onClick: () => window.Speak.read(m.body, { title: `${personOf(m.author).display_name} in ${cm().name}` }) });
             if (isStaff()) items.push({ label: pinned ? 'Unpin' : 'Pin for everyone', icon: 'i-pin-note', onClick: async () => {
                 const { error } = await client.rpc('diary_pin_community_message', { cid: g.cid, mid: pinned ? null : m.id });
@@ -1030,8 +1036,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!msg || e.pointerType === 'mouse' || e.target.closest('button, a')) return;
         press = setTimeout(() => {
             const more = msg.querySelector('.gc-more');
-            if (more) { if (navigator.vibrate) navigator.vibrate(10); more.click(); }
+            if (more) {
+                try { const sel = document.getSelection(); if (sel && !sel.isCollapsed) sel.removeAllRanges(); } catch (e) { /* nothing selected */ }
+                msg.classList.add('held');
+                setTimeout(() => msg.classList.remove('held'), 900);
+                if (navigator.vibrate) navigator.vibrate(10);
+                more.click();
+            }
         }, 480);
     });
     ['pointerup', 'pointercancel', 'pointermove'].forEach(t => content.addEventListener(t, () => clearTimeout(press)));
+    content.addEventListener('contextmenu', e => { if (e.target.closest('.gc-bubble') && e.pointerType !== 'mouse') e.preventDefault(); });
 });
