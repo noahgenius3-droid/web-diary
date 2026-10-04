@@ -2798,7 +2798,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ---------- Feed ----------
     const FEED_SELECT = `
-        id, author, local_id, title, body, html, color, mood, photos, audio, written_at, shared_at, allow_reposts, audience,
+        id, author, local_id, title, body, html, color, mood, photos, audio, written_at, shared_at, updated_at, allow_reposts, audience,
         author_profile:diary_profiles!diary_shared_entries_author_fkey(username, display_name, avatar_path),
         likes:diary_entry_likes(user_id, emoji),
         comments:diary_comments(count),
@@ -4054,6 +4054,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <button type="button" class="pc-tool video" data-action="feed-video"><svg class="i"><use href="#i-reel"/></svg><span class="pc-tl">Video</span></button>
                             <button type="button" class="pc-tool note-media" data-action="note-media" aria-haspopup="menu" title="Turn one of your notes into a video or audio post"><svg class="i"><use href="#i-sparkle"/></svg><span class="pc-tl">Note<span class="pc-tl-more"> → video</span></span></button>
                             <button type="button" class="pc-tool live" data-action="live-start"><svg class="i"><use href="#i-live"/></svg><span class="pc-tl">Live</span></button>
+                            <span class="pc-fmt" role="group" aria-label="Text format"><button type="button" class="pc-tool pc-b" data-action="feed-fmt" data-f="b" title="Bold — select words first (Ctrl+B)" aria-label="Bold"><b>B</b></button><button type="button" class="pc-tool pc-i" data-action="feed-fmt" data-f="i" title="Italic — select words first (Ctrl+I)" aria-label="Italic"><i>I</i></button></span>
                             <button type="button" class="pc-tool story-toggle" data-action="feed-story-toggle" aria-pressed="${s.feedStory}" title="Also add this post to your story"><span class="pc-story-ring" aria-hidden="true"></span>Story</button>
                             <button type="button" class="pc-audience" data-action="feed-audience" aria-haspopup="menu" title="Who can see this post — it’s also saved to your diary">${s.feedAudience === 'public'
                                 ? '<svg class="i"><use href="#i-globe"/></svg>Everyone'
@@ -4313,6 +4314,111 @@ document.addEventListener('DOMContentLoaded', () => {
         };
     }
 
+    // *bold* and _italic_ typed in the composer become real formatting on the post
+    const BOLD_RE = /(^|[^\w*])\*(?!\s)([^*\n]+?)\*(?![\w*])/g;
+    const ITAL_RE = /(^|[^\w_])_(?!\s)([^_\n]+?)_(?![\w_])/g;
+    const hasMarks = t => new RegExp(BOLD_RE.source).test(t) || new RegExp(ITAL_RE.source).test(t);
+    function marksToHTML(t) {
+        return esc(t).replace(BOLD_RE, '$1<b>$2</b>').replace(ITAL_RE, '$1<i>$2</i>').replace(/\n/g, '<br>');
+    }
+    // Wrap the selection in the composer (or start a pair at the caret)
+    function wrapComposer(box, mark) {
+        const a = box.selectionStart, b = box.selectionEnd, v = box.value;
+        let sel = v.slice(a, b);
+        const lead = sel.match(/^\s*/)[0], trail = sel.match(/\s*$/)[0];
+        sel = sel.trim();
+        if (sel.startsWith(mark) && sel.endsWith(mark) && sel.length > 1) {
+            box.setRangeText(lead + sel.slice(1, -1) + trail, a, b, 'select'); // already wrapped: unwrap
+        } else if (sel) {
+            box.setRangeText(lead + mark + sel + mark + trail, a, b, 'select');
+        } else {
+            box.setRangeText(mark + mark, a, b, 'end');
+            box.setSelectionRange(a + 1, a + 1);
+        }
+        box.focus();
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    // ---------- Edit a post you shared ----------
+    function openEditPost(post) {
+        document.querySelector('dialog.edit-post')?.remove();
+        const dlg = document.createElement('dialog');
+        dlg.className = 'sheet-dialog edit-post';
+        dlg.setAttribute('aria-label', 'Edit post');
+        const start = post.html && post.html !== Rich.textToHTML(post.body || '') ? Rich.sanitize(post.html) : Rich.textToHTML(post.body || '');
+        dlg.innerHTML = `
+            <form method="dialog" class="ep-form">
+                <header class="ep-head">
+                    <button type="button" class="ghost-btn ep-cancel" value="cancel">Cancel</button>
+                    <h2>Edit post</h2>
+                    <button type="submit" class="primary-btn ep-save">Save</button>
+                </header>
+                ${post.title ? `<input class="ep-title" type="text" maxlength="200" value="${esc(post.title)}" aria-label="Title" placeholder="Title">` : ''}
+                <div class="ep-body rich-content" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Post text" data-placeholder="Write something…">${start}</div>
+                <div class="ep-tools" role="toolbar" aria-label="Text format">
+                    <button type="button" class="ep-fmt" data-cmd="bold" aria-pressed="false" title="Bold (Ctrl+B)"><b>B</b><span>Bold</span></button>
+                    <button type="button" class="ep-fmt" data-cmd="italic" aria-pressed="false" title="Italic (Ctrl+I)"><i>I</i><span>Italic</span></button>
+                    <small class="muted ep-hint">Select words, then tap Bold or Italic</small>
+                </div>
+            </form>`;
+        document.body.appendChild(dlg);
+        const ed = dlg.querySelector('.ep-body');
+        const title = dlg.querySelector('.ep-title');
+        const btns = [...dlg.querySelectorAll('.ep-fmt')];
+        const paintState = () => {
+            const inside = document.activeElement === ed || ed.contains(document.getSelection().anchorNode);
+            btns.forEach(btn => { let on = false; try { on = inside && document.queryCommandState(btn.dataset.cmd); } catch (e) { /* old browsers */ } btn.setAttribute('aria-pressed', String(on)); });
+        };
+        document.addEventListener('selectionchange', paintState);
+        // Keep the selection when a format button is pressed
+        btns.forEach(btn => {
+            btn.addEventListener('pointerdown', e => e.preventDefault());
+            btn.addEventListener('click', () => {
+                if (document.activeElement !== ed) ed.focus();
+                document.execCommand('styleWithCSS', false, false);
+                document.execCommand(btn.dataset.cmd, false, null);
+                paintState();
+            });
+        });
+        ed.addEventListener('paste', e => { // paste as plain text so pasted pages don't bring their styles
+            e.preventDefault();
+            document.execCommand('insertText', false, (e.clipboardData || window.clipboardData).getData('text/plain'));
+        });
+        const close = () => { document.removeEventListener('selectionchange', paintState); dlg.close(); dlg.remove(); };
+        dlg.querySelector('.ep-cancel').addEventListener('click', close);
+        dlg.addEventListener('cancel', e => { e.preventDefault(); close(); });
+        dlg.addEventListener('click', e => { if (e.target === dlg) close(); });
+        dlg.querySelector('form').addEventListener('submit', async e => {
+            e.preventDefault();
+            const html = Rich.sanitize(ed.innerHTML).replace(/(<br>\s*)+$/, '');
+            const body = Rich.toText(html).trim();
+            const newTitle = title ? title.value.trim().slice(0, 200) : post.title;
+            if (!body && !newTitle && !(post.photos || []).length) return app.showToast('A post can’t be empty');
+            if (body.length > 20000 || html.length > 60000) return app.showToast('That’s too long for one post');
+            if (html === start && newTitle === post.title) return close();
+            const save = dlg.querySelector('.ep-save');
+            save.disabled = true;
+            save.textContent = 'Saving…';
+            const at = new Date().toISOString();
+            const { error } = await client.from('diary_shared_entries').update({ title: newTitle, body, html, updated_at: at }).eq('id', post.id).eq('author', s.profile.id);
+            if (error) {
+                save.disabled = false;
+                save.textContent = 'Save';
+                return app.showToast('Couldn’t save your changes — try again');
+            }
+            Object.assign(post, { title: newTitle, body, html, updated_at: at, shared_at: post.shared_at });
+            // The diary copy changes too, so the next sync doesn't put the old words back
+            const local = app.getNotes().find(n => n.id === post.local_id);
+            if (local) app.updateNote(local.id, { title: newTitle, text: body, html });
+            close();
+            app.showToast('Post updated');
+            app.render();
+        });
+        dlg.showModal();
+        ed.focus();
+        Rich.placeCaretAtEnd(ed);
+    }
+
     async function postToFeed() {
         if (s.posting || (s.upload && s.upload.state === 'active')) return app.showToast('Still posting your last one…');
         const text = s.feedDraft.text.trim();
@@ -4340,7 +4446,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (audio.music) audio.file.music = audio.music;
                 files.push(audio.file);
             }
-            note = await app.createEntry({ text, shared: true, audience, origin: 'post' }, files); // lives on the Feed, not in Notes
+            note = await app.createEntry({ text, html: hasMarks(text) ? marksToHTML(text) : null, shared: true, audience, origin: 'post' }, files); // lives on the Feed, not in Notes
             note.attachments.forEach((att, i) => { if (files[i]) freshFiles.set(att.id, files[i]); });
             if (audio && !audio.file && audio.music) app.updateNote(note.id, { music: audio.music }); // streamed music: remember which part
             if (audio && audio.file) URL.revokeObjectURL(audio.preview);
@@ -4510,6 +4616,7 @@ document.addEventListener('DOMContentLoaded', () => {
             author: p.author,
             profile: p.author_profile,
             createdAt: p.shared_at,
+            edited: p.updated_at && Date.parse(p.updated_at) - Date.parse(p.shared_at) > 5 * 60000 ? p.updated_at : null,
             title: p.title,
             body: p.body,
             html: p.html,
@@ -4659,11 +4766,12 @@ document.addEventListener('DOMContentLoaded', () => {
         // Hashtags at the very end of a plain post get their own line under the text (once, not twice)
         let raw = o.body || '';
         let tail = '';
-        if (!o.html) {
+        const plain = !o.html || o.html === Rich.textToHTML(o.body || '');
+        if (plain) {
             const m = raw.match(/(?:\s+#[\p{L}\p{N}_]+)+\s*$/u);
             if (m && raw.slice(0, m.index).trim()) { tail = m[0].trim(); raw = raw.slice(0, m.index); }
         }
-        const body = linkTags(o.html ? Rich.sanitize(o.html) : esc(raw));
+        const body = linkTags(plain ? esc(raw).replace(/\n/g, '<br>') : Rich.sanitize(o.html));
         const long = !full && (raw.length > 280 || raw.split('\n').length > 5);
         return `
             <div class="post-caption${photos.length && !full ? ' under-media' : ' text-only'}">
@@ -4822,7 +4930,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${photos.length ? postCaptionHTML(o, photos, false) : ''}
                 <div class="post-actions">${postActionsHTML(o)}</div>
                 <div class="react-sum-row" data-react-sum>${reactSummaryHTML(o.kind, o.id, o.likes)}</div>
-                ${timeBelow ? `<p class="post-when">${timeHTML}${snd && o.audience === 'public' ? ' · <svg class="i aud" aria-label="Everyone can see this"><use href="#i-globe"/></svg>' : ''}${snd && o.mood ? ` · ${MOOD_EMOJI[o.mood] || ''}` : ''}${photos.length ? lic : ''}</p>` : ''}
+                ${timeBelow ? `<p class="post-when">${timeHTML}${o.edited ? ` · <span class="post-edited" title="Edited ${esc(fullDate(o.edited))}">Edited</span>` : ''}${snd && o.audience === 'public' ? ' · <svg class="i aud" aria-label="Everyone can see this"><use href="#i-globe"/></svg>' : ''}${snd && o.mood ? ` · ${MOOD_EMOJI[o.mood] || ''}` : ''}${photos.length ? lic : ''}</p>` : ''}
                 ${o.extraHTML || ''}
                 ${commentsBlock(o.kind, o.id, o.commentCount, o.canComment)}
             </article>`;
@@ -6595,6 +6703,7 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         'go-insights': () => app.setView('insights'),
         'feed-add-photos': async () => openPostEditor(await Media.pickFiles('image/*')),
+        'feed-fmt': el => { const box = $('feed-text'); if (box) wrapComposer(box, el.dataset.f === 'b' ? '*' : '_'); },
         'feed-camera': async () => openPostEditor(await Media.pickFiles('image/*', false, 'environment')),
         'feed-remove-photo': el => {
             const photo = s.feedDraft.photos.find(p => p.id === el.dataset.id);
@@ -6751,6 +6860,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const report = !mine && window.diarySafety ? [{ label: 'Report post', icon: 'i-flag', onClick: () => window.diarySafety.report('entry', post.id, { who: (post.author_profile && post.author_profile.display_name) || '' }) }] : [];
             const items = mine
                 ? [
+                    { label: 'Edit post', icon: 'i-pencil', onClick: () => openEditPost(post) },
                     { label: 'Open entry', icon: 'i-edit', onClick: () => {
                         closePost();
                         const local = app.getNotes().find(n => n.id === post.local_id);
@@ -7170,6 +7280,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     content.addEventListener('keydown', e => {
+        if (e.target.id === 'feed-text' && (e.ctrlKey || e.metaKey) && !e.altKey && /^[bi]$/i.test(e.key)) {
+            e.preventDefault();
+            wrapComposer(e.target, e.key.toLowerCase() === 'b' ? '*' : '_');
+            return;
+        }
         if (e.target.id === 'chat-input' && e.key === 'Enter' && !e.shiftKey && !e.defaultPrevented) {
             e.preventDefault();
             sendMessage();
