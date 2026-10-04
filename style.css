@@ -17648,3 +17648,13 @@ dialog.edit-post .ep-head, dialog.edit-post .ep-tools { border-color: var(--line
     body, .main-col { overflow-x: clip; }
     .pf-tabs { box-shadow: 0 0 0 100vmax var(--panel); background: color-mix(in srgb, var(--text) 5%, var(--panel)); }
 }
+/* =====================================================================
+   No fog at the top (or bottom): bars are solid, not frosted glass that smears the content behind them
+   ===================================================================== */
+.topbar { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
+.feed-bar { background: var(--panel); -webkit-backdrop-filter: none; backdrop-filter: none; }
+@media (max-width: 760px) {
+    .tabbar { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
+    .feed-bar { background: var(--bg); box-shadow: 0 0 0 100vmax var(--bg); }
+    .topbar-dock .feed-bar { background: none; box-shadow: none; }
+}

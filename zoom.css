@@ -8,7 +8,7 @@ dialog.zoom-viewer:not([open]) { display: none; }
 dialog.zoom-viewer {
     --zv-ease: var(--ease-out, cubic-bezier(0.22, 1, 0.36, 1));
     --zv-fg: #fff;
-    --zv-chip: rgba(28, 28, 30, 0.62);
+    --zv-chip: rgba(28, 28, 30, 0.82);
     --zv-chip-hover: rgba(58, 58, 62, 0.78);
     --zv-safe-t: env(safe-area-inset-top, 0px);
     --zv-safe-b: env(safe-area-inset-bottom, 0px);
@@ -160,7 +160,7 @@ dialog.zoom-viewer.zv-ui-hidden .zv-bottom { transform: translate3d(0, 8px, 0); 
     align-items: center;
     gap: 6px;
     padding: calc(var(--zv-safe-t) + 8px) calc(var(--zv-safe-r) + 8px) 24px calc(var(--zv-safe-l) + 8px);
-    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
+    background: none; /* no fog over the top of the photo — the buttons carry their own solid chips */
     pointer-events: none;
 }
 .zv-top > * { pointer-events: auto; }
@@ -199,8 +199,6 @@ dialog.zoom-viewer.zv-ui-hidden .zv-bottom { transform: translate3d(0, 8px, 0); 
     background: var(--zv-chip);
     color: #fff;
     cursor: pointer;
-    -webkit-backdrop-filter: blur(12px);
-    backdrop-filter: blur(12px);
     transition: background-color 0.15s linear, transform 0.15s var(--zv-ease), opacity 0.15s linear;
     touch-action: manipulation;
 }
