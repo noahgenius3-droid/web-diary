@@ -574,7 +574,26 @@ document.addEventListener('DOMContentLoaded', () => {
     // Scan → Note
     // ======================================================================
     const SCAN_KINDS = [['handwritten', '✍️', 'Handwritten'], ['whiteboard', '🧑‍🏫', 'Whiteboard'], ['textbook', '📘', 'Textbook'], ['receipt', '🧾', 'Receipt'], ['document', '📄', 'Document']];
-    const canRead = () => typeof window.diaryOCR === 'function' || 'TextDetector' in window;
+    // Reading text from a photo, on the device: a reader you plug in (window.diaryOCR), the browser's own text
+    // detector where there is one, or Tesseract.js (open source, Apache-2.0) — loaded only the first time someone scans
+    const OCR_SRC = 'https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js';
+    let ocrWorker = null, ocrProgress = null;
+    const canRead = () => true;
+    function loadScript(src) {
+        return new Promise((resolve, reject) => {
+            const el = document.createElement('script');
+            el.src = src; el.async = true; el.crossOrigin = 'anonymous';
+            el.onload = resolve; el.onerror = () => reject(new Error('The text reader couldn’t load'));
+            document.head.append(el);
+        });
+    }
+    async function tesseract(canvas) {
+        if (!window.Tesseract) await loadScript(OCR_SRC);
+        if (!ocrWorker) ocrWorker = window.Tesseract.createWorker('eng', 1, { logger: m => ocrProgress && ocrProgress(m) }).catch(e => { ocrWorker = null; throw e; });
+        const worker = await ocrWorker;
+        const { data } = await worker.recognize(canvas);
+        return String(data.text || '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    }
     function scan({ into = false } = {}) {
         const S = { kind: 'document', pages: [] };
         const dlg = sheet('st-scan', 'Scan to note', `<div class="gm-card">${head('🖨️ Scan → Note', into ? 'Add a scanned page to this note' : 'Turn a photo into an editable note')}
@@ -583,7 +602,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="st-cats">${SCAN_KINDS.map(([k, e, l]) => `<button type="button" data-kind="${k}" aria-pressed="${k === S.kind}">${e} ${l}</button>`).join('')}</div>
                 <div class="st-pages" data-pages></div>
                 <div class="st-row"><button type="button" class="primary-btn" data-shot>${ic('i-camera')}Take a photo</button><button type="button" class="ghost-btn" data-pick>${ic('i-image')}From photos</button></div>
-                ${canRead() ? '' : '<p class="st-tip">This browser can’t read text from photos yet, so your scans will be saved in the note as clean, enhanced pages you can read and type up. Text reading arrives on more devices soon.</p>'}
+                <p class="st-tip">Text is read right here on your device — nothing is uploaded. The first scan downloads the text reader (about 5 MB, once). Clear, well-lit photos of printed text work best; neat handwriting usually works, joined-up writing less so.</p>
                 <button type="button" class="primary-btn st-go" data-read hidden>Make the note</button>
             </div></div>`);
         const paintPages = () => {
@@ -608,14 +627,25 @@ document.addEventListener('DOMContentLoaded', () => {
             go.disabled = true;
             go.textContent = 'Reading…';
             const texts = [];
-            for (const p of S.pages) texts.push(await readText(p.canvas));
+            let failed = false;
+            for (let i = 0; i < S.pages.length; i++) {
+                const page = `${S.pages.length > 1 ? `page ${i + 1} of ${S.pages.length}` : 'the page'}`;
+                ocrProgress = m => {
+                    if (!go.isConnected) return;
+                    if (m.status === 'recognizing text') go.textContent = `Reading ${page} · ${Math.round((m.progress || 0) * 100)}%`;
+                    else if (/load|initializ/i.test(m.status || '')) go.textContent = 'Getting the text reader ready…';
+                };
+                try { texts.push(await readText(S.pages[i].canvas)); } catch (err) { failed = true; texts.push(''); }
+            }
+            ocrProgress = null;
+            if (failed && !texts.some(Boolean)) toast('Couldn’t read the text (are you offline?) — the scan is saved as pages');
             const text = texts.filter(Boolean).join('\n\n').trim();
             dlg.close();
             const kind = SCAN_KINDS.find(x => x[0] === S.kind);
             const body = S.kind === 'receipt' ? receiptHTML(text) : text.split(/\n{2,}/).map(par => `<p>${esc(par).replace(/\n/g, '<br>')}</p>`).join('');
             if (into) {
                 const ed = document.getElementById('editor-body');
-                if (!text) return toast('No text found on that page');
+                if (!text) return toast(failed ? 'Couldn’t read the text — check your connection and try again' : 'No text found on that page — try a clearer, brighter photo');
                 if (ed) { ed.insertAdjacentHTML('beforeend', body); ed.dispatchEvent(new Event('input', { bubbles: true })); toast('Scanned text added'); }
                 return;
             }
@@ -653,17 +683,19 @@ document.addEventListener('DOMContentLoaded', () => {
         return c;
     }
     async function readText(canvas) {
+        if (typeof window.diaryOCR === 'function') return String(await window.diaryOCR(canvas) || '');
+        let quick = '';
         try {
-            if (typeof window.diaryOCR === 'function') return String(await window.diaryOCR(canvas) || '');
             if ('TextDetector' in window) {
                 const found = await new window.TextDetector().detect(canvas);
                 const rows = found.map(t => ({ y: t.boundingBox.y, x: t.boundingBox.x, h: t.boundingBox.height, s: t.rawValue })).sort((a, b) => a.y - b.y || a.x - b.x);
                 const lines = [];
                 for (const r of rows) { const last = lines[lines.length - 1]; if (last && Math.abs(last.y - r.y) < r.h * 0.6) { last.parts.push(r); } else lines.push({ y: r.y, parts: [r] }); }
-                return lines.map(l => l.parts.sort((a, b) => a.x - b.x).map(p => p.s).join(' ')).join('\n');
+                quick = lines.map(l => l.parts.sort((a, b) => a.x - b.x).map(p => p.s).join(' ')).join('\n');
             }
-        } catch (e) { /* fall back to saving the image */ }
-        return '';
+        } catch (e) { /* the browser's reader isn't usable here */ }
+        if (quick.trim().length > 20) return quick;
+        return tesseract(canvas); // throws if it can't load (e.g. offline the first time)
     }
     function receiptHTML(text) {
         if (!text) return '';
