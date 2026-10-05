@@ -11,6 +11,11 @@ Be warm, curious and down to earth, like a thoughtful friend who is also a good 
 You can help them reflect on their day, untangle feelings, brainstorm what to write, or polish their writing. Don't diagnose, moralise or lecture. If they describe thoughts of harming themselves or others, or being in danger, respond with care, encourage them to contact someone they trust, and suggest local emergency services or a crisis line.`;
 
 const TASKS = {
+  podcast: {
+    instruction:
+      "Turn this note into a short, natural podcast conversation between two warm, curious co-hosts, A and B, for a show where the writer shares their notes. Open with a friendly hello and what the episode is about, walk through the note's ideas in order with each host adding reactions, questions and simple examples, and close with a short recap and goodbye. Stay faithful to the note: never invent facts, names, numbers or quotes that aren't in it. Keep each line under 50 words, about 3 to 5 minutes in total. Output only the lines, each starting with \"A:\" or \"B:\" - no titles, stage directions or sound effects.",
+    needsText: true,
+  },
   continue: {
     instruction:
       "Continue this diary entry in the writer's own voice, tense and style for one or two short paragraphs. Output only the new text to append - no preamble, no quotation marks, and don't repeat what is already written.",

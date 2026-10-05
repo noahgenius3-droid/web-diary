@@ -241,6 +241,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (!window.diaryNoteSlides) return;
                     window.diaryNoteSlides.open({ title: edTitle.value, text: Rich.toText(edBody.innerHTML), color: editing && editing.color, createdAt: editing && editing.createdAt });
                 } },
+                // Note → Podcast (podcast.js): your voice or natural AI voices, with podcast equipment
+                { cmd: 'podcast', label: 'Make a podcast from this note', icon: 'i-headphones', run: () => {
+                    if (!window.diaryPodcast) return;
+                    clearTimeout(saveTimer);
+                    save(editing);
+                    if (!editing.id) return showToast('Write something first');
+                    render();
+                    window.diaryPodcast.open(notes.find(n => n.id === editing.id));
+                } },
                 // Scan → Note (scan.js): photograph a page and its text goes into this note
                 { cmd: 'scan', label: 'Scan a page into this note', icon: 'i-scan', run: () => window.diaryScan && window.diaryScan.scan({ into: true }) },
                 // Dilute lives here now, not as a permanent slider under the title
@@ -1704,6 +1713,7 @@ document.addEventListener('DOMContentLoaded', () => {
             { label: 'Edit', icon: 'i-pencil', onClick: () => openNote(n) },
             { label: 'Move to folder', icon: 'i-folder', value: n.folderId ? (folders.find(x => x.id === n.folderId) || {}).name || '' : '', onClick: () => moveSheet(n) },
             { label: 'Share', icon: 'i-share', onClick: () => openShareSheet(n.id) },
+            ...(window.diaryPodcast ? [{ label: 'Make a podcast', icon: 'i-headphones', onClick: () => window.diaryPodcast.open(n) }] : []),
             { sep: true },
             { label: 'Delete', icon: 'i-trash', danger: true, onClick: () => deleteFromCard(n) }
         ]);
@@ -3232,6 +3242,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return n;
         },
         openNote: id => openNote(notes.find(n => n.id === id)),
+        addFilesToEditor(id, files) { if (!editing || !editor.open || editing.id !== id) return false; addFiles(files); return true; },
         updateNote(id, patch) {
             const n = notes.find(x => x.id === id);
             if (!n) return;
