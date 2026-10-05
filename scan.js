@@ -32,20 +32,45 @@ document.addEventListener('DOMContentLoaded', () => {
     const OCR_SRC = 'https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js';
     let ocrWorker = null, ocrProgress = null;
     const canRead = () => true;
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const TRIES = [0, 1500, 4000]; // the first go, then two more after a pause
+    let scriptP = null;
     function loadScript(src) {
-        return new Promise((resolve, reject) => {
-            const el = document.createElement('script');
-            el.src = src; el.async = true; el.crossOrigin = 'anonymous';
-            el.onload = resolve; el.onerror = () => reject(new Error('The text reader couldn’t load'));
-            document.head.append(el);
-        });
+        if (scriptP) return scriptP;
+        scriptP = (async () => {
+            for (const wait of TRIES) {
+                if (wait) await sleep(wait);
+                document.querySelectorAll(`script[data-ocr]`).forEach(el => el.remove()); // a half-loaded try
+                const ok = await new Promise(resolve => {
+                    const el = document.createElement('script');
+                    el.src = src; el.async = true; el.crossOrigin = 'anonymous'; el.dataset.ocr = '1';
+                    el.onload = () => resolve(true); el.onerror = () => resolve(false);
+                    document.head.append(el);
+                });
+                if (ok && window.Tesseract) return;
+            }
+            throw new Error('The text reader couldn’t load');
+        })().catch(e => { scriptP = null; throw e; });
+        return scriptP;
     }
     async function tesseract(canvas) {
-        if (!window.Tesseract) await loadScript(OCR_SRC);
-        if (!ocrWorker) ocrWorker = window.Tesseract.createWorker('eng', 1, { logger: m => ocrProgress && ocrProgress(m) }).catch(e => { ocrWorker = null; throw e; });
-        const worker = await ocrWorker;
-        const { data } = await worker.recognize(canvas);
-        return String(data.text || '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+        let last = null;
+        for (const wait of TRIES) {
+            if (wait) await sleep(wait);
+            try {
+                if (!window.Tesseract) await loadScript(OCR_SRC);
+                if (!ocrWorker) ocrWorker = window.Tesseract.createWorker('eng', 1, { logger: m => ocrProgress && ocrProgress(m) }).catch(e => { ocrWorker = null; throw e; });
+                const worker = await ocrWorker;
+                const { data } = await worker.recognize(canvas);
+                return String(data.text || '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+            } catch (e) {
+                last = e;
+                // Start the reader afresh next time (a worker that failed to start, or a download cut short)
+                if (ocrWorker) { const w = ocrWorker; ocrWorker = null; w.then(x => x.terminate()).catch(() => {}); }
+                if (ocrProgress) ocrProgress({ status: 'retrying' });
+            }
+        }
+        throw last || new Error('Couldn’t read the text');
     }
     function scan({ into = false } = {}) {
         const S = { kind: 'document', pages: [] };
@@ -65,7 +90,9 @@ document.addEventListener('DOMContentLoaded', () => {
         };
         const add = async files => {
             for (const f of files) {
-                try { const canvas = await enhance(f, S.kind); S.pages.push({ canvas, url: canvas.toDataURL('image/jpeg', 0.85) }); } catch (e) { toast('Couldn’t open that photo'); }
+                let canvas = null;
+                for (let t = 0; t < 2 && !canvas; t++) { try { canvas = await enhance(f, S.kind); } catch (e) { await sleep(600); } }
+                if (canvas) S.pages.push({ canvas, url: canvas.toDataURL('image/jpeg', 0.85) }); else toast('Couldn’t open that photo — try another one');
             }
             paintPages();
         };
@@ -90,9 +117,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 ocrProgress = m => {
                     if (!go.isConnected) return;
                     if (m.status === 'recognizing text') go.textContent = `Reading ${page} · ${Math.round((m.progress || 0) * 100)}%`;
+                    else if (m.status === 'retrying') go.textContent = 'Connection hiccup — trying again…';
                     else if (/load|initializ/i.test(m.status || '')) go.textContent = 'Getting the text reader ready…';
                 };
-                try { texts.push(await readText(S.pages[i].canvas)); } catch (err) { failed = true; texts.push(''); }
+                let got = null;
+                for (let t = 0; t < 2 && got === null; t++) { try { got = await readText(S.pages[i].canvas); } catch (err) { if (t) failed = true; else await sleep(800); } }
+                texts.push(got || '');
             }
             ocrProgress = null;
             if (failed && !texts.some(Boolean)) toast('Couldn’t read the text (are you offline?) — the scan is saved as pages');
@@ -127,7 +157,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) toast('Camera access is off for Cordial — allow it in your browser’s site settings, or pick a photo');
             return null;
         }
-        const track = stream.getVideoTracks()[0];
+        let track = stream.getVideoTracks()[0];
         const caps = track && track.getCapabilities ? track.getCapabilities() : {};
         try { if ((caps.focusMode || []).includes('continuous')) await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e) { /* fine without */ }
         const ratio = FRAME[kind] || 0.71;
@@ -178,9 +208,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 dlg.querySelector('.scam-hint').textContent = shots.length ? 'Next page, or tap Done' : 'Fit the page inside the frame';
             };
             // Copy just the part of the picture inside the frame (the video fills the screen, so map screen → camera pixels)
-            const capture = () => {
+            const capture = async () => {
+                if (!video.videoWidth) { dlg.querySelector('.scam-hint').textContent = 'Starting the camera…'; await ready(4000); }
                 const vw = video.videoWidth, vh = video.videoHeight;
-                if (!vw || !vh) return toast('The camera is still starting…');
+                if (!vw || !vh) return toast('The camera didn’t start — close it and try again');
                 const vr = video.getBoundingClientRect(), fr = frameEl.getBoundingClientRect();
                 const s = Math.max(vr.width / vw, vr.height / vh);
                 const ox = vr.left + (vr.width - vw * s) / 2, oy = vr.top + (vr.height - vh * s) / 2;
@@ -216,6 +247,26 @@ document.addEventListener('DOMContentLoaded', () => {
             dlg.addEventListener('cancel', e => { e.preventDefault(); finish(shots.length ? shots : []); });
             document.addEventListener('keydown', function key(e) { if (!dlg.isConnected) return document.removeEventListener('keydown', key); if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); capture(); } });
             track.addEventListener('ended', () => { if (dlg.isConnected) { toast('The camera stopped'); finish(shots); } });
+            // Ready = the camera is actually sending pictures (the first time, right after the permission prompt, it can lag)
+            const ready = ms => new Promise(r => {
+                if (video.videoWidth && video.readyState >= 2) return r(true);
+                const done = () => { clearTimeout(t); video.removeEventListener('loadeddata', on); r(!!video.videoWidth); };
+                const on = () => done();
+                const t = setTimeout(done, ms);
+                video.addEventListener('loadeddata', on);
+            });
+            (async () => {
+                if (await ready(5000)) return;
+                // Still nothing: ask for the camera again (once)
+                try {
+                    stream.getTracks().forEach(t => t.stop());
+                    stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' } } });
+                    track = stream.getVideoTracks()[0];
+                    video.srcObject = stream;
+                    video.play().catch(() => {});
+                    if (!(await ready(5000)) && dlg.isConnected) dlg.querySelector('.scam-hint').textContent = 'The camera isn’t responding — close and try again';
+                } catch (e) { if (dlg.isConnected) dlg.querySelector('.scam-hint').textContent = 'The camera isn’t responding — close and try again'; }
+            })();
             window.addEventListener('resize', layout);
             dlg.showModal();
             layout();
@@ -223,8 +274,19 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
     // Clean the photo up for reading: scale it, flatten the lighting, boost contrast (stronger for receipts and boards)
+    async function decode(file) {
+        try { return await createImageBitmap(file); } catch (e) { /* try the slower way */ }
+        const url = URL.createObjectURL(file);
+        try {
+            const img = new Image();
+            img.decoding = 'async';
+            img.src = url;
+            await img.decode();
+            return img;
+        } finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
+    }
     async function enhance(file, kind) {
-        const bmp = await createImageBitmap(file);
+        const bmp = file instanceof HTMLCanvasElement ? file : await decode(file);
         const scale = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
         const c = document.createElement('canvas');
         c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
