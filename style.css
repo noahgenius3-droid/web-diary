@@ -17916,3 +17916,103 @@ textarea.editor-title {
 .ht-cap-text .ht-pop.go { animation: ht-chip 240ms cubic-bezier(0.23, 1, 0.32, 1); }
 @keyframes ht-chip { from { opacity: 0; transform: translateY(4px) scale(0.97); } }
 .ht-cap { min-height: 124px; }
+
+/* =====================================================================
+   Penalty Shootout (boardgames.js): a 3D pitch in CSS perspective
+   ===================================================================== */
+.bg-penalty .bg-stage { aspect-ratio: auto; display: grid; gap: 8px; }
+.pk-board { display: grid; gap: 4px; padding: 8px 10px; border-radius: 14px; background: #0b1220; color: #e5e7eb; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
+.pk-row { display: grid; grid-template-columns: 74px 1fr 26px; align-items: center; gap: 8px; font-size: 0.8rem; }
+.pk-row.up .pk-name::after { content: " ⚽"; }
+.pk-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.pk-dots { display: flex; flex-wrap: wrap; gap: 4px; }
+.pk-dots i { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: rgba(255, 255, 255, 0.1); font-style: normal; font-size: 0.66rem; font-weight: 900; }
+.pk-dots i.goal { background: #22c55e; color: #052e16; }
+.pk-dots i.save, .pk-dots i.miss { background: #ef4444; color: #fff; }
+.pk-row b { font-size: 1.05rem; text-align: right; font-variant-numeric: tabular-nums; }
+
+.pk { position: relative; width: 100%; aspect-ratio: 4 / 3.3; border-radius: 18px; overflow: hidden; perspective: 640px; perspective-origin: 50% 22%;
+    background: linear-gradient(#0f172a 0%, #1e293b 30%, #14532d 30.2%); box-shadow: 0 10px 28px -14px rgba(0, 0, 0, 0.6); user-select: none; -webkit-user-select: none; }
+/* The crowd in the stands */
+.pk-stands { position: absolute; left: 0; right: 0; top: 0; height: 31%; background:
+    radial-gradient(circle at 10% 60%, #f43f5e 0 1.5px, transparent 2px) 0 0 / 11px 9px,
+    radial-gradient(circle at 60% 30%, #fbbf24 0 1.5px, transparent 2px) 0 0 / 13px 8px,
+    radial-gradient(circle at 40% 70%, #60a5fa 0 1.5px, transparent 2px) 0 0 / 9px 10px,
+    linear-gradient(#111827, #1f2937); opacity: 0.9; }
+.pk-stands i { position: absolute; left: 0; right: 0; bottom: 0; height: 5px; background: linear-gradient(90deg, #4f46e5, #a855f7, #ec4899, #4f46e5); box-shadow: 0 0 12px rgba(168, 85, 247, 0.6); }
+/* The pitch: a plane tipped away from you */
+.pk-world { position: absolute; inset: 0; transform-style: preserve-3d; pointer-events: none; }
+.pk-grass { position: absolute; left: -40%; right: -40%; top: 30%; height: 150%; transform-origin: 50% 0; transform: rotateX(62deg);
+    background: repeating-linear-gradient(180deg, #15803d 0 40px, #16a34a 40px 80px); box-shadow: inset 0 40px 60px -20px rgba(0, 0, 0, 0.45); }
+.pk-grass i { position: absolute; border: 3px solid rgba(255, 255, 255, 0.85); }
+.pk-box6 { left: 38%; right: 38%; top: 0; height: 9%; border-top: 0 !important; }
+.pk-box18 { left: 24%; right: 24%; top: 0; height: 26%; border-top: 0 !important; }
+.pk-arc { left: 44%; right: 44%; top: 24%; height: 8%; border-radius: 0 0 50% 50% / 0 0 100% 100%; border-top: 0 !important; }
+.pk-dot { left: 50%; top: 18%; width: 8px; height: 8px; margin-left: -4px; border: 0 !important; border-radius: 50%; background: #fff; }
+/* The goal: frame in front, nets going back */
+.pk-goal { position: absolute; left: 15%; right: 15%; top: 8%; height: 25%; transform-style: preserve-3d; }
+.pk-net { position: absolute; pointer-events: none; background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.5) 0 1px, transparent 1px 7px),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.5) 0 1px, transparent 1px 7px), rgba(255, 255, 255, 0.04); }
+.pk-net.back { inset: 6% 4% 0 4%; transform: translateZ(-40px); }
+.pk-net.side { top: 0; bottom: 0; width: 40px; transform-origin: 0 50%; }
+.pk-net.side.l { left: 0; transform: rotateY(90deg); }
+.pk-net.side.r { right: -40px; transform-origin: 0 50%; transform: translateX(-40px) rotateY(90deg); left: auto; }
+.pk-net.roof { left: 0; right: 0; top: 0; height: 40px; transform-origin: 50% 0; transform: rotateX(-90deg); }
+.pk.scored .pk-net.back { animation: pk-ripple 600ms cubic-bezier(0.23, 1, 0.32, 1); }
+@keyframes pk-ripple { 40% { transform: translateZ(-58px) scale(1.03); } }
+.pk-post, .pk-bar { position: absolute; background: linear-gradient(90deg, #d1d5db, #fff 40%, #cbd5e1); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4); z-index: 2; pointer-events: none; }
+.pk-post { top: 0; bottom: 0; width: 2.2%; }
+.pk-post.l { left: -1.1%; }
+.pk-post.r { right: -1.1%; }
+.pk-bar { left: -1.1%; right: -1.1%; top: -2%; height: 7%; background: linear-gradient(#fff, #d1d5db); }
+/* The keeper */
+.pk-keeper { position: absolute; left: 50%; bottom: 0; z-index: 3; width: 17%; height: 92%; transform: translateX(-50%); transform-origin: 50% 85%; pointer-events: none; }
+.pk-keeper i { position: absolute; display: block; }
+.pk-head { left: 33%; top: 0; width: 34%; aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #a16207, #713f12 70%); }
+.pk-body { left: 18%; top: 24%; width: 64%; height: 42%; border-radius: 30% 30% 18% 18%; background: linear-gradient(90deg, #f59e0b, #fbbf24 45%, #d97706); box-shadow: inset 0 -6px 8px rgba(0, 0, 0, 0.18); }
+.pk-legs { left: 26%; top: 64%; width: 48%; height: 36%; border-radius: 6px 6px 3px 3px; background: linear-gradient(90deg, #111827 0 44%, transparent 44% 56%, #111827 56%); }
+.pk-arm { top: 26%; width: 22%; height: 40%; border-radius: 8px; background: linear-gradient(#fbbf24, #d97706); transform-origin: 50% 8%; transition: transform 300ms cubic-bezier(0.2, 0.8, 0.3, 1); }
+.pk-arm.l { left: 0; transform: rotate(18deg); }
+.pk-arm.r { right: 0; transform: rotate(-18deg); }
+.pk-arm b { position: absolute; left: -10%; bottom: -14%; width: 120%; aspect-ratio: 1; border-radius: 40%; background: radial-gradient(circle at 35% 30%, #fff, #22d3ee 45%, #0891b2); }
+.pk-keeper.dive .pk-arm.l { transform: rotate(150deg); }
+.pk-keeper.dive .pk-arm.r { transform: rotate(-150deg); }
+.pk-keeper::after { content: ""; position: absolute; left: 10%; right: 10%; bottom: -6%; height: 10%; border-radius: 50%; background: rgba(0, 0, 0, 0.35); filter: blur(2px); }
+/* Where to shoot / dive */
+.pk-zones { position: absolute; inset: 0; z-index: 4; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(2, 1fr); }
+.pk-z { min-width: 0; margin: 0; padding: 0; border: 0; background: none; cursor: default; -webkit-tap-highlight-color: transparent; }
+.pk.picking .pk-z { cursor: pointer; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18); }
+.pk.picking.shoot .pk-z:hover, .pk.picking.shoot .pk-z:focus-visible { background: rgba(250, 204, 21, 0.28); }
+.pk.picking.save .pk-z:hover, .pk.picking.save .pk-z:focus-visible { background: rgba(34, 211, 238, 0.28); }
+.pk.picking .pk-z:active { background: rgba(255, 255, 255, 0.3); }
+.pk-z:focus-visible { outline: 2px solid #fde047; outline-offset: -2px; }
+.pk-target { position: absolute; z-index: 5; width: 26px; height: 26px; margin: -13px 0 0 -13px; border: 3px solid #fde047; border-radius: 50%; box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.3), 0 0 14px #fde047; pointer-events: none; animation: pk-pulse 900ms ease-in-out infinite alternate; }
+@keyframes pk-pulse { to { transform: scale(1.25); } }
+/* The ball and its shadow */
+.pk-ball { position: absolute; left: 50%; top: 84%; z-index: 6; width: 13%; aspect-ratio: 1; transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none;
+    background: radial-gradient(circle at 34% 30%, #fff 0 18%, #e5e7eb 45%, #9ca3af 80%, #6b7280); box-shadow: inset -4px -6px 10px rgba(0, 0, 0, 0.25), 0 2px 4px rgba(0, 0, 0, 0.3); overflow: hidden; }
+.pk-ball i { position: absolute; inset: 0; border-radius: 50%; background:
+    radial-gradient(circle at 50% 50%, #1f2937 0 16%, transparent 17%),
+    radial-gradient(circle at 18% 22%, #1f2937 0 11%, transparent 12%),
+    radial-gradient(circle at 82% 26%, #1f2937 0 11%, transparent 12%),
+    radial-gradient(circle at 26% 84%, #1f2937 0 11%, transparent 12%),
+    radial-gradient(circle at 78% 82%, #1f2937 0 11%, transparent 12%); opacity: 0.85; }
+.pk-shadow { position: absolute; left: 50%; top: 89%; z-index: 5; width: 12%; height: 3%; transform: translate(-50%, -50%); border-radius: 50%; background: rgba(0, 0, 0, 0.5); filter: blur(2px); pointer-events: none; }
+/* GOAL! */
+.pk-flash { position: absolute; left: 50%; top: 52%; z-index: 8; transform: translate(-50%, -50%) scale(0.6); padding: 6px 18px; border-radius: 14px; font-size: 2rem; font-weight: 900; letter-spacing: 0.04em; color: #fff; opacity: 0; pointer-events: none; text-shadow: 0 3px 0 rgba(0, 0, 0, 0.35); }
+.pk-flash.show { opacity: 1; transform: translate(-50%, -50%) scale(1); transition: transform 360ms cubic-bezier(0.34, 1.56, 0.64, 1), opacity 160ms ease; }
+.pk-flash.goal { background: linear-gradient(135deg, #16a34a, #22c55e); }
+.pk-flash.save { background: linear-gradient(135deg, #0891b2, #22d3ee); }
+.pk-flash.miss { background: linear-gradient(135deg, #b91c1c, #ef4444); }
+/* The power meter */
+.pk-ctl { display: grid; justify-items: center; gap: 10px; }
+.pk-meter { position: relative; width: min(320px, 100%); height: 16px; border-radius: 8px; background: linear-gradient(90deg, #ef4444 0 25%, #facc15 25% 43%, #22c55e 43% 57%, #facc15 57% 75%, #ef4444 75%); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15); }
+.pk-needle { position: absolute; top: -5px; left: 0; width: 4px; height: 26px; margin-left: -2px; border-radius: 2px; background: #111827; box-shadow: 0 0 0 2px #fff; animation: pk-swing 1400ms linear infinite; }
+@keyframes pk-swing { 0% { left: 0; } 50% { left: 100%; } 100% { left: 0; } }
+.pk-go { min-width: 160px; min-height: 48px; font-size: 1.05rem; }
+.pk-tile .bg-art { background: linear-gradient(140deg, #15803d, #22c55e) !important; }
+@media (prefers-reduced-motion: reduce) { .pk-target, .pk.scored .pk-net.back { animation: none; } .pk-flash.show { transition: none; } }
+/* Bigger goal mouth: easier to aim and dive on a phone */
+.pk-goal { left: 11%; right: 11%; top: 6%; height: 30%; }
+.pk-stands { height: 31%; }

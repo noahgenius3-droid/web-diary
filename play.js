@@ -423,7 +423,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const B = window.diaryBoardGames;
         if (!B || !me()) return '';
         const n = B.waiting();
-        return section('pn-bg-h', 'Chess & Ludo', n ? `${n} waiting for you` : 'Play a friend or the computer', B.listHTML());
+        return section('pn-bg-h', 'Play with friends', n ? `${n} waiting for you` : 'Play a friend or the computer', B.listHTML());
     }
 
     function practiceHTML() {

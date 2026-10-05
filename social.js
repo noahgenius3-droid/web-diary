@@ -6580,6 +6580,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const friend = s.activeFriend;
             items.push({ label: 'A game of Chess', icon: 'i-g-chess', onClick: () => window.diaryBoardGames.newGame('chess', friend) });
             items.push({ label: 'A game of Ludo', icon: 'i-g-ludo', onClick: () => window.diaryBoardGames.newGame('ludo', friend) });
+            items.push({ label: 'A penalty shootout', icon: 'i-g-ball', onClick: () => window.diaryBoardGames.newGame('penalty', friend) });
         }
         app.openPopover(anchor, items);
     }

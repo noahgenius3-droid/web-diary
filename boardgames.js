@@ -14,7 +14,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const KINDS = {
         chess: { title: 'Chess', sub: 'Two players · classic rules', icon: 'i-g-chess', art: '♞', min: 1, max: 1 },
-        ludo: { title: 'Ludo', sub: 'Two to four players · race home', icon: 'i-g-ludo', art: '🎲', min: 1, max: 3 }
+        ludo: { title: 'Ludo', sub: 'Two to four players · race home', icon: 'i-g-ludo', art: '🎲', min: 1, max: 3 },
+        penalty: { title: 'Penalty Shootout', sub: 'Two players · five kicks each', icon: 'i-g-ball', art: '⚽', min: 1, max: 1 }
     };
 
     // ======================================================================
@@ -305,6 +306,222 @@ document.addEventListener('DOMContentLoaded', () => {
         return { init, roll, pass, moveToken, movable, pick, spot, PATH, HOME, START, SAFE, YARD, abs };
     })();
 
+
+    // ======================================================================
+    // Penalty shootout rules. Six spots in the goal: z = row * 3 + column (row 0 high, 1 low;
+    // column 0 left, 1 middle, 2 right). A shot is { z, acc: 'perfect' | 'good' | 'poor' }, a dive is { z }.
+    // ======================================================================
+    const PK = (() => {
+        const init = () => ({ kicks: [], shooter: 0, phase: 'shoot', commit: null, dive: null, plain: null, status: 'active', winner: null, reason: '' });
+        function outcome(aim, dive) {
+            if (!aim || aim.z < 0) return 'miss';
+            const ac = aim.z % 3, ar = (aim.z / 3) | 0;
+            if (aim.acc === 'poor' && ac !== 1) return 'miss'; // dragged wide of the post or over the bar
+            if (!dive) return 'goal';
+            const dc = dive.z % 3, dr = (dive.z / 3) | 0;
+            if (dc !== ac) return 'goal'; // keeper went the wrong way
+            if (dr === ar) return 'save';
+            return aim.acc === 'perfect' ? 'goal' : 'save'; // right way, wrong height: only a perfect strike beats them
+        }
+        const goals = st => [0, 1].map(p => st.kicks.filter(k => k.by === p && k.result === 'goal').length);
+        const taken = st => [0, 1].map(p => st.kicks.filter(k => k.by === p).length);
+        function decide(n) {
+            const [g0, g1] = goals(n), [n0, n1] = taken(n);
+            let w = null;
+            if (n0 <= 5 && n1 <= 5) {
+                if (g0 + (5 - n0) < g1) w = 1;
+                else if (g1 + (5 - n1) < g0) w = 0;
+                else if (n0 === 5 && n1 === 5 && g0 !== g1) w = g0 > g1 ? 0 : 1;
+            } else if (n0 === n1 && g0 !== g1) w = g0 > g1 ? 0 : 1; // sudden death, after each pair
+            if (w !== null) { n.status = 'over'; n.winner = w; n.reason = `${Math.max(g0, g1)}–${Math.min(g0, g1)}${n0 > 5 ? ' in sudden death' : ''}`; }
+            return n;
+        }
+        function kick(st, aim, dive, extra = {}) {
+            const result = outcome(aim, dive);
+            const n = { ...st, kicks: [...st.kicks, { by: st.shooter, aim, dive, result, ...extra }], shooter: 1 - st.shooter, phase: 'shoot', commit: null, dive: null, plain: null };
+            return decide(n);
+        }
+        const accOf = d => (d < 0.14 ? 'perfect' : d < 0.5 ? 'good' : 'poor'); // distance from the sweet spot, 0..1
+        const cpuAim = () => ({ z: Math.floor(Math.random() * 6), acc: Math.random() < 0.25 ? 'perfect' : Math.random() < 0.8 ? 'good' : 'poor' });
+        const cpuDive = () => ({ z: Math.random() < 0.15 ? (Math.random() < 0.5 ? 1 : 4) : [0, 2, 3, 5][Math.floor(Math.random() * 4)] });
+        return { init, outcome, kick, goals, taken, accOf, cpuAim, cpuDive };
+    })();
+    // A sealed shot: everyone sees the fingerprint first, the shot itself only after the keeper has dived
+    async function fingerprint(aim, salt) {
+        const data = new TextEncoder().encode(`${aim.z}|${aim.acc}|${salt}`);
+        return [...new Uint8Array(await crypto.subtle.digest('SHA-256', data))].map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+    const pkKey = (id, n) => `cordialPK:${id}:${n}`;
+
+    // ---------- The pitch, in 3D (CSS perspective: grass plane, a goal with depth, a shaded ball and keeper) ----------
+    const ZONE_NAMES = ['top left', 'top middle', 'top right', 'bottom left', 'bottom middle', 'bottom right'];
+    const zoneXY = z => [[17, 50, 83][z % 3], [30, 72][(z / 3) | 0]]; // % of the goal mouth
+    function pkHTML() {
+        const rec = V.rec, st = rec.state;
+        const mine = myTurn(rec) && st.status === 'active';
+        const pick = mine && (st.phase === 'shoot' || st.phase === 'save') && !V.pkMeter;
+        const sc = PK.goals(st);
+        const rows = [0, 1].map(p => {
+            const ks = st.kicks.filter(k => k.by === p);
+            const n = Math.max(5, PK.taken(st)[0], PK.taken(st)[1]);
+            return `<div class="pk-row${st.status === 'active' && st.shooter === p && st.phase === 'shoot' ? ' up' : ''}"><span class="pk-name">${esc(first(rec.players[p]))}</span><span class="pk-dots">${Array.from({ length: n }, (_, i) => {
+                const k = ks[i];
+                return `<i class="${k ? k.result : ''}" aria-label="${k ? k.result : 'to come'}">${k ? (k.result === 'goal' ? '✓' : '✕') : ''}</i>`;
+            }).join('')}</span><b>${sc[p]}</b></div>`;
+        }).join('');
+        const target = V.pkZone != null ? zoneXY(V.pkZone) : null;
+        return `
+            <div class="pk-board" aria-label="Score">${rows}</div>
+            <div class="pk${pick ? ` picking ${st.phase}` : ''}" role="group" aria-label="Penalty">
+                <div class="pk-stands" aria-hidden="true"><i></i></div>
+                <div class="pk-world" aria-hidden="true">
+                    <div class="pk-grass"><i class="pk-box6"></i><i class="pk-box18"></i><i class="pk-arc"></i><i class="pk-dot"></i></div>
+                </div>
+                <div class="pk-goal">
+                    <span class="pk-net back" aria-hidden="true"></span><span class="pk-net side l" aria-hidden="true"></span><span class="pk-net side r" aria-hidden="true"></span><span class="pk-net roof" aria-hidden="true"></span>
+                    <span class="pk-post l" aria-hidden="true"></span><span class="pk-post r" aria-hidden="true"></span><span class="pk-bar" aria-hidden="true"></span>
+                    <span class="pk-keeper" aria-hidden="true"><i class="pk-head"></i><i class="pk-body"></i><i class="pk-arm l"><b></b></i><i class="pk-arm r"><b></b></i><i class="pk-legs"></i></span>
+                    ${target ? `<span class="pk-target" style="left:${target[0]}%;top:${target[1]}%" aria-hidden="true"></span>` : ''}
+                    <div class="pk-zones">${ZONE_NAMES.map((n, z) => `<button type="button" class="pk-z${V.pkZone === z ? ' on' : ''}" data-pkz="${z}" ${pick ? '' : 'tabindex="-1" disabled'} aria-label="${st.phase === 'save' ? 'Dive' : 'Shoot'} ${n}"></button>`).join('')}</div>
+                </div>
+                <span class="pk-shadow" aria-hidden="true"></span>
+                <span class="pk-ball" aria-hidden="true"><i></i></span>
+                <span class="pk-flash" aria-live="assertive"></span>
+            </div>`;
+    }
+    function pkUnder() {
+        const rec = V.rec, st = rec.state;
+        if (st.status !== 'active') return '';
+        const mine = myTurn(rec);
+        const other = esc(first(turnId(rec)));
+        let hint;
+        if (st.phase === 'shoot') hint = mine ? (V.pkMeter ? 'Stop the meter in the green' : 'You’re taking the kick — tap where to aim') : `${other} is placing the ball…`;
+        else if (st.phase === 'save') hint = mine ? 'You’re in goal — tap where to dive' : `Shot taken 🔒 — waiting for ${other} to dive`;
+        else hint = mine ? 'Revealing your shot…' : `Waiting for ${other}’s phone to reveal the shot…`;
+        return `<div class="pk-ctl">
+            ${V.pkMeter ? `<div class="pk-meter" aria-hidden="true"><i class="pk-sweet"></i><i class="pk-needle"></i></div><button type="button" class="primary-btn pk-go" data-bg="pk-shoot">Shoot!</button>` : ''}
+            <p class="lu-hint">${hint}</p>
+        </div>`;
+    }
+    function pkTapZone(z) {
+        const rec = V.rec, st = rec.state;
+        if (!myTurn(rec) || st.status !== 'active' || V.busy) return;
+        if (st.phase === 'shoot') { V.pkZone = z; V.pkMeter = true; V.pkStart = performance.now(); paint(); return; }
+        if (st.phase === 'save') pkDive({ z });
+    }
+    // The meter swings left-right; where it stops is how clean the strike is
+    function pkMeterValue() {
+        const t = ((performance.now() - V.pkStart) % 1400) / 1400; // one full swing every 1.4s
+        const x = t < 0.5 ? t * 2 : 2 - t * 2; // 0 → 1 → 0
+        return Math.abs(x - 0.5) * 2; // distance from the middle, 0..1
+    }
+    async function pkShoot() {
+        const rec = V.rec;
+        if (!V.pkMeter || V.busy || V.pkZone == null) return;
+        const aim = { z: V.pkZone, acc: PK.accOf(pkMeterValue()) };
+        V.pkMeter = false; V.busy = true;
+        if (rec.mode === 'computer') {
+            rec.state = PK.kick(rec.state, aim, PK.cpuDive());
+        } else {
+            const salt = uid();
+            try { localStorage.setItem(pkKey(rec.id, rec.state.kicks.length), JSON.stringify({ aim, salt })); } catch (e) { /* the shot can't be revealed from another phone */ }
+            rec.state = { ...rec.state, phase: 'save', commit: await fingerprint(aim, salt) };
+        }
+        V.pkZone = null; V.busy = false;
+        afterMove(rec);
+        paint();
+        if (rec.state.status !== 'active') celebrate(rec); else botTurn();
+    }
+    function pkDive(dive) {
+        const rec = V.rec, st = rec.state;
+        if (rec.mode === 'computer') rec.state = PK.kick(st, st.plain || PK.cpuAim(), dive);
+        else rec.state = { ...st, phase: 'reveal', dive };
+        afterMove(rec);
+        paint();
+        if (rec.state.status !== 'active') celebrate(rec); else botTurn();
+    }
+    // The shooter's phone reveals the sealed shot as soon as the keeper has dived
+    async function pkReveal() {
+        const rec = V.rec, st = rec.state;
+        if (V.pkRevealing || st.phase !== 'reveal' || !myTurn(rec)) return;
+        V.pkRevealing = true;
+        await wait(350);
+        let saved = null;
+        try { saved = JSON.parse(localStorage.getItem(pkKey(rec.id, st.kicks.length)) || 'null'); } catch (e) { saved = null; }
+        const ok = saved && (await fingerprint(saved.aim, saved.salt)) === st.commit;
+        if (!V || V.rec !== rec || rec.state !== st) { if (V) V.pkRevealing = false; return; }
+        rec.state = PK.kick(st, ok ? saved.aim : { z: -1, acc: 'lost' }, st.dive, ok ? { salt: saved.salt, commit: st.commit } : { lost: true });
+        V.pkRevealing = false;
+        afterMove(rec);
+        paint();
+        if (rec.state.status !== 'active') celebrate(rec);
+    }
+    // Everyone else checks the revealed shot against the fingerprint it was sealed with
+    async function pkVerify(rec) {
+        const k = rec.state.kicks[rec.state.kicks.length - 1];
+        if (!k || !k.commit || !k.salt) return true;
+        return (await fingerprint(k.aim, k.salt)) === k.commit;
+    }
+    // Play the last kick in 3D: the ball arcs from the spot towards the goal (shrinking with distance, its shadow
+    // running along the grass), the keeper leaps, then the verdict
+    function pkAnimate() {
+        const rec = V.rec, st = rec.state;
+        const pk = V.dlg.querySelector('.pk');
+        if (!pk) return;
+        const n = st.kicks.length;
+        if (V.pkSeen === undefined) { V.pkSeen = n; return; } // opening a game: don't replay history
+        if (n === V.pkSeen) return;
+        V.pkSeen = n;
+        V.pkBusyUntil = performance.now() + (matchMedia('(prefers-reduced-motion: reduce)').matches ? 1500 : 2500);
+        const k = st.kicks[n - 1];
+        const ball = pk.querySelector('.pk-ball'), shadow = pk.querySelector('.pk-shadow'), keeper = pk.querySelector('.pk-keeper'), flash = pk.querySelector('.pk-flash');
+        const g = pk.querySelector('.pk-goal').getBoundingClientRect(), box = pk.getBoundingClientRect(), b0 = ball.getBoundingClientRect();
+        const [zx, zy] = k.aim && k.aim.z >= 0 ? zoneXY(k.aim.z) : [50, -30];
+        // A miss sails past the post or over the bar
+        const off = k.result === 'miss' && k.aim && k.aim.z >= 0 ? (k.aim.z % 3 === 1 ? [0, -42] : [k.aim.z % 3 === 0 ? -24 : 24, (k.aim.z / 3 | 0) === 0 ? -36 : 0]) : [0, 0];
+        // A save stops short of the line; a goal carries into the net
+        const depth = k.result === 'save' ? 0.92 : 1;
+        const sx = b0.left + b0.width / 2 - box.left, sy = b0.top + b0.height / 2 - box.top;
+        const ex = g.left - box.left + g.width * (zx + off[0]) / 100, ey = g.top - box.top + g.height * (zy + off[1]) / 100;
+        const dx = (ex - sx) * depth, dy = (ey - sy) * depth;
+        const lift = Math.min(70, Math.abs(dy) * 0.35) + ((k.aim && (k.aim.z / 3 | 0) === 0) ? 30 : 8);
+        const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+        const dur = calm ? 1 : 620;
+        ball.animate([
+            { transform: 'translate(-50%, -50%) translate(0, 0) scale(1)' },
+            { transform: `translate(-50%, -50%) translate(${dx * 0.5}px, ${dy * 0.5 - lift}px) scale(0.68)`, offset: 0.5 },
+            { transform: `translate(-50%, -50%) translate(${dx}px, ${dy}px) scale(${k.result === 'goal' ? 0.4 : 0.44})` }
+        ], { duration: dur, easing: 'cubic-bezier(0.25, 0.6, 0.35, 1)', fill: 'forwards' });
+        ball.querySelector('i').animate([{ transform: 'rotate(0deg)' }, { transform: 'rotate(720deg)' }], { duration: dur, easing: 'ease-out', fill: 'forwards' });
+        const groundY = g.bottom - box.top - sy; // the shadow stays on the grass, up to the goal line
+        shadow.animate([
+            { transform: 'translate(-50%, -50%) translate(0, 0) scale(1)', opacity: 0.5 },
+            { transform: `translate(-50%, -50%) translate(${dx}px, ${Math.min(dy + 8, groundY)}px) scale(0.42)`, opacity: k.aim && (k.aim.z / 3 | 0) === 0 ? 0.18 : 0.38 }
+        ], { duration: dur, easing: 'cubic-bezier(0.25, 0.6, 0.35, 1)', fill: 'forwards' });
+        if (k.dive) {
+            const dc = k.dive.z % 3, dr = (k.dive.z / 3) | 0;
+            keeper.animate([
+                { transform: 'translateX(-50%) translateY(0) rotate(0deg)' },
+                { transform: `translateX(calc(-50% + ${(dc - 1) * 18}%)) translateY(${dr === 0 ? '-46%' : '-12%'}) rotate(${(dc - 1) * 30}deg)`, offset: 0.45 },
+                { transform: `translateX(calc(-50% + ${(dc - 1) * 105}%)) translateY(${dr === 0 ? '-34%' : '8%'}) rotate(${(dc - 1) * 78}deg)` }
+            ], { duration: calm ? 1 : 560, delay: calm ? 0 : 90, easing: 'cubic-bezier(0.2, 0.8, 0.3, 1)', fill: 'forwards' });
+            keeper.classList.add('dive');
+        }
+        setTimeout(() => {
+            if (!flash.isConnected) return;
+            flash.textContent = k.result === 'goal' ? 'GOAL!' : k.result === 'save' ? 'SAVED!' : k.lost ? 'SHOT LOST' : 'MISSED!';
+            flash.className = `pk-flash show ${k.result}`;
+            pk.classList.toggle('scored', k.result === 'goal');
+            if (navigator.vibrate) { try { navigator.vibrate(k.result === 'goal' ? [20, 40, 20] : 25); } catch (e) { /* ignore */ } }
+            pkVerify(rec).then(ok => { if (!ok) app.showToast('⚠️ That shot didn’t match what was sealed'); });
+        }, calm ? 50 : 640);
+        setTimeout(() => {
+            if (!V || V.rec !== rec || !flash.isConnected) return;
+            [ball, ball.querySelector('i'), shadow, keeper].forEach(el => el.getAnimations().forEach(a => a.cancel()));
+            keeper.classList.remove('dive'); flash.className = 'pk-flash'; pk.classList.remove('scored');
+        }, calm ? 1500 : 2500);
+    }
+
     // ======================================================================
     // Games on this phone
     // ======================================================================
@@ -340,6 +557,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function turnId(rec) {
         const st = rec.state;
         if (st.status !== 'active') return null;
+        if (rec.kind === 'penalty') return rec.players[st.phase === 'save' ? 1 - st.shooter : st.shooter];
         return rec.kind === 'chess' ? rec.players[st.turn === 'w' ? 0 : 1] : rec.players[st.turn];
     }
     const myTurn = rec => turnId(rec) === me();
@@ -355,6 +573,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const w = rec.players[st.winner === 'w' ? 0 : 1];
             return w === me() ? `You won · ${st.reason}` : `${first(w)} won · ${st.reason}`;
         }
+        if (rec.kind === 'penalty') { const w = rec.players[st.winner]; return w === me() ? `You won · ${st.reason}` : `${first(w)} won · ${st.reason}`; }
         const w = rec.players[st.colors.indexOf(st.winner)];
         return w === me() ? 'You won' : `${first(w)} won`;
     }
@@ -474,6 +693,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function paint() {
         if (!V) return;
+        // A penalty is mid-flight: draw the next thing once the ball has landed
+        if (V.pkBusyUntil && performance.now() < V.pkBusyUntil) { clearTimeout(V.pkDefer); V.pkDefer = setTimeout(paint, V.pkBusyUntil - performance.now() + 30); return; }
         const rec = V.rec;
         const k = KINDS[rec.kind];
         V.dlg.innerHTML = `
@@ -486,13 +707,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 </header>
                 <div class="bg-players" data-bg-players></div>
                 <p class="bg-status" role="status" aria-live="polite"></p>
-                <div class="bg-stage">${rec.kind === 'chess' ? chessHTML() : ludoHTML()}</div>
-                <div class="bg-under">${rec.kind === 'chess' ? chessUnder() : ludoUnder()}</div>
+                <div class="bg-stage">${rec.kind === 'chess' ? chessHTML() : rec.kind === 'penalty' ? pkHTML() : ludoHTML()}</div>
+                <div class="bg-under">${rec.kind === 'chess' ? chessUnder() : rec.kind === 'penalty' ? pkUnder() : ludoUnder()}</div>
             </div>`;
         if (V.chatEl) { V.dlg.querySelector('.bg-card').append(V.chatEl); paintChatBtn(); }
         paintPlayers();
         paintStatus();
         I.hydrateStorage && I.hydrateStorage(V.dlg);
+        if (rec.kind === 'penalty') {
+            pkAnimate();
+            if (rec.state.status === 'active' && rec.state.phase === 'reveal' && myTurn(rec)) pkReveal();
+            const needle = V.dlg.querySelector('.pk-needle');
+            if (needle && V.pkStart) needle.style.animationDelay = `-${(performance.now() - V.pkStart) % 1400}ms`;
+        }
     }
 
     // ---------- The chat room inside a game ----------
@@ -574,7 +801,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const present = (live.get(rec.id) || {}).present || new Set();
         const turn = turnId(rec);
         el.innerHTML = rec.players.map((p, i) => {
-            const side = rec.kind === 'chess' ? (i === 0 ? 'White' : 'Black') : cap(st.colors[i]);
+            const side = rec.kind === 'chess' ? (i === 0 ? 'White' : 'Black') : rec.kind === 'penalty' ? `${PK.goals(st)[i]} ${PK.goals(st)[i] === 1 ? 'goal' : 'goals'}` : cap(st.colors[i]);
             const here = rec.mode === 'computer' || p === me() || present.has(p);
             return `<div class="bg-p${p === turn ? ' turn' : ''}${rec.kind === 'ludo' ? ` lc-${st.colors[i]}` : ` side-${i === 0 ? 'w' : 'b'}`}">
                 <span class="bg-p-av">${String(p).startsWith('cpu') ? `<span class="avatar sm bg-cpu" aria-hidden="true">${ic('i-sparkle')}</span>` : I.avatar(who(p), 'sm')}<i class="bg-dot${here ? ' on' : ''}" title="${here ? 'Here now' : 'Not in the game right now'}"></i></span>
@@ -735,7 +962,11 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             while (V && V.rec.state.status === 'active' && String(turnId(V.rec)).startsWith('cpu')) {
                 const rec = V.rec;
-                if (rec.kind === 'chess') {
+                if (rec.kind === 'penalty') {
+                    await wait(700);
+                    if (!V || V.rec !== rec) return;
+                    rec.state = { ...rec.state, phase: 'save', plain: PK.cpuAim() }; // the computer places the ball; you dive
+                } else if (rec.kind === 'chess') {
                     await wait(350);
                     const m = CH.best(rec.state);
                     if (!V || V.rec !== rec) return;
@@ -767,7 +998,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const won = /^You won/.test(line);
         const box = document.createElement('div');
         box.className = 'bg-win';
-        box.innerHTML = `<div class="bg-win-card"><span class="bg-win-art" aria-hidden="true">${won ? '🏆' : rec.state.winner || rec.state.status === 'resigned' ? KINDS[rec.kind].art : '🤝'}</span><strong>${esc(line)}</strong>
+        box.innerHTML = `<div class="bg-win-card"><span class="bg-win-art" aria-hidden="true">${won ? '🏆' : rec.state.winner != null || rec.state.status === 'resigned' ? KINDS[rec.kind].art : '🤝'}</span><strong>${esc(line)}</strong>
             <div class="bg-win-acts"><button type="button" class="primary-btn" data-bg="rematch">Play again</button><button type="button" class="ghost-btn" data-bg="dismiss">See the board</button></div></div>`;
         V.dlg.querySelector('.bg-card').append(box);
         if (won && window.diaryGamesFx && window.diaryGamesFx.confetti) window.diaryGamesFx.confetti(box);
@@ -782,6 +1013,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (pr && V.promo) { const m = V.promo.find(x => x.promo === pr.dataset.promo); if (m) chessPlay(m); return; }
         const tok = e.target.closest('[data-tok]');
         if (tok) return ludoMove(Number(tok.dataset.tok));
+        const pkz = e.target.closest('[data-pkz]');
+        if (pkz) return pkTapZone(Number(pkz.dataset.pkz));
         const emo = e.target.closest('[data-bg-emoji]');
         if (emo) return chatSend(emo.dataset.bgEmoji);
         const b = e.target.closest('[data-bg]');
@@ -791,6 +1024,7 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (act === 'chat') toggleChat();
         else if (act === 'howto') howTo();
         else if (act === 'roll') ludoRoll();
+        else if (act === 'pk-shoot') pkShoot();
         else if (act === 'dismiss') b.closest('.bg-win')?.remove();
         else if (act === 'rematch') rematch(V.rec);
         else if (act === 'menu') {
@@ -811,8 +1045,8 @@ document.addEventListener('DOMContentLoaded', () => {
     async function resign(rec) {
         if (!(await app.ask({ title: 'Resign this game?', text: 'The game ends and the win goes to the other side.', ok: 'Resign' }))) return;
         const idx = rec.players.indexOf(me());
-        const winnerIdx = rec.kind === 'chess' ? 1 - idx : rec.players.findIndex((p, i) => i !== idx);
-        rec.state = { ...rec.state, status: 'resigned', winnerIdx, winner: rec.kind === 'chess' ? (winnerIdx === 0 ? 'w' : 'b') : rec.state.colors[winnerIdx], reason: 'resignation' };
+        const winnerIdx = rec.kind !== 'ludo' ? 1 - idx : rec.players.findIndex((p, i) => i !== idx);
+        rec.state = { ...rec.state, status: 'resigned', winnerIdx, winner: rec.kind === 'chess' ? (winnerIdx === 0 ? 'w' : 'b') : rec.kind === 'penalty' ? winnerIdx : rec.state.colors[winnerIdx], reason: 'resignation' };
         afterMove(rec);
         paint();
         celebrate(rec);
@@ -824,13 +1058,13 @@ document.addEventListener('DOMContentLoaded', () => {
     function create(kind, mode, players) {
         const rec = {
             id: uid(), kind, mode, players, seq: 0, created: Date.now(), updated: Date.now(),
-            state: kind === 'chess' ? CH.init() : LU.init(players.length)
+            state: kind === 'chess' ? CH.init() : kind === 'penalty' ? PK.init() : LU.init(players.length)
         };
         saveRec(rec);
         return rec;
     }
     async function rematch(rec) {
-        const players = rec.kind === 'chess' ? [rec.players[1], rec.players[0]] : rec.players.slice(1).concat(rec.players[0]); // swap who starts
+        const players = rec.kind !== 'ludo' ? [rec.players[1], rec.players[0]] : rec.players.slice(1).concat(rec.players[0]); // swap who starts
         const n = create(rec.kind, rec.mode, players);
         if (n.mode === 'friends') {
             const sent = await Promise.all(n.players.filter(p => p !== me()).map(p => postCard(n, p, 'invite')));
@@ -851,11 +1085,11 @@ document.addEventListener('DOMContentLoaded', () => {
             <form class="gm-card" method="dialog">
                 <header class="gm-head">
                     <button type="button" class="icon-btn" data-x aria-label="Close">${ic('i-close')}</button>
-                    <div class="gm-title"><strong>${ic(k.icon)}New ${esc(k.title)} game</strong><small>${kind === 'chess' ? 'Pick a friend, or play the computer' : 'Pick one to three friends, or play the computer'}</small></div>
+                    <div class="gm-title"><strong>${ic(k.icon)}New ${esc(k.title)} game</strong><small>${kind !== 'ludo' ? 'Pick a friend, or play the computer' : 'Pick one to three friends, or play the computer'}</small></div>
                 </header>
                 <div class="gm-body wpm-pick-body">
                     <div class="bg-cpu-row">
-                        <button type="button" class="bg-cpu-btn" data-cpu="1">${ic('i-sparkle')}<span><strong>Play the computer</strong><small>${kind === 'chess' ? 'You’re white' : 'You and one computer player'}</small></span></button>
+                        <button type="button" class="bg-cpu-btn" data-cpu="1">${ic('i-sparkle')}<span><strong>Play the computer</strong><small>${kind === 'chess' ? 'You’re white' : kind === 'penalty' ? 'You take the first kick' : 'You and one computer player'}</small></span></button>
                         ${kind === 'ludo' ? `<button type="button" class="bg-cpu-btn ht-open" data-howto>${ic('i-play')}<span><strong>Watch how to play</strong><small>A one-minute video</small></span></button>` : ''}
                         ${kind === 'ludo' ? '<button type="button" class="bg-cpu-btn" data-cpu="3"><span class="bg-cpu-n">4</span><span><strong>Four-player game</strong><small>You and three computer players</small></span></button>' : ''}
                     </div>
@@ -878,7 +1112,7 @@ document.addEventListener('DOMContentLoaded', () => {
         dlg.addEventListener('change', () => {
             const ids = picked();
             dlg.querySelectorAll('input[type="checkbox"]').forEach(i => { i.disabled = !i.checked && ids.length >= k.max; });
-            if (btn) { btn.disabled = !ids.length; btn.textContent = ids.length ? (kind === 'chess' ? 'Send the challenge' : `Start a ${ids.length + 1}-player game`) : 'Send the invite'; }
+            if (btn) { btn.disabled = !ids.length; btn.textContent = ids.length ? (kind !== 'ludo' ? 'Send the challenge' : `Start a ${ids.length + 1}-player game`) : 'Send the invite'; }
         });
         dlg.addEventListener('input', e => {
             if (!e.target.classList.contains('wpm-find')) return;
@@ -958,6 +1192,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="pn-rail matches bg-rail" role="list">
                 <button type="button" role="listitem" class="pn-match new bg-new" data-bg-new="chess"><span class="pn-new-ic bg-art">♞</span><strong>Chess</strong><small>A friend or the computer</small></button>
                 <button type="button" role="listitem" class="pn-match new bg-new" data-bg-new="ludo"><span class="pn-new-ic bg-art">🎲</span><strong>Ludo</strong><small>Two to four players</small></button>
+                <button type="button" role="listitem" class="pn-match new bg-new pk-tile" data-bg-new="penalty"><span class="pn-new-ic bg-art">⚽</span><strong>Penalty Shootout</strong><small>A friend or the computer</small></button>
                 ${active.map(g => {
                     const others = g.players.filter(p => p !== me());
                     return `<button type="button" role="listitem" class="pn-match${myTurn(g) ? ' mine' : ''}" data-bg-game="${esc(g.id)}" aria-label="${esc(KINDS[g.kind].title)} with ${esc(others.map(p => who(p).display_name || 'Someone').join(', '))} — ${esc(statusLine(g))}">
@@ -1217,5 +1452,5 @@ document.addEventListener('DOMContentLoaded', () => {
         HT.dlg.querySelector('.ht-stage').append(end);
     }
 
-    window.diaryBoardGames = { KINDS, newGame, openGame, howTo, cardHTML, listHTML, waiting, preview: a => a.game === 'mafia' ? '🎭 Game no longer available' : `${(KINDS[a.game] || {}).art || '🎲'} ${(KINDS[a.game] || {}).title || 'Game'}${a.note === 'invite' ? ' — invite' : a.note === 'over' ? ' — game over' : ' — your move'}`, _engines: { CH, LU } };
+    window.diaryBoardGames = { KINDS, newGame, openGame, howTo, cardHTML, listHTML, waiting, preview: a => a.game === 'mafia' ? '🎭 Game no longer available' : `${(KINDS[a.game] || {}).art || '🎲'} ${(KINDS[a.game] || {}).title || 'Game'}${a.note === 'invite' ? ' — invite' : a.note === 'over' ? ' — game over' : ' — your move'}`, _engines: { CH, LU, PK } };
 });
