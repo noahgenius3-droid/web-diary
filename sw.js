@@ -8,11 +8,11 @@
 // imported while the worker installs, so this happens here, once.
 try { self.window = self; importScripts('/config.js'); } catch (e) { /* calls can still be declined in the app */ }
 
-const CACHE = 'cordial-shell-v169';
+const CACHE = 'cordial-shell-v170';
 const SHELL = [
     '/', '/index.html', '/manifest.webmanifest',
     '/style.css', '/photoedit.css',
-    '/config.js', '/rich.js', '/media.js', '/dilute.js', '/script.js', '/social.js', '/stories.js', '/library.js', '/market.js', '/profile.js', '/invite.js', '/mention.js', '/spaces.js', '/notemedia.js', '/noteshare.js', '/noteslides.js', '/audiolib.js', '/sound.js', '/mediaeditor.js', '/support.js', '/helpline.js', '/schedule.js', '/play.js', '/games.js', '/boardgames.js', '/studio.js', '/chattools.js', '/safety.js',
+    '/config.js', '/rich.js', '/media.js', '/dilute.js', '/script.js', '/social.js', '/stories.js', '/library.js', '/market.js', '/profile.js', '/invite.js', '/mention.js', '/spaces.js', '/notemedia.js', '/noteshare.js', '/noteslides.js', '/audiolib.js', '/sound.js', '/mediaeditor.js', '/support.js', '/helpline.js', '/schedule.js', '/play.js', '/games.js', '/boardgames.js', '/scan.js', '/chattools.js', '/safety.js',
     '/community.js', '/live.js', '/explore.js', '/call.js', '/notify.js', '/settings.js', '/transcribe.js', '/ai.js',
     '/photoedit.js', '/sync.js', '/zoom.js', '/speak.js', '/zoom.css', '/speak.css', '/groupchat.js', '/location.js', '/location.css', '/wallpaper.js',
     '/icons/icon-180.png', '/icons/icon-192.png', '/icons/icon-512.png',
