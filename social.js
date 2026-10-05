@@ -2789,12 +2789,38 @@ document.addEventListener('DOMContentLoaded', () => {
             el.dataset.hydrated = '1';
             if (!entry) {
                 el.classList.add('media-missing');
+                retryStorage(el);
                 return;
             }
+            el.classList.remove('media-missing');
             if (el.tagName === 'A') el.href = entry.url;
             else el.src = entry.url;
         });
     }
+    // Try a photo again a little later (a just-uploaded file, a slow connection, an expired link): up to three times
+    const STORAGE_RETRY = [1500, 4000, 9000];
+    function retryStorage(el, dropCached = false) {
+        const n = Number(el.dataset.tries || 0);
+        if (n >= STORAGE_RETRY.length) return;
+        el.dataset.tries = String(n + 1);
+        setTimeout(() => {
+            if (!el.isConnected) return;
+            if (dropCached) s.urls.delete(`${el.dataset.bucket || BUCKET}:${el.dataset.path}`);
+            delete el.dataset.hydrated;
+            hydrateStorage(el.parentElement || document.body);
+        }, STORAGE_RETRY[n]);
+    }
+    // An image that fails to load: a fresh link for storage photos, a second try for profile photos
+    document.addEventListener('error', e => {
+        const img = e.target;
+        if (!img || img.tagName !== 'IMG') return;
+        if (img.dataset.path && img.dataset.hydrated) return retryStorage(img, true);
+        if (img.closest('.avatar') && !img.dataset.retried && img.src && !img.src.startsWith('blob:')) {
+            img.dataset.retried = '1';
+            const src = img.src;
+            setTimeout(() => { if (img.isConnected) img.src = `${src}${src.includes('?') ? '&' : '?'}r=${Date.now()}`; }, 1500);
+        }
+    }, true);
 
     // ---------- Feed ----------
     const FEED_SELECT = `

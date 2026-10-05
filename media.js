@@ -8,14 +8,22 @@ window.Media = (() => {
     const STORE = 'blobs';
     let dbPromise = null;
 
+    function openOnce() {
+        return new Promise((resolve, reject) => {
+            const req = indexedDB.open(DB_NAME, 1);
+            req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE); };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+            req.onblocked = () => reject(new Error('blocked'));
+        });
+    }
     function db() {
         if (!dbPromise) {
-            dbPromise = new Promise((resolve, reject) => {
-                const req = indexedDB.open(DB_NAME, 1);
-                req.onupgradeneeded = () => req.result.createObjectStore(STORE);
-                req.onsuccess = () => resolve(req.result);
-                req.onerror = () => reject(req.error);
-            });
+            // Some iPhone versions leave the first open of the day hanging until it's asked again
+            const timeout = ms => new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms));
+            dbPromise = Promise.race([openOnce(), timeout(3000)])
+                .catch(() => Promise.race([openOnce(), timeout(6000)]))
+                .catch(err => { dbPromise = null; throw err; });
         }
         return dbPromise;
     }
@@ -93,15 +101,22 @@ window.Media = (() => {
     }
 
     // Fill <img|audio|a data-media="id"> elements with local object URLs
+    const RETRY = [500, 1500, 4000];
     function hydrate(root) {
         root.querySelectorAll('[data-media]').forEach(async el => {
             if (el.dataset.hydrated) return;
             el.dataset.hydrated = '1';
-            const u = await url(el.dataset.media);
+            let u = null;
+            for (let i = 0; i <= RETRY.length && el.isConnected; i++) {
+                u = await url(el.dataset.media);
+                if (u) break;
+                if (i < RETRY.length) await new Promise(r => setTimeout(r, RETRY[i]));
+            }
             if (!u) {
                 el.classList.add('media-missing');
                 return;
             }
+            el.classList.remove('media-missing');
             if (el.tagName === 'A') el.href = u;
             else el.src = u;
         });
