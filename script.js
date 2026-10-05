@@ -467,10 +467,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
     // …and gives it back when the last one closes from inside the app
+    // Only one Back at a time: two sheets closing together (a prompt, then the sheet that asked it) must not step
+    // back twice — the second Back would leave Cordial
+    let backPending = false;
     function onModalClosed() {
         setTimeout(() => {
-            if (topModal()) return; // another sheet is still (or now) open
+            if (topModal() || backPending) return; // another sheet is still (or now) open, or we're already going back
             if (history.state && history.state.overlay) {
+                backPending = true;
+                setTimeout(() => { backPending = false; }, 1500); // in case the browser never reports it
                 ignorePops++;
                 history.back();
             }
@@ -480,6 +485,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('popstate', e => {
         if (ignorePops) {
             ignorePops--;
+            backPending = false;
             return;
         }
         const top = topModal();
@@ -1559,14 +1565,14 @@ document.addEventListener('DOMContentLoaded', () => {
                </span>`
             : `<span class="mcard-actions">
                    <button class="mcard-edit mcard-share" data-action="share-note" data-id="${id}" aria-label="Share note" title="Share"><svg class="i"><use href="#i-share"/></svg></button>
-                   <span class="mcard-edit" aria-hidden="true"><svg class="i"><use href="#i-pencil"/></svg></span>
                </span>`;
+        const more = trash ? '' : `<button type="button" class="mcard-more" data-action="note-menu" data-id="${id}" aria-label="Note actions" aria-haspopup="menu" aria-expanded="false" title="Note actions"><svg class="i"><use href="#i-more"/></svg></button>`;
 
         return `
             <article class="mcard c-${n.color}${photo ? ' has-photo' : ''}${state.pour < 100 && !hidden ? ` poured-${state.pour}` : ''}${hidden ? ' is-private' : ''}${n.pinned ? ' is-pinned' : ''}" ${openAttrs}>
-                ${n.pinned && !trash ? '<span class="mcard-pin" title="Pinned"><svg class="i"><use href="#i-pin-note"/></svg></span>' : ''}
+                ${more}
                 ${tags.length ? `<div class="mcard-tags">${tags.map(t => `<span>${t}</span>`).join('')}</div>` : ''}
-                <h3>${hidden ? '🔒 Private entry' : highlight(title, q)}</h3>
+                <h3>${n.pinned && !trash ? '<span class="mcard-pinned" title="Pinned"><svg class="i" aria-hidden="true"><use href="#i-pin-note"/></svg><span class="sr-only">Pinned: </span></span>' : ''}${hidden ? '🔒 Private entry' : highlight(title, q)}</h3>
                 ${photo ? `<img class="mcard-photo" data-media="${escapeHTML(photo.id)}" alt="">` : ''}
                 ${body ? `<p class="mcard-body">${withTags(highlight(body, q))}</p>` : hidden ? '<p class="mcard-body">Open to read this entry.</p>' : ''}
                 ${noteTags.length && !trash ? `<div class="mcard-hashtags">${noteTags.map(t => `<button class="mcard-hashtag" data-action="note-tag" data-tag="${escapeHTML(t)}">#${escapeHTML(t)}</button>`).join('')}</div>` : ''}
@@ -1626,6 +1632,9 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'share-note':
                 openShareSheet(id);
                 break;
+            case 'note-menu':
+                noteMenu(el, id);
+                break;
             case 'template':
                 startTemplate(el.dataset.id);
                 break;
@@ -1681,6 +1690,141 @@ document.addEventListener('DOMContentLoaded', () => {
             e.target.click();
         }
     });
+
+    // ---------- A note card's own actions: Pin, Edit, Move to folder, Share, Delete ----------
+    function noteMenu(anchor, id) {
+        const n = notes.find(x => x.id === id);
+        if (!n) return;
+        const btn = anchor.matches('.mcard-more') ? anchor : anchor.querySelector('.mcard-more') || anchor;
+        btn.setAttribute('aria-expanded', 'true');
+        btn.closest('.mcard')?.classList.add('menu-open');
+        const closed = () => { btn.setAttribute('aria-expanded', 'false'); btn.closest('.mcard')?.classList.remove('menu-open'); };
+        openPopover(btn, [
+            { label: n.pinned ? 'Unpin' : 'Pin to top', icon: 'i-pin-note', onClick: () => togglePinned(n) },
+            { label: 'Edit', icon: 'i-pencil', onClick: () => openNote(n) },
+            { label: 'Move to folder', icon: 'i-folder', value: n.folderId ? (folders.find(x => x.id === n.folderId) || {}).name || '' : '', onClick: () => moveSheet(n) },
+            { label: 'Share', icon: 'i-share', onClick: () => openShareSheet(n.id) },
+            { sep: true },
+            { label: 'Delete', icon: 'i-trash', danger: true, onClick: () => deleteFromCard(n) }
+        ]);
+        // Some popovers don't report closing: tidy up when focus/clicks move on
+        setTimeout(() => {
+            const done = e => {
+                if (e.type === 'keydown' ? e.key !== 'Escape' : e.target.closest('.popover')) return;
+                closed();
+                document.removeEventListener('pointerdown', done, true);
+                document.removeEventListener('keydown', done, true);
+                if (e.type === 'keydown') setTimeout(() => btn.isConnected && btn.focus({ preventScroll: true }), 0); // focus back on the card's button
+            };
+            document.addEventListener('pointerdown', done, true);
+            document.addEventListener('keydown', done, true);
+        }, 0);
+    }
+    function togglePinned(n) {
+        const was = !!n.pinned;
+        patchNote(n, { pinned: !was });
+        showToast(was ? 'Unpinned' : 'Pinned to the top 📌', () => patchNote(n, { pinned: was }));
+    }
+    async function deleteFromCard(n) {
+        const ok = await ask({ title: 'Delete note?', text: 'This note will be moved to Trash. You can restore it from Trash.', ok: 'Delete', danger: true });
+        if (!ok) return;
+        const card = content.querySelector(`.mcard[data-id="${CSS.escape(n.id)}"]`);
+        const go = () => {
+            n.trashedAt = Date.now();
+            persist();
+            emit('note', n);
+            render();
+            showToast('Note moved to Trash', () => {
+                n.trashedAt = null;
+                persist();
+                emit('note', n);
+                render();
+            });
+        };
+        if (card && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            card.classList.add('leaving');
+            setTimeout(go, 240);
+        } else go();
+    }
+    // Move to folder: a sheet on phones, a small window on bigger screens
+    function moveSheet(n) {
+        const dlg = document.createElement('dialog');
+        dlg.className = 'move-sheet';
+        dlg.setAttribute('aria-labelledby', 'mv-h');
+        const list = () => {
+            const q = (dlg.querySelector('.mv-find')?.value || '').trim().toLowerCase();
+            const rows = [{ id: '', name: 'No folder', color: null }, ...folders].filter(x => !q || x.name.toLowerCase().includes(q));
+            return rows.map(x => `<button type="button" class="mv-row${(n.folderId || '') === x.id ? ' on' : ''}" data-folder="${escapeHTML(x.id)}" aria-pressed="${(n.folderId || '') === x.id}">
+                <span class="mv-ic${x.color ? ` c-${escapeHTML(x.color)}` : ''}" aria-hidden="true"><svg class="i"><use href="#${x.id ? 'i-folder' : 'i-notes'}"/></svg></span>
+                <span class="mv-name">${escapeHTML(x.name)}</span>${(n.folderId || '') === x.id ? '<svg class="i mv-check" aria-hidden="true"><use href="#i-check"/></svg>' : ''}</button>`).join('') || '<p class="mv-none">No folders match</p>';
+        };
+        dlg.innerHTML = `
+            <div class="mv-card">
+                <header class="mv-head"><h3 id="mv-h">Move to folder</h3><button type="button" class="icon-btn" data-mv="close" aria-label="Close"><svg class="i"><use href="#i-close"/></svg></button></header>
+                ${folders.length > 5 ? '<label class="search mv-search"><svg class="i"><use href="#i-search"/></svg><input type="search" class="mv-find" placeholder="Search folders" aria-label="Search folders"></label>' : ''}
+                <div class="mv-list">${list()}</div>
+                <button type="button" class="mv-new" data-mv="new"><svg class="i"><use href="#i-plus"/></svg>Create new folder</button>
+            </div>`;
+        document.body.append(dlg);
+        const move = (folderId) => {
+            const before = n.folderId || null;
+            const after = folderId || null;
+            dlg.close();
+            if (before === after) return;
+            patchNote(n, { folderId: after });
+            const name = after ? (folders.find(x => x.id === after) || {}).name || 'folder' : null;
+            showToast(name ? `Moved to ${name}` : 'Taken out of its folder', () => patchNote(n, { folderId: before }));
+        };
+        dlg.addEventListener('input', e => { if (e.target.matches('.mv-find')) dlg.querySelector('.mv-list').innerHTML = list(); });
+        dlg.addEventListener('click', async e => {
+            if (e.target === dlg || e.target.closest('[data-mv="close"]')) return dlg.close();
+            const row = e.target.closest('[data-folder]');
+            if (row) return move(row.dataset.folder);
+            if (e.target.closest('[data-mv="new"]')) {
+                const r = await ask({ title: 'New folder', value: '', placeholder: 'Folder name', color: COLORS[folders.length % COLORS.length], ok: 'Create and move' });
+                if (!r) return;
+                const folder = { id: uid(), name: r.value, color: r.color, createdAt: Date.now() };
+                folders.unshift(folder);
+                persist();
+                move(folder.id);
+            }
+        });
+        dlg.addEventListener('close', () => dlg.remove());
+        dlg.showModal();
+        (dlg.querySelector('.mv-find') || dlg.querySelector('.mv-row.on') || dlg.querySelector('.mv-row'))?.focus();
+    }
+    // Long-press a card on a phone, or right-click it on a computer, for the same actions
+    (() => {
+        let timer = null, fired = false, start = null;
+        content.addEventListener('pointerdown', e => {
+            const card = e.target.closest('.mcard[data-id]');
+            if (!card || e.pointerType === 'mouse' || e.target.closest('button, a, input')) return;
+            fired = false;
+            start = [e.clientX, e.clientY];
+            clearTimeout(timer);
+            timer = setTimeout(() => {
+                timer = null;
+                fired = true;
+                if (navigator.vibrate) { try { navigator.vibrate(12); } catch (err) { /* ignore */ } }
+                noteMenu(card, card.dataset.id);
+            }, 480);
+        });
+        const cancel = e => {
+            if (!timer) return;
+            if (e.type === 'pointermove' && start && Math.hypot(e.clientX - start[0], e.clientY - start[1]) < 10) return;
+            clearTimeout(timer);
+            timer = null;
+        };
+        ['pointerup', 'pointercancel', 'pointermove'].forEach(ev => content.addEventListener(ev, cancel));
+        // The tap that ends a long press shouldn't also open the note
+        content.addEventListener('click', e => { if (fired && e.target.closest('.mcard')) { fired = false; e.preventDefault(); e.stopPropagation(); } }, true);
+        content.addEventListener('contextmenu', e => {
+            const card = e.target.closest('.mcard[data-id]');
+            if (!card || e.target.closest('a, input, textarea')) return;
+            e.preventDefault();
+            if (!fired) noteMenu(card, card.dataset.id);
+        });
+    })();
 
     function openJournal(kind) {
         const today = dayKey(new Date());

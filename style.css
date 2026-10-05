@@ -18199,3 +18199,59 @@ dialog.scam::backdrop { background: #000; }
 .ln.on .ln-acts { margin: 0 0 12px; }
 @media (max-width: 760px) { .explore .ex-rail .ex-tile { height: 180px; } }
 .ln-btn:not(.primary) { background: var(--surface); box-shadow: 0 0 0 1px var(--border), 0 1px 2px rgba(20, 24, 40, 0.05); }
+
+/* =====================================================================
+   Note cards: "Note actions" (⋯) — Pin, Edit, Move to folder, Share, Delete
+   ===================================================================== */
+.mcard-more { position: absolute; top: 8px; right: 8px; z-index: 2; display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 50%;
+    background: color-mix(in srgb, var(--surface) 88%, transparent); color: var(--text); box-shadow: 0 1px 3px rgba(20, 24, 40, 0.12), 0 0 0 1px color-mix(in srgb, var(--text) 8%, transparent);
+    cursor: pointer; touch-action: manipulation; transition: opacity 170ms ease, transform 170ms cubic-bezier(0.23, 1, 0.32, 1), background 140ms ease; }
+.mcard-more .i { width: 18px; height: 18px; }
+.mcard-more:active { transform: scale(0.92); }
+.mcard-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mcard-more[aria-expanded="true"] { background: var(--accent); color: var(--on-accent, #fff); }
+/* Touch: always there (a bigger target than it looks). Mouse: appears on the card you're over, or when tabbing to it */
+@media (pointer: coarse) { .mcard-more::before { content: ""; position: absolute; inset: -5px; } }
+@media (hover: hover) and (pointer: fine) {
+    .mcard-more { opacity: 0; transform: scale(0.85); pointer-events: none; }
+    .mcard:hover .mcard-more, .mcard:focus-within .mcard-more, .mcard.menu-open .mcard-more { opacity: 1; transform: none; pointer-events: auto; }
+    .mcard { transition: box-shadow 180ms ease, transform 180ms cubic-bezier(0.23, 1, 0.32, 1); }
+    .mcard:hover { box-shadow: 0 10px 24px -14px rgba(20, 24, 40, 0.35), 0 0 0 1px color-mix(in srgb, var(--text) 10%, transparent); }
+}
+/* Titles make room for the button */
+.mcard:has(.mcard-more) > h3 { padding-right: 34px; }
+/* Pinned: a small pin by the title */
+.mcard-pinned { display: inline-grid; place-items: center; width: 20px; height: 20px; margin-right: 6px; border-radius: 50%; background: #fef3c7; color: #d97706; vertical-align: 2px; animation: pin-in 260ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+.mcard-pinned .i { width: 12px; height: 12px; }
+@keyframes pin-in { from { transform: scale(0.4) rotate(-30deg); opacity: 0; } }
+/* Deleting: the card folds away */
+.mcard.leaving { animation: mcard-out 240ms cubic-bezier(0.4, 0, 1, 1) forwards; pointer-events: none; }
+@keyframes mcard-out { to { opacity: 0; transform: scale(0.94); } }
+@media (prefers-reduced-motion: reduce) { .mcard-more, .mcard { transition: none; } .mcard-pinned, .mcard.leaving { animation: none; } }
+
+/* Move to folder: a sheet from the bottom on phones, a small window on bigger screens */
+dialog.move-sheet { width: min(420px, calc(100% - 32px)); max-height: min(560px, 85dvh); margin: auto; padding: 0; border: 0; border-radius: 22px; background: var(--surface); color: var(--text); box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.35); overflow: hidden; }
+dialog.move-sheet::backdrop { background: rgba(9, 9, 11, 0.45); }
+dialog.move-sheet[open] { animation: ps-in 200ms cubic-bezier(0.23, 1, 0.32, 1); }
+.mv-card { display: flex; flex-direction: column; max-height: inherit; }
+.mv-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 10px 6px 18px; }
+.mv-head h3 { margin: 0; font-size: 1.05rem; }
+.mv-search { margin: 4px 14px 8px; }
+.mv-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 8px; display: grid; gap: 2px; }
+.mv-row { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 6px 10px; border: 0; border-radius: 12px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.mv-row:active { transform: scale(0.99); }
+@media (hover: hover) and (pointer: fine) { .mv-row:hover { background: var(--input); } }
+.mv-row.on { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.mv-row:focus-visible, .mv-new:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.mv-ic { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: var(--card, var(--input)); }
+.mv-ic .i { width: 18px; height: 18px; }
+.mv-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.mv-check { width: 18px; height: 18px; color: var(--accent); }
+.mv-none { margin: 12px; color: var(--text-muted); text-align: center; }
+.mv-new { display: flex; align-items: center; gap: 10px; min-height: 52px; margin: 6px 8px calc(10px + env(safe-area-inset-bottom, 0px)); padding: 0 14px; border: 1.5px dashed var(--border-strong); border-radius: 14px; background: none; color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; }
+.mv-new .i { width: 18px; height: 18px; }
+@media (max-width: 600px) {
+    dialog.move-sheet { width: 100%; max-width: 100%; margin: auto 0 0; border-radius: 22px 22px 0 0; }
+    dialog.move-sheet[open] { animation: mv-up 260ms cubic-bezier(0.32, 0.72, 0, 1); }
+}
+@keyframes mv-up { from { transform: translateY(100%); } }
