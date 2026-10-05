@@ -241,6 +241,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (!window.diaryNoteSlides) return;
                     window.diaryNoteSlides.open({ title: edTitle.value, text: Rich.toText(edBody.innerHTML), color: editing && editing.color, createdAt: editing && editing.createdAt });
                 } },
+                // Note Studio (studio.js): study it, play it, turn it into content, give it a cover, scan pages into it
+                { cmd: 'study', label: 'Study mode: flashcards and quizzes', icon: 'i-study', run: () => window.diaryStudio && window.diaryStudio.fromEditor('study') },
+                { cmd: 'playnote', label: 'Play this note (Playnote)', icon: 'i-playnote', run: () => window.diaryStudio && window.diaryStudio.fromEditor('play') },
+                { cmd: 'create', label: 'Create from this note: post, carousel, quiz, thread…', icon: 'i-sparkle', run: () => window.diaryStudio && window.diaryStudio.fromEditor('create') },
+                { cmd: 'cover', label: 'Note cover', icon: 'i-cover', run: () => window.diaryStudio && window.diaryStudio.fromEditor('cover') },
+                { cmd: 'scan', label: 'Scan a page into this note', icon: 'i-scan', run: () => window.diaryStudio && window.diaryStudio.scan({ into: true }) },
                 // Dilute lives here now, not as a permanent slider under the title
                 { cmd: 'dilute', label: 'Dilute: show just the essence', icon: 'i-drop', run: () => {
                     paintDilute();
@@ -257,9 +263,9 @@ document.addEventListener('DOMContentLoaded', () => {
         document.querySelectorAll('.nav-item[data-view], .tab-item[data-view]').forEach(b =>
             b.addEventListener('click', () => setView(b.dataset.view)));
         $('tab-more').addEventListener('click', e => openMainMenu(e.currentTarget));
-        $('add-new-btn').addEventListener('click', () => openEditor(null));
+        $('add-new-btn').addEventListener('click', () => (window.diaryStudio ? window.diaryStudio.createSheet() : openEditor(null)));
         $('write-today').addEventListener('click', () => openEditor(null));
-        $('fab').addEventListener('click', () => openEditor(null, newNoteDefaults()));
+        $('fab').addEventListener('click', () => (window.diaryStudio && !['folder', 'calendar'].includes(state.view) ? window.diaryStudio.createSheet() : openEditor(null, newNoteDefaults())));
         $('profile-btn').addEventListener('click', e =>
             hooks.profileClick ? hooks.profileClick(e.currentTarget) : renameUser());
         $('menu-btn').addEventListener('click', e => openMainMenu(e.currentTarget));
@@ -1547,6 +1553,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ].filter(Boolean).slice(0, 2);
         const noteTags = hidden ? [] : tagsIn(fullText(n)).slice(0, 3);
         const photo = !hidden && (n.attachments.find(a => a.id === n.cover) || n.attachments.find(a => a.kind === 'image' || a.kind === 'drawing'));
+        const look = !hidden && !trash && window.diaryStudio ? window.diaryStudio.cardBits(n) : null;
 
         const openAttrs = trash ? '' : `data-action="open-note" data-id="${id}" tabindex="0" role="button" aria-label="Open ${escapeHTML(title)}"`;
         const actions = trash
@@ -1560,15 +1567,16 @@ document.addEventListener('DOMContentLoaded', () => {
                </span>`;
 
         return `
-            <article class="mcard c-${n.color}${photo ? ' has-photo' : ''}${state.pour < 100 && !hidden ? ` poured-${state.pour}` : ''}${hidden ? ' is-private' : ''}${n.pinned ? ' is-pinned' : ''}" ${openAttrs}>
+            <article class="mcard c-${n.color}${photo ? ' has-photo' : ''}${look ? ' has-cover' : ''}${state.pour < 100 && !hidden ? ` poured-${state.pour}` : ''}${hidden ? ' is-private' : ''}${n.pinned ? ' is-pinned' : ''}" ${openAttrs}>
                 ${n.pinned && !trash ? '<span class="mcard-pin" title="Pinned"><svg class="i"><use href="#i-pin-note"/></svg></span>' : ''}
+                ${look ? look.band : ''}
                 ${tags.length ? `<div class="mcard-tags">${tags.map(t => `<span>${t}</span>`).join('')}</div>` : ''}
                 <h3>${hidden ? '🔒 Private entry' : highlight(title, q)}</h3>
                 ${photo ? `<img class="mcard-photo" data-media="${escapeHTML(photo.id)}" alt="">` : ''}
                 ${body ? `<p class="mcard-body">${withTags(highlight(body, q))}</p>` : hidden ? '<p class="mcard-body">Open to read this entry.</p>' : ''}
                 ${noteTags.length && !trash ? `<div class="mcard-hashtags">${noteTags.map(t => `<button class="mcard-hashtag" data-action="note-tag" data-tag="${escapeHTML(t)}">#${escapeHTML(t)}</button>`).join('')}</div>` : ''}
                 <div class="mcard-foot">
-                    <span class="mcard-date">${date.toLocaleDateString(undefined, date.getFullYear() === new Date().getFullYear() ? { day: 'numeric', month: 'short' } : { day: 'numeric', month: 'short', year: 'numeric' })}${n.mood && !hidden ? ` · ${MOODS[n.mood]}` : ''}</span>
+                    ${look ? look.meta : ''}<span class="mcard-date"${look ? ' hidden' : ''}>${date.toLocaleDateString(undefined, date.getFullYear() === new Date().getFullYear() ? { day: 'numeric', month: 'short' } : { day: 'numeric', month: 'short', year: 'numeric' })}${n.mood && !hidden ? ` · ${MOODS[n.mood]}` : ''}</span>
                     ${actions}
                 </div>
             </article>`;
@@ -1755,15 +1763,15 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             editing = {
                 id: null, color: defaults.color || COLORS[notes.length % COLORS.length], mood: null, emotions: [],
-                kind: defaults.kind || 'free', sections: emptySections(), goals: [], attachments: [], location: null,
-                private: false, shared: !!defaults.shared, pinned: false, createdAt
+                kind: defaults.kind || 'free', sections: emptySections(), goals: defaults.goals || [], attachments: [], location: null,
+                private: false, shared: !!defaults.shared, pinned: false, createdAt, ntype: defaults.ntype || null, look: defaults.look || null
             };
         } else {
             editing = {
                 id: note.id, color: note.color, mood: note.mood, emotions: [...note.emotions], kind: note.kind,
                 sections: { ...emptySections(), ...note.sections }, goals: note.goals.map(g => ({ ...g })),
                 attachments: note.attachments.map(a => ({ ...a })), cover: note.cover || null, location: note.location,
-                private: note.private, shared: note.shared, pinned: note.pinned, createdAt: note.createdAt
+                private: note.private, shared: note.shared, pinned: note.pinned, createdAt: note.createdAt, ntype: note.ntype || null, look: note.look || null
             };
         }
         Object.assign(editing, { shownSections: new Set(), showGoals: !!defaults.showGoals, changed: false, created: false });
@@ -2311,7 +2319,9 @@ document.addEventListener('DOMContentLoaded', () => {
             location: session.location,
             private: session.private,
             shared: session.shared && !session.private,
-            pinned: !!session.pinned
+            pinned: !!session.pinned,
+            ...(session.ntype ? { ntype: session.ntype } : {}),
+            ...(session.look ? { look: session.look } : {})
         };
     }
 
@@ -2836,9 +2846,10 @@ document.addEventListener('DOMContentLoaded', () => {
             { label: 'Voice note', icon: 'i-wave', tile: true, cls: 'mobile-only', onClick: () => window.diaryTranscribe && window.diaryTranscribe.open() },
             ...[['archive', 'Archive', 'i-archive'], ['trash', 'Trash', 'i-trash']].map(tile),
             { heading: 'Discover', cls: 'mobile-only' },
-            ...[['play', 'Playnote', 'i-trophy'], ['spaces', 'Spaces', 'i-headphones'], ['reels', 'Reels', 'i-reel'], ['library', 'Library', 'i-book'], ['market', 'Market', 'i-store']].map(tile),
+            ...[['play', 'Playnote', 'i-trophy'], ['discover', 'Discover', 'i-discover'], ['spaces', 'Spaces', 'i-headphones'], ['reels', 'Reels', 'i-reel'], ['library', 'Library', 'i-book'], ['market', 'Market', 'i-store']].map(tile),
             { sep: true, cls: 'mobile-only' },
             ...(hooks.menuItems ? hooks.menuItems() : []),
+            ...(window.diaryStudio ? [{ label: 'What’s new', icon: 'i-sparkle', onClick: () => window.diaryStudio.whatsNew() }] : []),
             { label: 'Refresh', icon: 'i-refresh', onClick: () => refreshView() },
             { label: 'Settings', icon: 'i-settings', onClick: () => setView('settings') }
         ]);
@@ -3082,6 +3093,20 @@ document.addEventListener('DOMContentLoaded', () => {
             return n;
         },
         openNote: id => openNote(notes.find(n => n.id === id)),
+        newNote: (defaults = {}) => openEditor(null, defaults),
+        openShare: id => openShareSheet(id),
+        recordVoiceInEditor: () => recordVoiceNote(),
+        // The note open in the editor, saved first (null if there's nothing written yet)
+        editorNote() {
+            if (!editing || !editor.open) return null;
+            clearTimeout(saveTimer);
+            save(editing);
+            if (!editing.id) return null;
+            render();
+            const n = notes.find(x => x.id === editing.id);
+            return n ? { ...n } : null;
+        },
+        setEditorLook(look) { if (editing && editor.open) { editing.look = look; changed(); } },
         updateNote(id, patch) {
             const n = notes.find(x => x.id === id);
             if (!n) return;
@@ -3218,6 +3243,9 @@ document.addEventListener('DOMContentLoaded', () => {
             ...(n.audience === 'public' ? { audience: 'public' } : {}), // friends-only unless chosen (keeps old notes unchanged for sync)
             pinned: !!n.pinned,
             sharedGroups: Array.isArray(n.sharedGroups) ? n.sharedGroups.filter(x => typeof x === 'string') : [],
+            ...(typeof n.ntype === 'string' ? { ntype: n.ntype } : {}),           // smart note type: study, meeting, idea, checklist…
+            ...(n.look && typeof n.look === 'object' ? { look: n.look } : {}),      // cover: emoji, subject, theme
+            ...(n.study && typeof n.study === 'object' ? { study: n.study } : {}), // study-mode progress
             trashedAt: n.trashedAt ?? null,
             createdAt,
             updatedAt: n.updatedAt ?? createdAt

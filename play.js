@@ -518,6 +518,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${todayRail()}
                     ${readsRail()}
                     ${playHTML()}
+                    ${window.diaryStudio ? window.diaryStudio.playRail() : ''}
                     ${friendsHTML()}
                     ${boardGamesHTML()}
                     ${practiceHTML()}
