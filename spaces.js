@@ -28,7 +28,8 @@ document.addEventListener('DOMContentLoaded', () => {
         L.loading = true;
         const { data, error } = await client.rpc('diary_spaces_list');
         L.loading = false;
-        if (error) return;
+        if (error) { L.failed = true; if (app.state.view === 'explore') app.render(); return; }
+        L.failed = false;
         L.live = data.live || [];
         L.upcoming = data.upcoming || [];
         L.mine = data.mine || [];
@@ -1462,5 +1463,8 @@ document.addEventListener('DOMContentLoaded', () => {
         return [{ label: 'Back to your space', icon: 'i-headphones', onClick: expand }, ...before];
     };
 
-    window.diarySpaces = { exploreSection, feedStrip, liveCount: () => { if (!L.loaded) load(); return L.live.length; }, open: enter, refresh: load, current: () => (R ? R.id : null) };
+    window.diarySpaces = {
+        exploreSection, feedStrip,
+        rooms: () => { if (!L.loaded && !L.loading) load(); return hereFirst(L.live); },
+        state: () => (L.loaded ? 'ok' : L.failed ? 'error' : 'loading'), liveCount: () => { if (!L.loaded) load(); return L.live.length; }, open: enter, refresh: load, current: () => (R ? R.id : null) };
 });

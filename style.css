@@ -18140,3 +18140,62 @@ dialog.scam::backdrop { background: #000; }
 .scam-done:disabled { background: rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.6); }
 @media (prefers-reduced-motion: reduce) { .scam-flash.go, .scam-thumbs img.new { animation: none; } }
 .nh-take-scan { background: var(--input); color: var(--text); }
+
+/* =====================================================================
+   Explore: compact Trending, and "Live now" right under it (live videos + audio rooms, Go live / Host a room)
+   ===================================================================== */
+/* Trending takes less height so Live now is on the first screen */
+.ex-rail .ex-tile { width: 168px; aspect-ratio: auto; height: 196px; flex: none; }
+.ex-rail .ex-tile-text { -webkit-line-clamp: 5; font-size: 0.9rem; inset: 12px 12px 40px; }
+.ex-rail .ex-tile.hot .ex-tile-text { top: 40px; -webkit-line-clamp: 4; }
+@media (min-width: 761px) { .ex-rail .ex-tile { width: 200px; height: 220px; } }
+
+.ln .ex-head h3 { display: inline-flex; align-items: center; gap: 8px; }
+.ln-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-faint); }
+.ln-dot.on { background: #ef4444; box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.55); animation: ln-pulse 1.8s ease-out infinite; }
+@keyframes ln-pulse { 0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.55); } 80%, 100% { box-shadow: 0 0 0 9px rgba(239, 68, 68, 0); } }
+.ln-count { min-width: 22px; height: 22px; padding: 0 7px; border-radius: 999px; background: #ef4444; color: #fff; font-size: 0.74rem; font-weight: 800; line-height: 22px; text-align: center; }
+/* Live sessions: a swipeable row of cards */
+.ln-rail { display: flex; gap: 10px; margin: 0 -16px; padding: 2px 16px 4px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; scrollbar-width: none; }
+.ln-rail::-webkit-scrollbar { display: none; }
+.ln-card { position: relative; flex: none; display: grid; justify-items: start; align-content: start; gap: 4px; width: 172px; min-height: 176px; padding: 12px; border: 0; border-radius: 18px; color: #fff; font: inherit; text-align: left; cursor: pointer; scroll-snap-align: start; touch-action: manipulation;
+    background: radial-gradient(120% 90% at 0% 0%, rgba(255, 255, 255, 0.16), transparent 55%), linear-gradient(150deg, #4f46e5, #1e1b4b); box-shadow: 0 8px 20px -12px rgba(30, 27, 75, 0.7); transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1); }
+.ln-card.audio { background: radial-gradient(120% 90% at 0% 0%, rgba(255, 255, 255, 0.16), transparent 55%), linear-gradient(150deg, #7c3aed, #3b0764); }
+.ln-card:active { transform: scale(0.97); }
+.ln-card:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.ln-card.skel { background: var(--input); box-shadow: none; animation: pulse 1.4s ease-in-out infinite; cursor: default; }
+.ln-badges { display: flex; gap: 6px; }
+.ln-live { padding: 2px 7px; border-radius: 6px; background: #ef4444; font-size: 0.66rem; font-weight: 900; letter-spacing: 0.08em; }
+.ln-kind { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 6px; background: rgba(255, 255, 255, 0.18); font-size: 0.68rem; font-weight: 700; }
+.ln-kind .i { width: 12px; height: 12px; }
+.ln-av { margin: 6px 0 2px; border-radius: 50%; box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.85); }
+.ln-av .avatar.lg { width: 46px; height: 46px; }
+.ln-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 0.92rem; line-height: 1.3; }
+.ln-who { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.78rem; opacity: 0.85; }
+.ln-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; margin-top: auto; padding-top: 4px; font-size: 0.72rem; opacity: 0.9; }
+.ln-join { padding: 4px 10px; border-radius: 999px; background: #fff; color: #1e1b4b; font-weight: 800; }
+/* Nobody live: one compact line, not a big empty box */
+.ln-empty { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 16px; background: color-mix(in srgb, var(--accent) 8%, var(--surface)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent); }
+.ln-empty-ic { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: color-mix(in srgb, var(--accent) 16%, var(--surface)); color: var(--accent); }
+.ln-empty-ic .i { width: 20px; height: 20px; }
+.ln-empty > span:nth-child(2) { flex: 1; display: grid; gap: 2px; min-width: 0; }
+.ln-empty strong { font-size: 0.95rem; }
+.ln-empty small { color: var(--text-muted); font-size: 0.82rem; line-height: 1.35; }
+/* The two ways to start: always visible, side by side, never wrapping awkwardly */
+.ln-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+.ln-btn { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 52px; padding: 0 12px; border: 0; border-radius: 16px; background: var(--input); color: var(--text); font: inherit; text-align: left; cursor: pointer; touch-action: manipulation; transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background 140ms ease; }
+.ln-btn .i { flex: none; width: 22px; height: 22px; }
+.ln-btn span { display: grid; line-height: 1.15; min-width: 0; }
+.ln-btn strong { font-size: 0.95rem; white-space: nowrap; }
+.ln-btn small { font-size: 0.72rem; opacity: 0.75; }
+.ln-btn.primary { background: var(--accent); color: var(--on-accent, #fff); box-shadow: 0 8px 18px -10px color-mix(in srgb, var(--accent) 80%, transparent); }
+.ln-btn:active { transform: scale(0.97); }
+.ln-btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) { .ln-btn:not(.primary):hover { background: color-mix(in srgb, var(--accent) 10%, var(--input)); } .ln-card:hover { transform: translateY(-2px); } }
+@media (max-width: 340px) { .ln-btn { gap: 6px; padding: 0 8px; } .ln-btn strong { font-size: 0.86rem; } .ln-btn small { display: none; } }
+@media (min-width: 761px) { .ln-acts { max-width: 520px; } .ln-rail { margin: 0; padding: 2px 0 4px; } }
+@media (prefers-reduced-motion: reduce) { .ln-dot.on { animation: none; } .ln-card, .ln-btn { transition: none; } }
+.ln-rail { scroll-padding-inline: 16px; }
+.ln.on .ln-acts { margin: 0 0 12px; }
+@media (max-width: 760px) { .explore .ex-rail .ex-tile { height: 180px; } }
+.ln-btn:not(.primary) { background: var(--surface); box-shadow: 0 0 0 1px var(--border), 0 1px 2px rgba(20, 24, 40, 0.05); }

@@ -187,7 +187,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function postTile(p, rank) {
         const photo = (p.photos || []).find(ph => ph && typeof ph.path === 'string');
         const tint = TILE_TINTS[Math.abs([...p.id].reduce((h, c) => h * 31 + c.charCodeAt(0), 7)) % TILE_TINTS.length];
-        const name = p.author === s.profile.id ? 'You' : ((p.author_profile && p.author_profile.display_name) || 'A friend');
+        const name = nameOf(p);
         const text = (p.title || p.body || '').trim();
         return `
             <button type="button" class="ex-tile${photo ? ' photo' : ' text'}${rank < 3 ? ' hot' : ''}" data-action="ex-post" data-id="${esc(p.id)}"
@@ -209,6 +209,62 @@ document.addEventListener('DOMContentLoaded', () => {
                 ${r.poster_path ? `<img data-path="${esc(r.poster_path)}" data-bucket="diary-reels" alt="" loading="lazy">` : ''}
                 <span class="ex-reel-play" aria-hidden="true"><svg class="i"><use href="#i-play"/></svg></span>
                 <span class="ex-reel-foot"><strong>${esc(p.display_name)}</strong><small><svg class="i"><use href="#i-heart-fill"/></svg>${(r.likes || []).length}</small></span>
+            </button>`;
+    }
+
+    // ---------- Live now: real-time rooms as a first-class part of Explore ----------
+    // Live videos (live.js) and audio rooms (spaces.js) side by side; Go live / Host a room always one tap away.
+    // Nothing heavy loads here — the stream only starts when you open it.
+    function liveNowHTML() {
+        const LV = window.diaryLive, SP = window.diarySpaces;
+        if (!LV && !SP) return '';
+        if (LV && LV.ensure) LV.ensure();
+        const lives = LV ? LV.list() : [];
+        const rooms = SP && SP.rooms ? SP.rooms() : [];
+        const states = [LV && LV.state ? LV.state() : 'ok', SP && SP.state ? SP.state() : 'ok'];
+        const n = lives.length + rooms.length;
+        const loading = !n && states.includes('loading');
+        const failed = !n && !loading && states.includes('error');
+        const see = n ? seeAll(lives.length ? 'data-action="ex-tab" data-tab="live"' : 'data-action="go-spaces"') : '';
+        let body;
+        if (loading) body = `<div class="ln-rail" aria-busy="true" aria-label="Loading live sessions">${'<span class="ln-card skel"></span>'.repeat(3)}</div>`;
+        else if (n) body = `<div class="ln-rail" role="list" aria-label="Live now">${lives.map(liveTile).join('')}${rooms.map(roomTile).join('')}</div>`;
+        else body = `<div class="ln-empty" role="status"><span class="ln-empty-ic" aria-hidden="true"><svg class="i"><use href="#i-live"/></svg></span><span><strong>${failed ? 'Couldn’t load live sessions' : 'Nothing live right now'}</strong><small>${failed ? 'You can still start your own.' : 'Be the first — start something people can join in real time.'}</small></span>${failed ? '<button type="button" class="link-btn accent" data-action="ex-live-retry">Try again</button>' : ''}</div>`;
+        return `
+            <section class="ex-sec ln${n ? ' on' : ''}" aria-labelledby="ln-h">
+                <header class="ex-head"><h3 id="ln-h"><span class="ln-dot${n ? ' on' : ''}" aria-hidden="true"></span>Live now${n ? ` <span class="ln-count" aria-label="${n} live">${n}</span>` : ''}</h3>${see}</header>
+                ${n ? "" : body}
+                <div class="ln-acts" role="group" aria-label="Start something live">
+                    <button type="button" class="ln-btn primary" data-action="live-start" aria-label="Go live on video"><svg class="i" aria-hidden="true"><use href="#i-live"/></svg><span><strong>Go live</strong><small>Video</small></span></button>
+                    <button type="button" class="ln-btn" data-action="space-new" aria-label="Host an audio room"><svg class="i" aria-hidden="true"><use href="#i-headphones"/></svg><span><strong>Host a room</strong><small>Audio</small></span></button>
+                </div>
+                ${n ? body : ""}
+            </section>`;
+    }
+    function liveTile(x) {
+        const p = x.host_profile || { display_name: 'Someone' };
+        const mine = x.host === s.profile.id;
+        const who = mine ? s.profile.display_name : p.display_name || 'Someone';
+        return `
+            <button type="button" role="listitem" class="ln-card video" data-action="live-watch" data-id="${esc(x.id)}" aria-label="${esc(who)} is live on video: ${esc(x.title || 'Live now')}. Watch">
+                <span class="ln-badges"><span class="ln-live">LIVE</span><span class="ln-kind"><svg class="i" aria-hidden="true"><use href="#i-video"/></svg>Video</span></span>
+                <span class="ln-av">${avatar({ id: x.host, ...p }, 'lg')}</span>
+                <strong class="ln-title">${esc(x.title || 'Live now')}</strong>
+                <span class="ln-who">${esc(who)}</span>
+                <span class="ln-meta">Started ${esc(timeAgo(x.started_at))}<span class="ln-join">Watch</span></span>
+            </button>`;
+    }
+    function roomTile(x) {
+        const p = x.host_profile || { display_name: 'Someone' };
+        const who = x.mine ? s.profile.display_name : p.display_name || 'Someone';
+        const n = Math.max(Number(x.listening || 0), 1);
+        return `
+            <button type="button" role="listitem" class="ln-card audio" data-action="space-open" data-id="${esc(x.id)}" aria-label="Audio room: ${esc(x.title)}, hosted by ${esc(who)}, ${n} listening. Join">
+                <span class="ln-badges"><span class="ln-live">LIVE</span><span class="ln-kind"><svg class="i" aria-hidden="true"><use href="#i-headphones"/></svg>Audio</span></span>
+                <span class="ln-av">${avatar({ id: x.host, ...p }, 'lg')}</span>
+                <strong class="ln-title">${esc(x.title || 'Audio room')}</strong>
+                <span class="ln-who">${esc(who)}</span>
+                <span class="ln-meta">${n} listening<span class="ln-join">Join</span></span>
             </button>`;
     }
 
@@ -277,7 +333,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // A note is a shared entry with a title and no media; a Playnote result is the #trivia share
     const isPlaynotePost = p => /#trivia\b/i.test(p.body || '');
     const isNotePost = p => !!(p.title && (p.body || '').trim() && !(p.photos || []).length && !p.audio && !isPlaynotePost(p) && !/^📊 /.test(p.title));
-    const nameOf = p => p.author === s.profile.id ? 'You' : ((p.author_profile && p.author_profile.display_name) || 'A friend');
+    const nameOf = p => (p.author === s.profile.id ? s.profile.display_name : (p.author_profile && p.author_profile.display_name)) || 'A friend';
 
     function noteRow(p) {
         return `
@@ -465,42 +521,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!interests && !E.skipInterests) out.push(interestsCard());
         // Categories (remembered for this visit) and a clear way to start a community
         out.push(`<div class="ex-cats" role="tablist" aria-label="Topics">${CATS.map(([k, l]) => `<button type="button" class="ex-cat" role="tab" aria-selected="${cat === k}" data-action="ex-cat" data-k="${k}">${l}</button>`).join('')}</div>`);
-        const few = (s.friends || []).length < 3;
-        const peopleRail = people.length ? `<section class="ex-sec">${fyHead(few ? 'People you may know' : 'People you may know', seeAll('data-action="ex-tab" data-tab="people"', 'View all'))}<div class="ex-row ex-people-rail">${people.slice(0, 12).map(personCard).join('')}</div></section>` : '';
-        if (few && peopleRail) out.push(peopleRail); // new here: people first, so Explore never feels empty
-        // Creators
-        const creators = topCreators(cat);
-        if (creators.length) out.push(`<section class="ex-sec" aria-labelledby="ex-cr-h">${fyHead('Top creators', '', 'ex-cr-h')}<div class="ex-row ex-cr-rail">${creators.map(creatorCard).join('')}</div></section>`);
-        if (!few && peopleRail) out.push(peopleRail);
-        // Topics
-        const tags = trendingTags();
-        if (tags.length) out.push(`<section class="ex-sec">${fyHead('Trending topics', seeAll('data-action="ex-tab" data-tab="posts"', 'View all'))}<div class="ex-topics wrap">${tags.slice(0, 10).map(([t]) => `<button type="button" class="ex-topic" data-action="ex-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('')}</div></section>`);
         // Posts and notes in this category
         posts = posts.filter(p => inCat(cat, `${p.title || ''} ${p.body || ''}`));
-        people = []; // already shown above
-        // 1. The single most-loved post, given room to breathe
-        if (loading) out.push('<section class="ex-sec"><span class="ex-feature skel"></span></section>');
-        else if (posts.length) out.push(`<section class="ex-sec" aria-labelledby="ex-top-h">${fyHead('Most loved today', '', 'ex-top-h')}${featureCard(posts[0])}</section>`);
-        else out.push('<section class="ex-sec"><div class="ex-empty small"><strong>No posts yet</strong><span>When friends share entries, the most loved ones show up here.</span></div></section>');
-        // 2. Trending, as a rail instead of a wall of tiles
-        if (posts.length > 1) {
-            out.push(`<section class="ex-sec" aria-labelledby="ex-trend-h">${fyHead('Trending', posts.length > 10 ? seeAll('data-action="ex-tab" data-tab="posts"') : '', 'ex-trend-h')}
-                <div class="ex-row ex-rail">${posts.slice(1, 10).map((p, i) => postTile(p, i + 1)).join('')}</div></section>`);
-        }
-        // 3. Happening now: live videos and audio rooms only when something is on; one quiet row to start your own
-        const lives = window.diaryLive ? window.diaryLive.list() : [];
-        const rooms = window.diarySpaces && window.diarySpaces.liveCount ? window.diarySpaces.liveCount() : 0;
-        if (lives.length) out.push(`<section class="ex-sec">${fyHead('Live now', seeAll('data-action="ex-tab" data-tab="live"'))}<div class="lv-grid">${liveCards()}</div></section>`);
-        if (rooms && window.diarySpaces) out.push(window.diarySpaces.exploreSection());
-        out.push(`
-            <div class="ex-start" role="group" aria-label="Start something">
-                <span class="ex-start-text"><strong>${lives.length || rooms ? 'Start your own' : 'Nothing live right now'}</strong><small>Go live on video, or open an audio room</small></span>
-                <span class="ex-start-btns">
-                    <button type="button" class="chip" data-action="live-start"><svg class="i"><use href="#i-live"/></svg>Go live</button>
-                    <button type="button" class="chip" data-action="space-new"><svg class="i"><use href="#i-headphones"/></svg>Host a room</button>
-                </span>
-            </div>`);
-        // 4. Reels, games, people, news
+        // 1. Trending: one compact rail — the most-loved post leads it
+        if (loading) out.push(`<section class="ex-sec" aria-busy="true">${fyHead('Trending')}<div class="ex-row ex-rail">${'<span class="ex-tile skel"></span>'.repeat(3)}</div></section>`);
+        else if (posts.length) out.push(`<section class="ex-sec" aria-labelledby="ex-trend-h">${fyHead('Trending', posts.length > 10 ? seeAll('data-action="ex-tab" data-tab="posts"') : '', 'ex-trend-h')}
+                <div class="ex-row ex-rail">${posts.slice(0, 10).map((p, i) => postTile(p, i)).join('')}</div></section>`);
+        // 2. Live now: what's happening in real time, and the two ways to start something
+        out.push(liveNowHTML());
+        // 3. Notes, reels, people, creators, topics, games, news
         const notes = posts.filter(isNotePost).slice(0, 10);
         if (notes.length) out.push(`<section class="ex-sec" aria-labelledby="ex-notes-h">${fyHead('Notes worth reading', '', 'ex-notes-h')}<div class="ex-row ex-note-rail">${notes.map(p => `
             <button type="button" class="ex-ncard" data-action="ex-post" data-id="${esc(p.id)}">
@@ -510,6 +539,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 <span class="ex-ncard-who">${avatar({ id: p.author, ...(p.author_profile || {}) }, 'xs')}${esc(nameOf(p))}</span>
             </button>`).join('')}</div></section>`);
         if (reels.length) out.push(`<section class="ex-sec">${fyHead('Popular reels', seeAll('data-action="go-reels"', 'Open Reels'))}<div class="ex-row">${reels.slice(0, 10).map(reelTile).join('')}</div></section>`);
+        if (people.length) out.push(`<section class="ex-sec">${fyHead('People you may know', seeAll('data-action="ex-tab" data-tab="people"', 'View all'))}<div class="ex-row ex-people-rail">${people.slice(0, 12).map(personCard).join('')}</div></section>`);
+        const creators = topCreators(cat);
+        if (creators.length) out.push(`<section class="ex-sec" aria-labelledby="ex-cr-h">${fyHead('Top creators', '', 'ex-cr-h')}<div class="ex-row ex-cr-rail">${creators.map(creatorCard).join('')}</div></section>`);
+        const tags = trendingTags();
+        if (tags.length) out.push(`<section class="ex-sec">${fyHead('Trending topics', seeAll('data-action="ex-tab" data-tab="posts"', 'View all'))}<div class="ex-topics wrap">${tags.slice(0, 10).map(([t]) => `<button type="button" class="ex-topic" data-action="ex-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('')}</div></section>`);
         if (window.diaryPlay) out.push(window.diaryPlay.exploreSection());
         out.push(newsSection('world', true));
         // 5. Everything else, one tap away
@@ -664,6 +698,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     Object.assign(app.actions, {
         'ex-news-kind': el => { N.kind = el.dataset.kind; app.render(); },
+        'ex-live-retry': () => { if (window.diaryLive && window.diaryLive.refresh) window.diaryLive.refresh(); if (window.diarySpaces && window.diarySpaces.refresh) window.diarySpaces.refresh(); app.render(); },
         'ex-cat': el => { E.cat = el.dataset.k; try { sessionStorage.setItem('cordialExCat', E.cat); } catch (e) { /* private mode */ } app.render(); },
         'ex-join': (el, e) => {
             if (!app.actions['cm-join']) return;

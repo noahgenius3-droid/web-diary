@@ -331,6 +331,7 @@ document.addEventListener('DOMContentLoaded', () => {
         watch: id => watch(id),
         strip: liveStrip,
         list: () => L.list || [],
+        state: () => (L.list === null ? 'loading' : L.error ? 'error' : 'ok'),
         ensure: () => { if (L.list === null) loadLive(); },
         refresh: () => loadLive()
     };
@@ -348,6 +349,7 @@ document.addEventListener('DOMContentLoaded', () => {
         L.loading = false;
         const before = (L.list || []).map(x => x.id).join();
         L.list = error ? [] : data;
+        L.error = !!error;
         paintStrips();
         if (L.mode === 'watch') paintHop();
         if (before !== L.list.map(x => x.id).join() && !document.getElementById('ex-search')?.value) app.requestRender('explore');
