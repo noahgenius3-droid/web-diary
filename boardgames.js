@@ -370,6 +370,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const ch = client.channel(`bg-${rec.id}`, { config: { broadcast: { self: false }, presence: { key: me() } } });
         entry.ch = ch;
         ch.on('broadcast', { event: 'state' }, ({ payload }) => adopt(payload, true))
+            .on('broadcast', { event: 'chat' }, ({ payload }) => chatIn(rec.id, payload && payload.msg))
             .on('broadcast', { event: 'hello' }, ({ payload }) => {
                 const r = getRec(rec.id);
                 if (r && r.seq > Number(payload && payload.seq || 0)) send(r);
@@ -394,15 +395,21 @@ document.addEventListener('DOMContentLoaded', () => {
         const e = live.get(rec.id);
         if (e && e.ch) e.ch.send({ type: 'broadcast', event: 'state', payload: wire(rec) }).catch(() => {});
     }
-    const wire = rec => ({ id: rec.id, kind: rec.kind, mode: rec.mode, players: rec.players, seq: rec.seq, state: rec.state, created: rec.created });
+    const wire = rec => ({ id: rec.id, kind: rec.kind, mode: rec.mode, players: rec.players, seq: rec.seq, state: rec.state, created: rec.created, chat: (rec.chat || []).slice(-40) });
     // A newer copy of a game (from a peer or a chat card) replaces ours
     function adopt(p, fromLive = false) {
         if (!p || !p.id || !KINDS[p.kind] || !Array.isArray(p.players) || !p.players.includes(me())) return null;
-        const mine = getRec(p.id);
-        if (mine && mine.seq >= Number(p.seq || 0)) return mine;
+        const mine = cur(p.id);
+        if (mine && mine.seq >= Number(p.seq || 0)) {
+            // Same or older moves, but maybe new chat
+            const n = mergeChat(mine, p.chat);
+            if (n) { saveRec(mine); if (V && V.id === mine.id) { if (V.chatOpen) paintChat(); else { V.unread += n; paintChatBtn(); } } }
+            return mine;
+        }
         const rec = { ...(mine || {}), id: p.id, kind: p.kind, mode: 'friends', players: p.players, seq: Number(p.seq || 0), state: p.state, created: p.created || Date.now(), updated: Date.now() };
+        const fresh = mergeChat(rec, p.chat);
         saveRec(rec);
-        if (V && V.id === rec.id) { V.rec = rec; V.sel = null; paint(); if (rec.state.status !== 'active') celebrate(rec); }
+        if (V && V.id === rec.id) { V.rec = rec; V.sel = null; if (fresh && !V.chatOpen) V.unread += fresh; paint(); if (V.chatOpen) paintChat(); if (rec.state.status !== 'active') celebrate(rec); }
         else if (fromLive && myTurn(rec)) app.showToast(`${KINDS[rec.kind].title}: your move`);
         repaintLists();
         return rec;
@@ -411,7 +418,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // A card in someone's chat: the invite, "your move", or the result
     async function postCard(rec, to, note) {
         const att = {
-            kind: 'game', game: rec.kind, note, id: rec.id, players: rec.players, seq: rec.seq, state: rec.state, created: rec.created,
+            kind: 'game', game: rec.kind, note, id: rec.id, players: rec.players, seq: rec.seq, state: rec.state, created: rec.created, chat: (rec.chat || []).slice(-30),
             name: `${KINDS[rec.kind].art} ${KINDS[rec.kind].title} — ${note === 'invite' ? 'you’re invited' : note === 'over' ? 'game over' : 'your move'}`
         };
         const { error } = await client.from('diary_messages').insert({ recipient: to, body: '', attachments: [att] });
@@ -446,9 +453,18 @@ document.addEventListener('DOMContentLoaded', () => {
         dlg.className = 'gm bg';
         dlg.setAttribute('aria-label', KINDS[rec.kind].title);
         document.body.append(dlg);
-        V = { id, rec, dlg, sel: null, targets: [], busy: false };
+        V = { id, rec, dlg, sel: null, targets: [], busy: false, chatOpen: false, unread: 0, chatEl: rec.mode === 'friends' ? chatPanel() : null };
         dlg.addEventListener('close', () => { if (V && V.dlg === dlg) { leave(V.id); V = null; } dlg.remove(); repaintLists(); });
         dlg.addEventListener('click', onClick);
+        dlg.addEventListener('submit', e => {
+            const form = e.target.closest('.bg-chat-form');
+            if (!form) return;
+            e.preventDefault();
+            const input = form.querySelector('input');
+            chatSend(input.value);
+            input.value = '';
+            input.focus();
+        });
         dlg.showModal();
         join(rec);
         paint();
@@ -465,6 +481,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <header class="gm-head">
                     <button type="button" class="icon-btn" data-bg="close" aria-label="Close">${ic('i-close')}</button>
                     <div class="gm-title"><strong>${ic(k.icon)}${esc(k.title)}</strong><small>${rec.mode === 'computer' ? 'Against the computer' : 'With friends'}</small></div>
+                    ${V.chatEl ? `<button type="button" class="icon-btn bg-chat-btn" data-bg="chat" aria-label="Chat" aria-expanded="${V.chatOpen}">${ic('i-chat')}<span class="bg-unread" hidden></span></button>` : ''}
                     <button type="button" class="icon-btn" data-bg="menu" aria-label="Game options" aria-haspopup="menu">${ic('i-more')}</button>
                 </header>
                 <div class="bg-players" data-bg-players></div>
@@ -472,9 +489,82 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="bg-stage">${rec.kind === 'chess' ? chessHTML() : ludoHTML()}</div>
                 <div class="bg-under">${rec.kind === 'chess' ? chessUnder() : ludoUnder()}</div>
             </div>`;
+        if (V.chatEl) { V.dlg.querySelector('.bg-card').append(V.chatEl); paintChatBtn(); }
         paintPlayers();
         paintStatus();
         I.hydrateStorage && I.hydrateStorage(V.dlg);
+    }
+
+    // ---------- The chat room inside a game ----------
+    const cur = id => (V && V.id === id ? V.rec : getRec(id));
+    function mergeChat(rec, list) {
+        if (!rec || !Array.isArray(list) || !list.length) return 0;
+        const have = new Set((rec.chat || []).map(m => m.id));
+        const add = list.filter(m => m && m.id && !have.has(String(m.id)) && typeof m.text === 'string' && rec.players.includes(m.by))
+            .map(m => ({ id: String(m.id), by: m.by, text: String(m.text).slice(0, 300), at: Number(m.at) || Date.now() }));
+        if (!add.length) return 0;
+        rec.chat = [...(rec.chat || []), ...add].sort((a, b) => a.at - b.at).slice(-60);
+        return add.filter(m => m.by !== me()).length;
+    }
+    function chatIn(id, msg) {
+        const rec = cur(id);
+        const n = mergeChat(rec, msg ? [msg] : []);
+        if (!n) return;
+        saveRec(rec);
+        if (V && V.id === id) {
+            if (V.chatOpen) paintChat();
+            else { V.unread += n; paintChatBtn(); app.showToast(`${first(msg.by)}: ${String(msg.text).slice(0, 60)}`); }
+        }
+    }
+    function chatSend(text) {
+        text = String(text || '').trim().slice(0, 300);
+        if (!text || !V) return;
+        const rec = V.rec;
+        const msg = { id: uid(), by: me(), text, at: Date.now() };
+        rec.chat = [...(rec.chat || []), msg].slice(-60);
+        saveRec(rec);
+        const e = live.get(rec.id);
+        if (e && e.ch) e.ch.send({ type: 'broadcast', event: 'chat', payload: { msg } }).catch(() => {});
+        paintChat();
+    }
+    const CHAT_EMOJI = ['😂', '👏', '🔥', '😮', '😅', '🎉', '😤', '🤝'];
+    function chatPanel() {
+        const el = document.createElement('section');
+        el.className = 'bg-chat';
+        el.hidden = true;
+        el.setAttribute('aria-label', 'Game chat');
+        el.innerHTML = `
+            <header class="bg-chat-head"><strong>${ic('i-chat')}Game chat</strong><button type="button" class="icon-btn" data-bg="chat" aria-label="Close chat">${ic('i-close')}</button></header>
+            <ol class="bg-chat-list" aria-live="polite"></ol>
+            <div class="bg-chat-emo" role="group" aria-label="Quick emoji">${CHAT_EMOJI.map(x => `<button type="button" data-bg-emoji="${x}" aria-label="Send ${x}">${x}</button>`).join('')}</div>
+            <form class="bg-chat-form"><input type="text" maxlength="300" placeholder="Say something…" aria-label="Message" enterkeyhint="send" autocomplete="off"><button type="submit" class="bg-chat-send" aria-label="Send">${ic('i-send')}</button></form>`;
+        return el;
+    }
+    function paintChat() {
+        if (!V || !V.chatEl) return;
+        const list = V.chatEl.querySelector('.bg-chat-list');
+        const msgs = V.rec.chat || [];
+        list.innerHTML = msgs.length ? msgs.map((m, i) => {
+            const mine = m.by === me();
+            const cont = i > 0 && msgs[i - 1].by === m.by;
+            const big = /^(\p{Extended_Pictographic}|\u200d|\ufe0f){1,8}$/u.test(m.text);
+            return `<li class="bg-msg${mine ? ' mine' : ''}${cont ? ' cont' : ''}">${!mine && !cont ? `<span class="bg-msg-who">${esc(first(m.by))}</span>` : ''}<span class="bg-msg-text${big ? ' big' : ''}">${esc(m.text)}</span></li>`;
+        }).join('') : '<li class="bg-chat-empty">Say hi! Friends who aren’t in the game see your messages next time they open it.</li>';
+        list.scrollTop = list.scrollHeight;
+    }
+    function paintChatBtn() {
+        if (!V) return;
+        const b = V.dlg.querySelector('.bg-chat-btn .bg-unread');
+        if (!b) return;
+        b.hidden = !V.unread;
+        b.textContent = V.unread > 9 ? '9+' : String(V.unread);
+    }
+    function toggleChat(open = !V.chatOpen) {
+        if (!V || !V.chatEl) return;
+        V.chatOpen = open;
+        V.chatEl.hidden = !open;
+        V.dlg.querySelector('.bg-chat-btn')?.setAttribute('aria-expanded', String(open));
+        if (open) { V.unread = 0; paintChatBtn(); paintChat(); setTimeout(() => V && V.chatEl && V.chatEl.querySelector('input').focus({ preventScroll: true }), 60); }
     }
     function paintPlayers() {
         if (!V) return;
@@ -561,6 +651,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---------- Ludo board ----------
     function ludoHTML() {
         const rec = V.rec, st = rec.state;
+        return ludoBoard(st, new Set(myTurn(rec) && st.status === 'active' ? LU.movable(st) : []));
+    }
+    // The board itself (the game and the how-to-play video both draw it). The centre carries the Cordial mark.
+    function ludoBoard(st, mov = new Set(), extra = '') {
         const cells = [];
         const pathIdx = new Map(LU.PATH.map(([r, c], i) => [`${r},${c}`, i]));
         const homeOf = new Map();
@@ -575,8 +669,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (homeOf.has(k)) cells.push(`<i class="lb-c hm lc-${homeOf.get(k)}" style="grid-area:${r + 1}/${c + 1}"></i>`);
         }
         const yards = Object.entries(LU.YARD).map(([col, [r, c]]) => `<i class="lb-yard lc-${col}${st.colors.includes(col) ? '' : ' off'}" style="grid-area:${r + 1}/${c + 1}/span 6/span 6"><b></b></i>`).join('');
-        const center = '<i class="lb-center" style="grid-area:7/7/span 3/span 3"></i>';
-        const mov = new Set(myTurn(rec) && st.status === 'active' ? LU.movable(st) : []);
+        const center = `<i class="lb-center" style="grid-area:7/7/span 3/span 3"><span class="lb-brand" aria-hidden="true"><span class="lb-brand-mark">${ic('i-book')}</span><b>Cordial</b></span></i>`;
         const turnCol = st.colors[st.turn];
         // Tokens sharing a square fan out a little
         const seen = new Map();
@@ -588,9 +681,9 @@ document.addEventListener('DOMContentLoaded', () => {
             seen.set(key, n + 1);
             const can = col === turnCol && mov.has(i);
             const moved = st.last && st.last.col === col && st.last.i === i;
-            toks.push(`<button type="button" class="lb-tok lc-${col}${can ? ' can' : ''}${moved ? ' moved' : ''}" data-tok="${i}" ${can ? '' : 'tabindex="-1" aria-disabled="true"'} style="top:${(y / 15) * 100}%;left:${(x / 15) * 100}%;--n:${n}" aria-label="${cap(col)} token ${i + 1}${p === -1 ? ', in the yard' : p === 56 ? ', home' : ''}${can ? ' — tap to move' : ''}"></button>`);
+            toks.push(`<button type="button" class="lb-tok lc-${col}${can ? ' can' : ''}${moved ? ' moved' : ''}" data-tok="${i}" data-tk="${col}${i}" ${can ? '' : 'tabindex="-1" aria-disabled="true"'} style="top:${(y / 15) * 100}%;left:${(x / 15) * 100}%;--n:${n}" aria-label="${cap(col)} token ${i + 1}${p === -1 ? ', in the yard' : p === 56 ? ', home' : ''}${can ? ' — tap to move' : ''}"></button>`);
         }));
-        return `<div class="lb" aria-label="Ludo board">${yards}${cells.join('')}${center}<div class="lb-toks">${toks.join('')}</div></div>`;
+        return `<div class="lb" aria-label="Ludo board">${yards}${cells.join('')}${center}<div class="lb-toks">${toks.join('')}</div>${extra}</div>`;
     }
     const PIPS = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] };
     function dieHTML(n, rolling = false) {
@@ -603,6 +696,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const stuck = mine && st.dice != null && !LU.movable(st).length;
         return `<div class="lu-ctl lc-${col}">
             <button type="button" class="lu-roll" data-bg="roll" ${mine && st.dice == null && !V.busy ? '' : 'disabled'} aria-label="${st.dice ? `Rolled ${st.dice}` : 'Roll the dice'}">${dieHTML(st.dice, V.rolling)}</button>
+            <button type="button" class="lu-howto" data-bg="howto">${ic('i-play')}How to play</button>
             <p class="lu-hint">${st.status !== 'active' ? '' : !mine ? `Waiting for ${esc(first(turnId(rec)))}…` : st.dice == null ? 'Tap the dice to roll' : stuck ? 'No moves this time' : 'Tap a glowing token'}</p>
         </div>`;
     }
@@ -688,10 +782,14 @@ document.addEventListener('DOMContentLoaded', () => {
         if (pr && V.promo) { const m = V.promo.find(x => x.promo === pr.dataset.promo); if (m) chessPlay(m); return; }
         const tok = e.target.closest('[data-tok]');
         if (tok) return ludoMove(Number(tok.dataset.tok));
+        const emo = e.target.closest('[data-bg-emoji]');
+        if (emo) return chatSend(emo.dataset.bgEmoji);
         const b = e.target.closest('[data-bg]');
         if (!b) return;
         const act = b.dataset.bg;
         if (act === 'close') closeGame();
+        else if (act === 'chat') toggleChat();
+        else if (act === 'howto') howTo();
         else if (act === 'roll') ludoRoll();
         else if (act === 'dismiss') b.closest('.bg-win')?.remove();
         else if (act === 'rematch') rematch(V.rec);
@@ -699,6 +797,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const rec = V.rec;
             const active = rec.state.status === 'active';
             app.openPopover(b, [
+                ...(rec.kind === 'ludo' ? [{ label: 'How to play', icon: 'i-play', onClick: () => howTo() }] : []),
+                ...(rec.mode === 'friends' ? [{ label: 'Game chat', icon: 'i-chat', onClick: () => toggleChat(true) }] : []),
                 ...(active ? [{ label: 'Resign', icon: 'i-flag', danger: true, onClick: () => resign(rec) }] : []),
                 ...(rec.mode === 'friends' ? [{ label: 'Refresh from friends', icon: 'i-refresh', onClick: () => { const e2 = live.get(rec.id); if (e2 && e2.ch) e2.ch.send({ type: 'broadcast', event: 'hello', payload: { seq: rec.seq } }).catch(() => {}); app.showToast('Asked for the latest moves'); } }] : []),
                 { label: 'Remove from this phone', icon: 'i-trash', onClick: async () => {
@@ -756,6 +856,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="gm-body wpm-pick-body">
                     <div class="bg-cpu-row">
                         <button type="button" class="bg-cpu-btn" data-cpu="1">${ic('i-sparkle')}<span><strong>Play the computer</strong><small>${kind === 'chess' ? 'You’re white' : 'You and one computer player'}</small></span></button>
+                        ${kind === 'ludo' ? `<button type="button" class="bg-cpu-btn ht-open" data-howto>${ic('i-play')}<span><strong>Watch how to play</strong><small>A one-minute video</small></span></button>` : ''}
                         ${kind === 'ludo' ? '<button type="button" class="bg-cpu-btn" data-cpu="3"><span class="bg-cpu-n">4</span><span><strong>Four-player game</strong><small>You and three computer players</small></span></button>' : ''}
                     </div>
                     ${friends.length ? `<p class="wpm-sub">Or a friend${kind === 'ludo' ? ' (up to three)' : ''}</p>
@@ -786,6 +887,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         dlg.addEventListener('click', e => {
             if (e.target.closest('[data-x]')) return dlg.close();
+            if (e.target.closest('[data-howto]')) { dlg.close(); return howTo(); }
             const cpu = e.target.closest('[data-cpu]');
             if (cpu) {
                 dlg.close();
@@ -827,7 +929,7 @@ document.addEventListener('DOMContentLoaded', () => {
         let line;
         try { line = cur.state && cur.state.status ? statusLine(cur) : ''; } catch (e) { line = ''; }
         const head = a.note === 'invite' ? (mine ? 'You sent an invite' : 'You’re invited to play') : a.note === 'over' ? 'Game over' : (mine ? 'Your move was sent' : 'It’s your move');
-        const payload = esc(JSON.stringify({ id: a.id, kind: a.game, players: a.players, seq: a.seq, state: a.state, created: a.created }));
+        const payload = esc(JSON.stringify({ id: a.id, kind: a.game, players: a.players, seq: a.seq, state: a.state, created: a.created, chat: a.chat || [] }));
         return `
             <div class="bgc bgc-${esc(a.game)}">
                 <span class="bgc-art" aria-hidden="true">${k.art}</span>
@@ -890,5 +992,229 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    window.diaryBoardGames = { KINDS, newGame, openGame, cardHTML, listHTML, waiting, preview: a => `${(KINDS[a.game] || {}).art || '🎲'} ${(KINDS[a.game] || {}).title || 'Game'}${a.note === 'invite' ? ' — invite' : a.note === 'over' ? ' — game over' : ' — your move'}`, _engines: { CH, LU } };
+
+    // ======================================================================
+    // How to play Ludo: a short video, played on the real board — scenes with captions,
+    // a progress bar, pause, skip, replay, and an optional narrator voice
+    // ======================================================================
+    const HT_SCENES = (() => {
+        const base = () => LU.init(4);
+        const put = (st, col, i, p) => { const n = { ...st, tokens: { ...st.tokens, [col]: st.tokens[col].slice() } }; n.tokens[col][i] = p; return n; };
+        const at = (st, list) => list.reduce((x, [col, i, p]) => put(x, col, i, p), st);
+        const walk = (col, i, from, to, start, gap = 260) => Array.from({ length: to - from }, (_, k) => ({ at: start + k * gap, fn: st => put(st, col, i, from + k + 1) }));
+        const yardMid = col => { const [r, c] = LU.YARD[col]; return [r + 3, c + 3]; };
+        const sq = (col, p) => LU.spot(col, p, 0);
+        return [
+            { title: 'Four tokens each', say: 'Each player has four tokens waiting in their yard. Two to four people can play, or you can play the computer.', dur: 6200,
+                start: base, steps: [
+                    { at: 400, ring: yardMid('red'), big: true }, { at: 1700, ring: yardMid('green'), big: true },
+                    { at: 3000, ring: yardMid('yellow'), big: true }, { at: 4300, ring: yardMid('blue'), big: true }] },
+            { title: 'Roll a 6 to come out', say: 'You need a six to bring a token out of the yard onto your start square.', dur: 7000,
+                start: base, steps: [
+                    { at: 500, dice: 3 }, { at: 1500, pop: 'No 6 — stay in the yard' },
+                    { at: 3000, dice: 6, pop: '' }, { at: 3700, glow: ['red', 0] },
+                    { at: 4500, fn: st => put(st, 'red', 0, 0), glow: null, ring: sq('red', 0) }, { at: 5600, pop: 'Out onto the start square!' }] },
+            { title: 'Move by the dice', say: 'Tap a glowing token to move it as many squares as the dice shows. Everyone moves clockwise around the board.', dur: 7000,
+                start: () => at(base(), [['red', 0, 0]]), steps: [
+                    { at: 500, dice: 4 }, { at: 1200, glow: ['red', 0] },
+                    ...walk('red', 0, 0, 4, 2000), { at: 3100, glow: null, ring: sq('red', 4) }] },
+            { title: 'A 6 means roll again', say: 'Roll a six and you get another turn. But three sixes in a row ends your turn.', dur: 7200,
+                start: () => at(base(), [['red', 0, 4]]), steps: [
+                    { at: 500, dice: 6 }, { at: 1100, glow: ['red', 0] },
+                    ...walk('red', 0, 4, 10, 1700, 230), { at: 3200, glow: null, dice: null, pop: 'Roll again!' }] },
+            { title: 'Capture', say: 'Land on another player’s token to send it back to their yard. Capturing earns you an extra turn.', dur: 7600,
+                start: () => at(base(), [['red', 0, 10], ['yellow', 0, 38]]), steps: [
+                    { at: 500, ring: sq('yellow', 38) }, { at: 1400, dice: 2 }, { at: 2000, glow: ['red', 0] },
+                    ...walk('red', 0, 10, 12, 2700, 320), { at: 3500, glow: null, fn: st => put(st, 'yellow', 0, -1), pop: 'Captured! Back to the yard' },
+                    { at: 4300, ring: yardMid('yellow'), big: true }] },
+            { title: 'Stars are safe', say: 'Stars and start squares are safe. A token standing there can’t be captured.', dur: 7600,
+                start: () => at(base(), [['red', 0, 16], ['yellow', 0, 47]]), steps: [
+                    { at: 400, ring: sq('yellow', 47) }, { at: 1300, dice: 5 }, { at: 1900, glow: ['red', 0] },
+                    ...walk('red', 0, 16, 21, 2600, 260), { at: 4000, glow: null, pop: 'Both safe on the star ★' }] },
+            { title: 'Head for home', say: 'After one lap, turn into your coloured lane. You need the exact number to reach home.', dur: 10500,
+                start: () => at(base(), [['red', 0, 47]]), steps: [
+                    { at: 500, dice: 6 }, { at: 1100, glow: ['red', 0] }, ...walk('red', 0, 47, 53, 1700, 250),
+                    { at: 3300, glow: null, ring: sq('red', 53), pop: 'Into your lane' },
+                    { at: 4800, dice: 5, pop: '' }, { at: 5600, pop: 'Too far — needs exactly 3' },
+                    { at: 7000, dice: 3, pop: '' }, { at: 7500, glow: ['red', 0] }, ...walk('red', 0, 53, 56, 8100, 300),
+                    { at: 9200, glow: null, pop: 'Home!' }] },
+            { title: 'Win the game', say: 'Get all four of your tokens home first, and you win. Have fun!', dur: 6500,
+                start: () => at(base(), [['red', 0, 56], ['red', 1, 56], ['red', 2, 56], ['red', 3, 55], ['green', 0, 30], ['yellow', 1, 12], ['blue', 2, 40]]), steps: [
+                    { at: 600, dice: 1 }, { at: 1200, glow: ['red', 3] }, { at: 2000, glow: null, fn: st => put(st, 'red', 3, 56) },
+                    { at: 2600, pop: 'Red wins! 🏆', confetti: true }] }
+        ];
+    })();
+
+    let HT = null; // { dlg, i, t, playing, applied, st, raf, last, sound }
+    function howTo() {
+        htClose();
+        const dlg = document.createElement('dialog');
+        dlg.className = 'gm bg howto';
+        dlg.setAttribute('aria-label', 'How to play Ludo');
+        let sound = false;
+        try { sound = localStorage.getItem('cordialLudoVoice') === '1'; } catch (e) { /* private mode */ }
+        dlg.innerHTML = `
+            <div class="gm-card bg-card bg-ludo ht-card">
+                <header class="gm-head">
+                    <button type="button" class="icon-btn" data-ht="close" aria-label="Close">${ic('i-close')}</button>
+                    <div class="gm-title"><strong>${ic('i-play')}How to play Ludo</strong><small>A one-minute video</small></div>
+                    ${'speechSynthesis' in window ? `<button type="button" class="icon-btn ht-sound" data-ht="sound" aria-pressed="${sound}" aria-label="Narration">${ic(sound ? 'i-volume' : 'i-volume-off')}</button>` : ''}
+                </header>
+                <div class="ht-bar" role="tablist" aria-label="Scenes">${HT_SCENES.map((sc, i) => `<button type="button" class="ht-seg" data-ht-seg="${i}" role="tab" aria-label="${esc(sc.title)}"><i></i></button>`).join('')}</div>
+                <div class="bg-stage ht-stage"></div>
+                <div class="ht-cap"><div class="ht-cap-text" aria-live="polite"><small class="ht-n"></small><span class="ht-pop" hidden></span><strong class="ht-title"></strong><p class="ht-say"></p></div><div class="ht-dice" aria-hidden="true"></div></div>
+                <div class="ht-ctl">
+                    <button type="button" class="icon-btn" data-ht="prev" aria-label="Previous scene">${ic('i-back')}</button>
+                    <button type="button" class="ht-play" data-ht="toggle" aria-label="Pause">${ic('i-pause')}</button>
+                    <button type="button" class="icon-btn" data-ht="next" aria-label="Next scene">${ic('i-forward')}</button>
+                </div>
+            </div>`;
+        document.body.append(dlg);
+        HT = { dlg, i: 0, t: 0, playing: true, applied: 0, st: null, raf: 0, last: 0, sound };
+        dlg.addEventListener('close', () => { htStop(); dlg.remove(); if (HT && HT.dlg === dlg) HT = null; });
+        dlg.addEventListener('click', e => {
+            const seg = e.target.closest('[data-ht-seg]');
+            if (seg) return htScene(Number(seg.dataset.htSeg));
+            const b = e.target.closest('[data-ht]');
+            if (!b) return;
+            const a = b.dataset.ht;
+            if (a === 'close') dlg.close();
+            else if (a === 'toggle') htToggle();
+            else if (a === 'prev') htScene(Math.max(0, HT.t > 1500 ? HT.i : HT.i - 1));
+            else if (a === 'next') { if (HT.i < HT_SCENES.length - 1) htScene(HT.i + 1); }
+            else if (a === 'replay') htScene(0);
+            else if (a === 'play-now') { dlg.close(); newGame('ludo'); }
+            else if (a === 'sound') {
+                HT.sound = !HT.sound;
+                try { localStorage.setItem('cordialLudoVoice', HT.sound ? '1' : '0'); } catch (e2) { /* private mode */ }
+                b.setAttribute('aria-pressed', String(HT.sound));
+                b.innerHTML = ic(HT.sound ? 'i-volume' : 'i-volume-off');
+                if (HT.sound && HT.playing) htSay(HT_SCENES[HT.i].say); else speechSynthesis.cancel();
+            }
+        });
+        dlg.addEventListener('keydown', e => {
+            if (e.target.closest('input, textarea')) return;
+            if (e.key === ' ' || e.key === 'k') { e.preventDefault(); htToggle(); }
+            else if (e.key === 'ArrowRight' && HT.i < HT_SCENES.length - 1) htScene(HT.i + 1);
+            else if (e.key === 'ArrowLeft') htScene(Math.max(0, HT.i - 1));
+        });
+        dlg.showModal();
+        if (matchMedia('(prefers-reduced-motion: reduce)').matches) dlg.classList.add('calm');
+        htScene(0);
+    }
+    function htClose() { if (HT && HT.dlg.open) HT.dlg.close(); }
+    function htStop() { if (HT) cancelAnimationFrame(HT.raf); try { speechSynthesis.cancel(); } catch (e) { /* not supported */ } }
+    function htSay(text) {
+        if (!HT || !HT.sound || !('speechSynthesis' in window)) return;
+        try {
+            speechSynthesis.cancel();
+            const u = new SpeechSynthesisUtterance(text);
+            u.rate = 1.02;
+            speechSynthesis.speak(u);
+        } catch (e) { /* no voice */ }
+    }
+    function htScene(i) {
+        if (!HT) return;
+        const sc = HT_SCENES[i];
+        HT.i = i; HT.t = 0; HT.applied = 0; HT.st = sc.start(); HT.ended = false;
+        const stage = HT.dlg.querySelector('.ht-stage');
+        stage.innerHTML = ludoBoard(HT.st, new Set(), '<i class="ht-ring" hidden></i>');
+        const pop0 = HT.dlg.querySelector('.ht-pop'); pop0.hidden = true; pop0.textContent = '';
+        HT.dlg.querySelector('.ht-dice').innerHTML = dieHTML(null);
+        HT.dlg.querySelector('.ht-n').textContent = `${i + 1} of ${HT_SCENES.length}`;
+        HT.dlg.querySelector('.ht-title').textContent = sc.title;
+        HT.dlg.querySelector('.ht-say').textContent = sc.say;
+        HT.dlg.querySelectorAll('.ht-seg').forEach((b, k) => {
+            b.classList.toggle('done', k < i);
+            b.classList.toggle('on', k === i);
+            b.setAttribute('aria-selected', String(k === i));
+            b.querySelector('i').style.transform = `scaleX(${k < i ? 1 : 0})`;
+        });
+        if (!HT.playing) htSetPlaying(true);
+        else { htSay(sc.say); htLoop(); }
+    }
+    function htSetPlaying(on) {
+        HT.playing = on;
+        const b = HT.dlg.querySelector('.ht-play');
+        b.innerHTML = ic(on ? 'i-pause' : 'i-play');
+        b.setAttribute('aria-label', on ? 'Pause' : 'Play');
+        try {
+            if (on) { if (speechSynthesis.paused) speechSynthesis.resume(); else if (HT.t < 300) htSay(HT_SCENES[HT.i].say); }
+            else speechSynthesis.pause();
+        } catch (e) { /* not supported */ }
+        if (on) htLoop(); else cancelAnimationFrame(HT.raf);
+    }
+    function htToggle() {
+        if (!HT) return;
+        if (HT.ended) return htScene(0);
+        htSetPlaying(!HT.playing);
+    }
+    function htLoop() {
+        cancelAnimationFrame(HT.raf);
+        HT.last = performance.now();
+        const tick = now => {
+            if (!HT || !HT.playing) return;
+            HT.t += Math.min(100, now - HT.last);
+            HT.last = now;
+            const sc = HT_SCENES[HT.i];
+            while (HT.applied < sc.steps.length && sc.steps[HT.applied].at <= HT.t) htStep(sc.steps[HT.applied++]);
+            const seg = HT.dlg.querySelectorAll('.ht-seg i')[HT.i];
+            if (seg) seg.style.transform = `scaleX(${Math.min(1, HT.t / sc.dur)})`;
+            if (HT.t >= sc.dur) {
+                if (HT.i < HT_SCENES.length - 1) return htScene(HT.i + 1);
+                return htEnd();
+            }
+            HT.raf = requestAnimationFrame(tick);
+        };
+        HT.raf = requestAnimationFrame(tick);
+    }
+    function htStep(step) {
+        const stage = HT.dlg.querySelector('.ht-stage');
+        if (step.fn) { HT.st = step.fn(HT.st); htTokens(stage); }
+        if ('dice' in step) HT.dlg.querySelector('.ht-dice').innerHTML = dieHTML(step.dice, step.dice != null && !HT.dlg.classList.contains('calm'));
+        if ('glow' in step) stage.querySelectorAll('.lb-tok').forEach(t => t.classList.toggle('can', !!step.glow && t.dataset.tk === step.glow[0] + step.glow[1]));
+        if (step.ring) {
+            const ring = stage.querySelector('.ht-ring');
+            ring.hidden = false;
+            ring.classList.toggle('big', !!step.big);
+            ring.style.top = `${(step.ring[0] / 15) * 100}%`;
+            ring.style.left = `${(step.ring[1] / 15) * 100}%`;
+            ring.classList.remove('go'); void ring.offsetWidth; ring.classList.add('go');
+        }
+        if ('pop' in step) {
+            const pop = HT.dlg.querySelector('.ht-pop');
+            pop.hidden = !step.pop;
+            pop.textContent = step.pop || '';
+            pop.classList.remove('go'); void pop.offsetWidth; pop.classList.add('go');
+        }
+        if (step.confetti && window.diaryGamesFx) window.diaryGamesFx.confetti(stage);
+    }
+    // Move the existing token buttons (so they glide) instead of redrawing the board
+    function htTokens(stage) {
+        const seen = new Map();
+        HT.st.colors.forEach(col => HT.st.tokens[col].forEach((p, i) => {
+            const el = stage.querySelector(`[data-tk="${col}${i}"]`);
+            if (!el) return;
+            const [y, x] = LU.spot(col, p, i);
+            const key = p === -1 || p === 56 ? `${col}${i}${p}` : `${y},${x}`;
+            const n = seen.get(key) || 0;
+            seen.set(key, n + 1);
+            el.style.top = `${(y / 15) * 100}%`;
+            el.style.left = `${(x / 15) * 100}%`;
+            el.style.setProperty('--n', n);
+        }));
+    }
+    function htEnd() {
+        HT.playing = false;
+        HT.ended = true;
+        const b = HT.dlg.querySelector('.ht-play');
+        b.innerHTML = ic('i-play');
+        b.setAttribute('aria-label', 'Watch again');
+        const end = document.createElement('div');
+        end.className = 'ht-end';
+        end.innerHTML = '<strong>That’s Ludo!</strong><span>Ready for a game?</span><div><button type="button" class="primary-btn" data-ht="play-now">Play now</button><button type="button" class="ghost-btn" data-ht="replay">Watch again</button></div>';
+        HT.dlg.querySelector('.ht-stage').append(end);
+    }
+
+    window.diaryBoardGames = { KINDS, newGame, openGame, howTo, cardHTML, listHTML, waiting, preview: a => `${(KINDS[a.game] || {}).art || '🎲'} ${(KINDS[a.game] || {}).title || 'Game'}${a.note === 'invite' ? ' — invite' : a.note === 'over' ? ' — game over' : ' — your move'}`, _engines: { CH, LU } };
 });

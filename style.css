@@ -17831,3 +17831,88 @@ textarea.editor-title {
 .bg-ludo .bg-p-text strong { max-width: 100%; font-size: 0.78rem; }
 .bg-ludo .bg-p-text small { font-size: 0.68rem; color: var(--lc); font-weight: 700; }
 .bg-ludo .bg-p.turn { box-shadow: inset 0 0 0 2px var(--lc); background: color-mix(in srgb, var(--lc) 12%, var(--surface)); }
+
+/* =====================================================================
+   Ludo: the Cordial mark in the centre, the game chat, the how-to-play video
+   ===================================================================== */
+.lb-center { position: relative; display: grid; place-items: center; }
+.lb-brand { display: grid; justify-items: center; align-content: center; gap: 2px; width: 74%; aspect-ratio: 1; border-radius: 50%; background: #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28), inset 0 0 0 2px rgba(255, 255, 255, 0.9); }
+.lb-brand-mark { display: grid; place-items: center; width: 34%; aspect-ratio: 1; border-radius: 28%; background: #4f46e5; color: #fff; }
+.lb-brand-mark .i { width: 62%; height: 62%; }
+.lb-brand b { font-size: clamp(7px, 2.1vw, 11px); font-weight: 800; letter-spacing: 0.04em; color: #4f46e5; line-height: 1; }
+
+/* Chat inside a game */
+.bg-chat-btn { position: relative; }
+.bg-unread { position: absolute; top: 4px; right: 2px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: #ef4444; color: #fff; font-size: 0.68rem; font-weight: 800; line-height: 18px; text-align: center; box-shadow: 0 0 0 2px var(--surface); }
+.bg-chat { position: absolute; left: 0; right: 0; bottom: 0; z-index: 4; display: flex; flex-direction: column; height: min(62%, 460px); border-radius: 22px 22px 0 0; background: var(--surface); box-shadow: 0 -12px 32px -10px rgba(0, 0, 0, 0.35), 0 0 0 1px color-mix(in srgb, var(--text) 8%, transparent); animation: bgc-up 260ms cubic-bezier(0.32, 0.72, 0, 1); }
+.bg-chat[hidden] { display: none; }
+@keyframes bgc-up { from { transform: translateY(100%); } to { transform: none; } }
+.bg-chat-head { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 8px 8px 4px 16px; }
+.bg-chat-head strong { display: inline-flex; align-items: center; gap: 8px; font-size: 0.98rem; }
+.bg-chat-head strong .i { width: 18px; height: 18px; color: var(--accent); }
+.bg-chat-list { flex: 1; min-height: 0; margin: 0; padding: 6px 14px; list-style: none; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 3px; }
+.bg-msg { display: grid; justify-items: start; max-width: 82%; }
+.bg-msg.mine { align-self: flex-end; justify-items: end; }
+.bg-msg:not(.cont) { margin-top: 6px; }
+.bg-msg-who { margin: 0 0 2px 10px; font-size: 0.72rem; font-weight: 700; color: var(--text-muted); }
+.bg-msg-text { padding: 7px 12px; border-radius: 18px; background: var(--input); font-size: 0.92rem; line-height: 1.35; overflow-wrap: anywhere; }
+.bg-msg.mine .bg-msg-text { background: var(--accent); color: var(--on-accent, #fff); }
+.bg-msg-text.big { padding: 0 2px; background: none !important; font-size: 2rem; line-height: 1.1; }
+.bg-chat-empty { margin: auto; max-width: 260px; color: var(--text-muted); font-size: 0.86rem; text-align: center; }
+.bg-chat-emo { flex: none; display: flex; justify-content: space-between; gap: 2px; padding: 4px 10px; }
+.bg-chat-emo button { flex: 1; min-height: 40px; border: 0; border-radius: 12px; background: none; font-size: 1.3rem; cursor: pointer; touch-action: manipulation; transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1); }
+.bg-chat-emo button:active { transform: scale(0.88); }
+@media (hover: hover) and (pointer: fine) { .bg-chat-emo button:hover { background: var(--input); } }
+.bg-chat-form { flex: none; display: flex; gap: 8px; padding: 6px 10px calc(10px + env(safe-area-inset-bottom, 0px)); }
+.bg-chat-form input { flex: 1; min-width: 0; min-height: 44px; padding: 0 16px; border: 0; border-radius: 999px; background: var(--input); color: var(--text); font: inherit; outline: none; }
+.bg-chat-form input:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.bg-chat-send { flex: none; display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 50%; background: var(--accent); color: var(--on-accent, #fff); cursor: pointer; }
+.bg-chat-send .i { width: 20px; height: 20px; }
+@media (prefers-reduced-motion: reduce) { .bg-chat { animation: none; } }
+
+/* "How to play" link under the Ludo board */
+.lu-ctl { flex-wrap: wrap; }
+.lu-howto { order: 3; flex: 1 1 100%; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; margin-top: 4px; border: 0; background: none; color: var(--accent); font: inherit; font-size: 0.86rem; font-weight: 700; cursor: pointer; }
+.lu-howto .i { width: 16px; height: 16px; }
+
+/* The how-to-play video */
+.ht-bar { flex: none; display: flex; gap: 4px; padding: 10px 14px 0; }
+.ht-seg { flex: 1; height: 16px; padding: 6px 0; border: 0; background: none; cursor: pointer; }
+.ht-seg::before { content: ""; display: block; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--text) 14%, transparent); }
+.ht-seg { position: relative; }
+.ht-seg i { position: absolute; left: 0; right: 0; top: 6px; height: 4px; border-radius: 2px; background: var(--accent); transform: scaleX(0); transform-origin: left; }
+.ht-stage { position: relative; }
+.ht-dice { position: absolute; right: -4px; bottom: -4px; z-index: 3; transform: scale(0.82); transform-origin: bottom right; pointer-events: none; }
+.ht-ring { position: absolute; z-index: 2; width: calc(100% / 15 * 1.5); aspect-ratio: 1; border: 3px solid #fff; border-radius: 50%; box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.85), 0 0 18px rgba(79, 70, 229, 0.6); transform: translate(-50%, -50%); pointer-events: none; opacity: 0; }
+.ht-ring.big { width: calc(100% / 15 * 5.4); }
+.ht-ring.go { animation: ht-ring 1.3s cubic-bezier(0.23, 1, 0.32, 1) forwards; }
+@keyframes ht-ring { 0% { opacity: 0; transform: translate(-50%, -50%) scale(1.5); } 25% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; } }
+.ht-pop { position: absolute; left: 50%; top: 9%; z-index: 3; max-width: 86%; padding: 8px 14px; border-radius: 999px; background: rgba(17, 17, 27, 0.86); color: #fff; font-size: 0.88rem; font-weight: 700; text-align: center; white-space: nowrap; transform: translateX(-50%); pointer-events: none; }
+.ht-pop.go { animation: ht-pop 260ms cubic-bezier(0.23, 1, 0.32, 1); }
+@keyframes ht-pop { from { opacity: 0; transform: translate(-50%, 6px) scale(0.96); } }
+.ht-cap { flex: none; display: grid; gap: 2px; padding: 12px 18px 0; min-height: 96px; }
+.ht-n { color: var(--accent); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
+.ht-title { font-size: 1.12rem; }
+.ht-say { margin: 2px 0 0; color: var(--text-muted); font-size: 0.92rem; line-height: 1.45; }
+.ht-ctl { flex: none; display: flex; align-items: center; justify-content: center; gap: 22px; padding: 8px 14px calc(14px + env(safe-area-inset-bottom, 0px)); }
+.ht-play { display: grid; place-items: center; width: 60px; height: 60px; border: 0; border-radius: 50%; background: var(--accent); color: var(--on-accent, #fff); cursor: pointer; box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--accent) 70%, transparent); transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1); }
+.ht-play:active { transform: scale(0.94); }
+.ht-play .i { width: 26px; height: 26px; }
+.ht-end { position: absolute; inset: 0; z-index: 4; display: grid; place-content: center; justify-items: center; gap: 6px; border-radius: 14px; background: rgba(17, 17, 27, 0.72); color: #fff; text-align: center; animation: fade-in 200ms ease-out; }
+.ht-end strong { font-size: 1.4rem; }
+.ht-end div { display: flex; gap: 8px; margin-top: 8px; }
+.ht-end .ghost-btn { color: #fff; border-color: rgba(255, 255, 255, 0.5); }
+.ht-open > .i { flex: none; width: 38px; height: 38px; padding: 9px; border-radius: 12px; background: linear-gradient(140deg, #f43f5e, #f59e0b); color: #fff; }
+.howto.calm .lb-tok { transition: none; }
+.howto.calm .ht-ring.go, .howto.calm .ht-pop.go { animation: none; opacity: 1; }
+/* Video: the dice sits beside the caption, the label on the board's top edge (never over a token) */
+.ht-cap { grid-template-columns: 1fr auto; align-items: start; gap: 12px; }
+.ht-cap-text { display: grid; gap: 2px; min-width: 0; }
+.ht-dice { position: static; transform: none; margin-top: 4px; }
+.ht-dice .die { width: 48px; height: 48px; padding: 7px; }
+.ht-pop { top: 0; transform: translate(-50%, -55%); box-shadow: 0 6px 16px -6px rgba(0, 0, 0, 0.45); }
+@keyframes ht-pop { from { opacity: 0; transform: translate(-50%, -40%) scale(0.96); } }
+.ht-cap-text .ht-pop { position: static; justify-self: start; max-width: 100%; margin: 4px 0 2px; padding: 5px 12px; transform: none; white-space: normal; font-size: 0.84rem; background: color-mix(in srgb, var(--accent) 14%, var(--surface)); color: var(--accent); box-shadow: none; }
+.ht-cap-text .ht-pop.go { animation: ht-chip 240ms cubic-bezier(0.23, 1, 0.32, 1); }
+@keyframes ht-chip { from { opacity: 0; transform: translateY(4px) scale(0.97); } }
+.ht-cap { min-height: 124px; }
