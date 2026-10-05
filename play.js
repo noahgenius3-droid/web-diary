@@ -418,6 +418,14 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>`, m.total ? `<button type="button" class="pn-see" data-pl="sheet" data-which="matches">See all</button>` : '');
     }
 
+    // Chess and Ludo: start one, or carry on with a game in progress (boardgames.js)
+    function boardGamesHTML() {
+        const B = window.diaryBoardGames;
+        if (!B || !me()) return '';
+        const n = B.waiting();
+        return section('pn-bg-h', 'Chess & Ludo', n ? `${n} waiting for you` : 'Play a friend or the computer', B.listHTML());
+    }
+
     function practiceHTML() {
         const byCat = new Map(((P.stats || {}).categories || []).map(c => [c.category, c]));
         return section('pn-practice-h', 'Practice any topic', 'As many rounds as you like', `<div class="pn-rail topics" role="list">${Object.entries(CATS).map(([k, [icon, l]]) => {
@@ -511,6 +519,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${readsRail()}
                     ${playHTML()}
                     ${friendsHTML()}
+                    ${boardGamesHTML()}
                     ${practiceHTML()}
                 </div>
                 <aside class="pn-side" aria-label="Your progress and standings">

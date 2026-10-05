@@ -6461,6 +6461,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!a) return '';
         if (a.kind === 'audio') return '🎤 Voice note';
         if (a.kind === 'location') return '📍 Live location';
+        if (a.kind === 'game') return window.diaryBoardGames ? window.diaryBoardGames.preview(a) : '🎲 Game';
         if (a.kind === 'contact') return `👤 ${a.name || 'Contact'}`;
         if (a.kind === 'note') return a.once && !a.saved ? (a.opened_at ? '📝 Note · opened' : '📝 New note') : `📝 ${a.title || 'A note'}`;
         if (a.kind === 'image' || a.kind === 'drawing') return '📷 Photo';
@@ -6575,6 +6576,11 @@ document.addEventListener('DOMContentLoaded', () => {
             sendMessage();
         } });
         if (window.diaryGames && window.diaryGames.newMatch) items.push({ label: 'A Wordplay match', icon: 'i-g-tiles', onClick: () => window.diaryGames.newMatch() });
+        if (window.diaryBoardGames && s.activeFriend) {
+            const friend = s.activeFriend;
+            items.push({ label: 'A game of Chess', icon: 'i-g-chess', onClick: () => window.diaryBoardGames.newGame('chess', friend) });
+            items.push({ label: 'A game of Ludo', icon: 'i-g-ludo', onClick: () => window.diaryBoardGames.newGame('ludo', friend) });
+        }
         app.openPopover(anchor, items);
     }
 
@@ -6631,6 +6637,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function attachmentHTML(a, mine = false, msgId = null) {
+        if (a && a.kind === 'game') return window.diaryBoardGames ? window.diaryBoardGames.cardHTML(a, { mine, msgId }) : '<p>🎲 A game invite</p>';
         if (a && a.kind === 'contact') return contactCardHTML(a);
         if (a && a.kind === 'note') return window.diaryNoteShare ? window.diaryNoteShare.cardHTML(a, { mine, msgId }) : `<p>📝 ${esc(a.title || 'A note')}</p>`;
         if (!a || typeof a.path !== 'string') return '';
