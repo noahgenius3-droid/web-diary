@@ -601,7 +601,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <p class="st-label">What are you scanning?</p>
                 <div class="st-cats">${SCAN_KINDS.map(([k, e, l]) => `<button type="button" data-kind="${k}" aria-pressed="${k === S.kind}">${e} ${l}</button>`).join('')}</div>
                 <div class="st-pages" data-pages></div>
-                <div class="st-row"><button type="button" class="primary-btn" data-shot>${ic('i-camera')}Take a photo</button><button type="button" class="ghost-btn" data-pick>${ic('i-image')}From photos</button></div>
+                <div class="st-row"><button type="button" class="primary-btn" data-shot>${ic('i-camera')}Scan with camera</button><button type="button" class="ghost-btn" data-pick>${ic('i-image')}From photos</button></div>
                 <p class="st-tip">Text is read right here on your device — nothing is uploaded. The first scan downloads the text reader (about 5 MB, once). Clear, well-lit photos of printed text work best; neat handwriting usually works, joined-up writing less so.</p>
                 <button type="button" class="primary-btn st-go" data-read hidden>Make the note</button>
             </div></div>`);
@@ -619,7 +619,11 @@ document.addEventListener('DOMContentLoaded', () => {
         dlg.addEventListener('click', async e => {
             if (e.target.closest('[data-x]')) return dlg.close();
             const k = e.target.closest('[data-kind]'); if (k) { S.kind = k.dataset.kind; dlg.querySelectorAll('[data-kind]').forEach(b => b.setAttribute('aria-pressed', String(b === k))); return; }
-            if (e.target.closest('[data-shot]')) return add(await Media.pickFiles('image/*', false, 'environment'));
+            if (e.target.closest('[data-shot]')) {
+                const shots = await camera(S.kind);
+                if (shots === null) return add(await Media.pickFiles('image/*', false, 'environment'));
+                return add(shots);
+            }
             if (e.target.closest('[data-pick]')) return add(await Media.pickFiles('image/*', true));
             const d = e.target.closest('[data-drop]'); if (d) { S.pages.splice(Number(d.dataset.drop), 1); return paintPages(); }
             const go = e.target.closest('[data-read]');
@@ -655,6 +659,114 @@ document.addEventListener('DOMContentLoaded', () => {
             app.updateNote(made.id, { ntype: 'scan', look: { emoji: kind[1], subject: `${kind[2]} scan`, theme: S.kind === 'receipt' ? 'amber' : 'slate' } });
             toast(text ? 'Scanned into a new note ✨ — check and edit the text' : 'Scan saved as a note');
             app.openNote(made.id);
+        });
+    }
+    // ---------- The scanner camera: the live rear camera, a page frame, shutter, flash, several pages ----------
+    // Resolves with the captured pages (canvases, cropped to the frame), [] if closed, or null when the camera
+    // can't be used here (then the phone's own camera / photo picker takes over).
+    const FRAME = { receipt: 0.45, whiteboard: 1.6, textbook: 0.72, handwritten: 0.72, document: 0.71 }; // width ÷ height
+    async function camera(kind) {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.isSecureContext) return null;
+        let stream;
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } } });
+        } catch (e) {
+            if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) toast('Camera access is off for Cordial — allow it in your browser’s site settings, or pick a photo');
+            return null;
+        }
+        const track = stream.getVideoTracks()[0];
+        const caps = track && track.getCapabilities ? track.getCapabilities() : {};
+        try { if ((caps.focusMode || []).includes('continuous')) await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e) { /* fine without */ }
+        const ratio = FRAME[kind] || 0.71;
+        return new Promise(resolve => {
+            const shots = [];
+            let torch = false;
+            const dlg = document.createElement('dialog');
+            dlg.className = 'scam';
+            dlg.setAttribute('aria-label', 'Scanner camera');
+            dlg.innerHTML = `
+                <video class="scam-video" playsinline muted autoplay></video>
+                <div class="scam-shade" aria-hidden="true"><div class="scam-frame"><i></i><i></i><i></i><i></i></div></div>
+                <div class="scam-flash" aria-hidden="true"></div>
+                <header class="scam-top">
+                    <button type="button" class="scam-btn" data-cam="close" aria-label="Close the camera">${ic('i-close')}</button>
+                    <p class="scam-hint" aria-live="polite">Fit the page inside the frame</p>
+                    ${caps.torch ? `<button type="button" class="scam-btn" data-cam="torch" aria-pressed="false" aria-label="Flash">${ic('i-flash')}</button>` : '<span class="scam-btn-spacer"></span>'}
+                </header>
+                <footer class="scam-bottom">
+                    <div class="scam-thumbs" aria-live="polite"></div>
+                    <button type="button" class="scam-shutter" data-cam="shot" aria-label="Take the photo"><span></span></button>
+                    <button type="button" class="scam-done" data-cam="done" disabled>Done</button>
+                </footer>`;
+            document.body.append(dlg);
+            const video = dlg.querySelector('video');
+            video.srcObject = stream;
+            video.play().catch(() => {});
+            const frameEl = dlg.querySelector('.scam-frame');
+            const layout = () => {
+                const w = dlg.clientWidth, h = dlg.clientHeight - 210; // room for the bars
+                let fw = w * 0.86, fh = fw / ratio;
+                if (fh > h * 0.92) { fh = h * 0.92; fw = fh * ratio; }
+                frameEl.style.width = `${fw}px`;
+                frameEl.style.height = `${fh}px`;
+            };
+            const finish = result => {
+                stream.getTracks().forEach(t => t.stop());
+                window.removeEventListener('resize', layout);
+                if (dlg.open) dlg.close();
+                dlg.remove();
+                resolve(result);
+            };
+            const thumbs = () => {
+                dlg.querySelector('.scam-thumbs').innerHTML = shots.slice(-3).map((c, i, a) => `<img src="${c.toDataURL('image/jpeg', 0.4)}" alt=""${i === a.length - 1 ? ' class="new"' : ''}>`).join('') + (shots.length ? `<b>${shots.length}</b>` : '');
+                const done = dlg.querySelector('[data-cam="done"]');
+                done.disabled = !shots.length;
+                done.textContent = shots.length ? `Done (${shots.length})` : 'Done';
+                dlg.querySelector('.scam-hint').textContent = shots.length ? 'Next page, or tap Done' : 'Fit the page inside the frame';
+            };
+            // Copy just the part of the picture inside the frame (the video fills the screen, so map screen → camera pixels)
+            const capture = () => {
+                const vw = video.videoWidth, vh = video.videoHeight;
+                if (!vw || !vh) return toast('The camera is still starting…');
+                const vr = video.getBoundingClientRect(), fr = frameEl.getBoundingClientRect();
+                const s = Math.max(vr.width / vw, vr.height / vh);
+                const ox = vr.left + (vr.width - vw * s) / 2, oy = vr.top + (vr.height - vh * s) / 2;
+                const pad = 0.04;
+                let sx = (fr.left - ox) / s - fr.width / s * pad, sy = (fr.top - oy) / s - fr.height / s * pad;
+                let sw = fr.width / s * (1 + 2 * pad), sh = fr.height / s * (1 + 2 * pad);
+                sx = Math.max(0, sx); sy = Math.max(0, sy); sw = Math.min(vw - sx, sw); sh = Math.min(vh - sy, sh);
+                const c = document.createElement('canvas');
+                c.width = Math.round(sw); c.height = Math.round(sh);
+                c.getContext('2d').drawImage(video, sx, sy, sw, sh, 0, 0, c.width, c.height);
+                shots.push(c);
+                const flash = dlg.querySelector('.scam-flash');
+                flash.classList.remove('go'); void flash.offsetWidth; flash.classList.add('go');
+                if (navigator.vibrate) { try { navigator.vibrate(20); } catch (e) { /* ignore */ } }
+                thumbs();
+            };
+            dlg.addEventListener('click', async e => {
+                const b = e.target.closest('[data-cam]');
+                if (!b) {
+                    // Tap the picture to refocus where the phone allows it
+                    if (e.target === video && (caps.focusMode || []).includes('single-shot')) { try { await track.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] }); } catch (err) { /* ignore */ } }
+                    return;
+                }
+                const a = b.dataset.cam;
+                if (a === 'shot') capture();
+                else if (a === 'done') finish(shots);
+                else if (a === 'close') finish(shots.length ? shots : []);
+                else if (a === 'torch') {
+                    torch = !torch;
+                    try { await track.applyConstraints({ advanced: [{ torch }] }); b.setAttribute('aria-pressed', String(torch)); } catch (err) { toast('The flash isn’t available'); }
+                }
+            });
+            dlg.addEventListener('cancel', e => { e.preventDefault(); finish(shots.length ? shots : []); });
+            document.addEventListener('keydown', function key(e) { if (!dlg.isConnected) return document.removeEventListener('keydown', key); if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); capture(); } });
+            track.addEventListener('ended', () => { if (dlg.isConnected) { toast('The camera stopped'); finish(shots); } });
+            window.addEventListener('resize', layout);
+            dlg.showModal();
+            layout();
+            dlg.querySelector('[data-cam="shot"]').focus({ preventScroll: true });
         });
     }
     // Clean the photo up for reading: scale it, flatten the lighting, boost contrast (stronger for receipts and boards)
