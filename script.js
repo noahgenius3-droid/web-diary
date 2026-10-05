@@ -2999,6 +2999,7 @@ document.addEventListener('DOMContentLoaded', () => {
             ...[['play', 'Playnote', 'i-trophy'], ['spaces', 'Spaces', 'i-headphones'], ['reels', 'Reels', 'i-reel'], ['library', 'Library', 'i-book'], ['market', 'Market', 'i-store']].map(tile),
             { sep: true, cls: 'mobile-only' },
             ...(hooks.menuItems ? hooks.menuItems() : []),
+            ...(window.diaryWhatsNew ? [{ label: 'What’s new', icon: 'i-sparkle', onClick: () => window.diaryWhatsNew.open() }] : []),
             { label: 'Refresh', icon: 'i-refresh', onClick: () => refreshView() },
             { label: 'Settings', icon: 'i-settings', onClick: () => setView('settings') }
         ]);

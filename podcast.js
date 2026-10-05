@@ -115,7 +115,33 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
     }
+    // Quieten the room between words: learn the background level from the quietest moments, then let speech
+    // through and turn the gaps down (smoothly, so words aren't clipped)
+    function cleanVoice(buf) {
+        const sr = buf.sampleRate, len = buf.length;
+        const mono = new Float32Array(len);
+        for (let ch = 0; ch < buf.numberOfChannels; ch++) { const d = buf.getChannelData(ch); for (let i = 0; i < len; i++) mono[i] += d[i] / buf.numberOfChannels; }
+        const frame = Math.max(1, Math.floor(sr * 0.02));
+        const n = Math.ceil(len / frame);
+        const rms = new Float32Array(n);
+        for (let k = 0; k < n; k++) { let sum = 0; const end = Math.min(len, (k + 1) * frame); for (let i = k * frame; i < end; i++) sum += mono[i] * mono[i]; rms[k] = Math.sqrt(sum / Math.max(1, end - k * frame)); }
+        const sorted = Array.from(rms).sort((a, b) => a - b);
+        const floor = sorted[Math.floor(n * 0.15)] || 1e-5, speech = sorted[Math.floor(n * 0.9)] || 0.05;
+        const thr = Math.max(floor * 2.6, floor + (speech - floor) * 0.12);
+        const FLOOR_GAIN = 0.07; // gaps sit about 23 dB lower
+        const target = new Float32Array(n);
+        let hold = 0;
+        for (let k = 0; k < n; k++) { if (rms[k] > thr) hold = 9; target[k] = hold > 0 ? 1 : FLOOR_GAIN; hold--; }
+        for (let k = 1; k < n; k++) if (target[k] > target[k - 1] && k > 1) target[k - 1] = Math.max(target[k - 1], 0.6); // open just before a word
+        const out = new AudioBuffer({ length: len, numberOfChannels: 1, sampleRate: sr });
+        const o = out.getChannelData(0);
+        const att = 1 - Math.exp(-1 / (sr * 0.004)), rel = 1 - Math.exp(-1 / (sr * 0.09));
+        let g = FLOOR_GAIN;
+        for (let i = 0; i < len; i++) { const t = target[Math.floor(i / frame)]; g += (t - g) * (t > g ? att : rel); o[i] = mono[i] * g; }
+        return out;
+    }
     async function mixEpisode(voice, set) {
+        if (set.voice === 'me' && set.denoise) voice = cleanVoice(voice);
         const INTRO = set.music !== 'none' ? 4 : 0.4, OUTRO = set.music !== 'none' ? 5 : 0.6;
         const total = INTRO + voice.duration + OUTRO;
         const ctx = new OfflineAudioContext(2, Math.ceil(total * RATE), RATE);
@@ -123,6 +149,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const src = ctx.createBufferSource();
         src.buffer = voice;
         let node = src;
+        if (set.voice === 'me' && set.denoise) {
+            for (const hz of [50, 60, 100, 120]) { const n = ctx.createBiquadFilter(); n.type = 'notch'; n.frequency.value = hz; n.Q.value = 30; node.connect(n); node = n; }
+            const hiss = ctx.createBiquadFilter(); hiss.type = 'lowpass'; hiss.frequency.value = 11500; hiss.Q.value = 0.5; node.connect(hiss); node = hiss;
+            const rumble = ctx.createBiquadFilter(); rumble.type = 'highpass'; rumble.frequency.value = 85; node.connect(rumble); node = rumble;
+        }
         for (const [type, f, gain, q] of MICS[set.mic].eq) { const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; if (gain) b.gain.value = gain; if (q) b.Q.value = q; node.connect(b); node = b; }
         if (MICS[set.mic].warmth) { const ws = ctx.createWaveShaper(); const c = new Float32Array(1024); for (let i = 0; i < 1024; i++) { const x = i / 512 - 1; c[i] = Math.tanh(1.6 * x) / Math.tanh(1.6); } ws.curve = c; node.connect(ws); node = ws; }
         if (set.compressor) {
@@ -142,8 +173,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (set.music !== 'none') {
             const bus = ctx.createGain();
             const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 5000;
+            // Under the voice the music is softer and darker, so it never competes with the words
+            lp.frequency.setValueAtTime(5000, 0); lp.frequency.setValueAtTime(5000, INTRO - 1.2); lp.frequency.linearRampToValueAtTime(2600, INTRO + 0.4);
+            lp.frequency.setValueAtTime(2600, INTRO + voice.duration - 0.4); lp.frequency.linearRampToValueAtTime(5000, INTRO + voice.duration + 0.8);
             bus.connect(lp).connect(ctx.destination);
-            const under = set.bed ? 0.16 : 0.0001;
+            const under = { off: 0.0001, light: 0.075, medium: 0.13 }[set.bed] || 0.075;
             const g = bus.gain;
             g.setValueAtTime(0.0001, 0); g.exponentialRampToValueAtTime(0.9, 0.8);
             g.setValueAtTime(0.9, INTRO - 1.2); g.exponentialRampToValueAtTime(under, INTRO + 0.2);
@@ -209,7 +243,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function open(note, opts = {}) {
         if (!note || !String(note.text || '').trim()) return toast('Write something first — then turn it into a podcast');
         const title = note.title || String(note.text).split('\n').find(Boolean).slice(0, 80);
-        const S = { voice: 'me', mic: 'broadcast', denoise: true, compressor: true, room: 'small', music: 'chill', bed: true, va: 'kore', vb: 'puck', title, script: soloScript(note, title), convo: '', result: null };
+        const S = { voice: 'me', mic: 'broadcast', denoise: true, compressor: true, room: 'small', music: 'chill', bed: 'light', va: 'kore', vb: 'puck', title, script: soloScript(note, title), convo: '', result: null };
         const ready = await voicesReady();
         const dlg = document.createElement('dialog');
         dlg.className = 'gm pod';
@@ -233,7 +267,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         ${seg('voice', 'ai', '🗣️ AI narrator', ready ? 'Natural AI voice' : 'Not switched on yet', !ready)}
                         ${seg('voice', 'duo', '👥 AI hosts', ready ? 'Two AI voices chat' : 'Not switched on yet', !ready)}
                     </div>
-                    ${!ready ? '<p class="pod-tip">AI voices switch on once a Gemini key is added to Cordial (the same key as the AI assistant). Your own voice works now.</p>' : ''}
+                    ${!ready ? '<p class="pod-tip pod-warn">AI voices are ready to go but switched off: Cordial’s owner needs to add a free Gemini key (GEMINI_API_KEY) in the Vercel project settings. Your own voice works now.</p>' : ''}
                     ${S.voice === 'ai' ? `<div class="pod-voices">${VOICES.map(([k, n, d]) => `<button type="button" class="pod-chip" data-set="va" data-val="${k}" aria-pressed="${S.va === k}">${n}<small>${d}</small></button>`).join('')}</div>` : ''}
                     ${S.voice === 'duo' ? `<div class="pod-voices duo"><span>Host A</span>${VOICES.map(([k, n]) => `<button type="button" class="pod-chip" data-set="va" data-val="${k}" aria-pressed="${S.va === k}">${n}</button>`).join('')}</div>
                         <div class="pod-voices duo"><span>Host B</span>${VOICES.map(([k, n]) => `<button type="button" class="pod-chip" data-set="vb" data-val="${k}" aria-pressed="${S.vb === k}">${n}</button>`).join('')}</div>` : ''}
@@ -244,7 +278,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="pod-unit"><span class="pod-unit-name">🎚️ Processing</span><div class="pod-toggles">
                             ${S.voice === 'me' ? `<label class="pod-toggle"><input type="checkbox" data-t="denoise"${S.denoise ? ' checked' : ''}><span>Noise reduction</span></label>` : ''}
                             <label class="pod-toggle"><input type="checkbox" data-t="compressor"${S.compressor ? ' checked' : ''}><span>Broadcast compressor</span></label>
-                            <label class="pod-toggle"><input type="checkbox" data-t="bed"${S.bed ? ' checked' : ''}${S.music === 'none' ? ' disabled' : ''}><span>Music under the voice</span></label></div></div>
+                        </div></div>
+                        <div class="pod-unit"><span class="pod-unit-name">🎶 Music under the voice</span><div class="pod-segs">${[['off', 'Off'], ['light', 'Light'], ['medium', 'Medium']].map(([k, l]) => seg('bed', k, l, k === 'light' ? 'Soft, in the background' : '', S.music === 'none')).join('')}</div></div>
                         <div class="pod-unit"><span class="pod-unit-name">🏛️ Room</span><div class="pod-segs">${Object.entries(ROOMS).map(([k, r]) => seg('room', k, r[0])).join('')}</div></div>
                         <div class="pod-unit"><span class="pod-unit-name">🎵 Intro & outro music</span><div class="pod-segs">${Object.entries(MUSIC).map(([k, n]) => seg('music', k, n)).join('')}</div></div>
                     </div>
