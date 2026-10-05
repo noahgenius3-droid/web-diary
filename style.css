@@ -18016,3 +18016,68 @@ textarea.editor-title {
 /* Bigger goal mouth: easier to aim and dive on a phone */
 .pk-goal { left: 11%; right: 11%; top: 6%; height: 30%; }
 .pk-stands { height: 31%; }
+
+/* =====================================================================
+   Calls: someone's shared screen, expanded — the screen fills the display, people in a strip, controls float
+   ===================================================================== */
+.call-expand { position: absolute; top: 10px; right: 10px; z-index: 3; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 14px 0 12px; border: 0; border-radius: 999px;
+    background: rgba(17, 19, 24, 0.72); color: #fff; font: inherit; font-size: 0.84rem; font-weight: 700; cursor: pointer; touch-action: manipulation;
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14); transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), background 140ms ease; }
+.call-expand .i { width: 18px; height: 18px; }
+.call-expand:active { transform: scale(0.95); }
+.call-expand:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) { .call-expand:hover { background: rgba(17, 19, 24, 0.9); } }
+
+.call-panel.share-full { position: fixed; inset: 0; z-index: 2000; width: auto; height: auto; max-width: none; max-height: none; margin: 0; border-radius: 0; background: #000; animation: none; display: flex; }
+.call-panel.share-full .call-body { position: relative; flex: 1; min-height: 0; padding: 0; }
+/* The screen itself: the whole display, never stretched or cropped */
+.call-panel.share-full .call-stage { position: absolute; inset: 0; display: flex; flex-direction: row; align-items: flex-end; justify-content: flex-end; gap: 8px; max-height: none; height: auto; margin: 0; padding: 0 12px calc(108px + env(safe-area-inset-bottom, 0px)); overflow-x: auto; overflow-y: hidden; scrollbar-width: none; background: #000; }
+.call-panel.share-full .call-stage::-webkit-scrollbar { display: none; }
+.call-panel.share-full .call-tile.big { position: absolute; inset: 0; z-index: 0; width: auto; height: auto; aspect-ratio: auto; max-height: none; margin: 0; border-radius: 0; background: #000; }
+.call-panel.share-full .call-tile.big .call-video-slot video { width: 100%; height: 100%; object-fit: contain; }
+.call-panel.share-full .call-tile.big .call-tag { left: 12px; bottom: auto; top: calc(64px + env(safe-area-inset-top, 0px)); }
+.call-panel.share-full .call-expand { top: calc(12px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px)); }
+/* Everyone else: a small strip in the corner */
+.call-panel.share-full .call-tile:not(.big) { position: relative; z-index: 1; flex: none; width: 92px; height: 122px; aspect-ratio: auto; border-radius: 14px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.16); transition: opacity 240ms ease, transform 240ms cubic-bezier(0.23, 1, 0.32, 1); }
+.call-panel.share-full .call-tile:not(.big) .call-ring .avatar.xl { width: 52px; height: 52px; font-size: 1.1rem; }
+.call-panel.share-full .call-tile:not(.big) .call-tag { font-size: 0.68rem; }
+/* Header and controls float over the screen */
+.call-panel.share-full .call-head { position: absolute; top: 0; left: 0; right: 0; z-index: 4; margin: 0; padding: calc(10px + env(safe-area-inset-top, 0px)) 120px 18px 12px; background: linear-gradient(rgba(0, 0, 0, 0.6), transparent); }
+.call-panel.share-full .call-controls { position: absolute; left: 50%; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); z-index: 4; width: max-content; max-width: calc(100% - 24px); margin: 0; padding: 8px 10px; transform: translateX(-50%); border-radius: 22px; background: rgba(17, 19, 24, 0.82); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5); overflow-x: auto; scrollbar-width: none; }
+.call-panel.share-full .call-people { position: absolute; right: 12px; bottom: calc(96px + env(safe-area-inset-bottom, 0px)); z-index: 5; width: min(320px, calc(100% - 24px)); max-height: 60%; overflow: auto; border-radius: 18px; background: #111318; }
+.call-panel.share-full :is(.call-share-banner, .call-speaking, .call-held, .call-rec-banner, .call-share-controls, .call-reactions) { display: none; }
+.call-panel.share-full :is(.call-head, .call-controls, .call-expand, .call-tile:not(.big)) { transition: opacity 260ms ease, transform 260ms cubic-bezier(0.23, 1, 0.32, 1); }
+.call-panel.share-full.ui-hide :is(.call-head, .call-controls, .call-expand) { opacity: 0; pointer-events: none; }
+.call-panel.share-full.ui-hide .call-controls { transform: translate(-50%, 12px); }
+.call-panel.share-full.ui-hide .call-tile:not(.big) { opacity: 0.85; transform: translateY(80px); }
+.call-panel.share-full.ui-hide .call-stage { cursor: none; }
+/* Landscape phones: the strip goes up the side so the screen keeps its height */
+@media (orientation: landscape) and (max-height: 520px) {
+    .call-panel.share-full .call-stage { flex-direction: column; align-items: flex-end; justify-content: flex-start; padding: calc(60px + env(safe-area-inset-top, 0px)) calc(12px + env(safe-area-inset-right, 0px)) 80px 0; overflow-x: hidden; overflow-y: auto; }
+    .call-panel.share-full .call-tile:not(.big) { width: 84px; height: 64px; }
+    .call-panel.share-full.ui-hide .call-tile:not(.big) { transform: translateX(110px); }
+}
+@media (prefers-reduced-motion: reduce) { .call-panel.share-full :is(.call-head, .call-controls, .call-expand, .call-tile:not(.big)) { transition: none; } }
+/* Profile photos you can open */
+.pf-photo-view, .photo-view-btn { display: inline-grid; padding: 0; border: 0; border-radius: 50%; background: none; cursor: zoom-in; touch-action: manipulation; transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1); }
+.pf-photo-view:active, .photo-view-btn:active { transform: scale(0.97); }
+.pf-photo-view:focus-visible, .photo-view-btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.avatar.has-photo img { -webkit-touch-callout: none; -webkit-user-drag: none; user-select: none; -webkit-user-select: none; }
+/* Expanded share: one compact row of controls (icons only), the strip just above it, nothing over Minimise */
+.call-panel.share-full .call-add { display: none; }
+.call-panel.share-full .call-head { padding-right: 140px; }
+.call-panel.share-full .call-controls { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; grid-template-columns: none; }
+.call-panel.share-full .call-controls .call-btn { flex: none; display: grid; place-items: center; width: 48px; height: 48px; min-width: 0; min-height: 0; margin: 0; padding: 0; border-radius: 50%; }
+.call-panel.share-full .call-controls .call-btn .i { width: 22px; height: 22px; margin: 0; }
+.call-panel.share-full .call-controls .call-btn > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.call-panel.share-full .call-controls .call-btn[hidden] { display: none; }
+.call-panel.share-full .call-stage { padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px)); }
+.call-panel.share-full .call-controls .call-btn { width: 44px; height: 44px; }
+.call-panel.share-full .call-controls :is(#call-rec, #call-flip) { display: none; }
+.call-panel.share-full .call-controls .call-btn.end { order: 99; width: 56px; margin: 0 0 0 4px; border-radius: 22px; transform: none; }
+.call-panel.share-full .call-controls { gap: 4px; padding: 6px 8px; }
+.call-panel.share-full .call-controls .call-btn { width: auto; height: auto; border-radius: 0; background: none; }
+.call-panel.share-full .call-controls .call-btn .i { width: 44px !important; height: 44px !important; padding: 12px !important; }
+.call-panel.share-full .call-controls .call-btn.end { width: auto; margin-left: 6px; }
+.call-panel.share-full .call-controls .call-btn.end .i { width: 52px !important; height: 44px !important; padding: 12px 16px !important; border-radius: 22px; box-shadow: none; }
+.call-panel.share-full .call-stage { scrollbar-width: none; }

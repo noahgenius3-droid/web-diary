@@ -158,7 +158,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${mine ? `<button type="button" class="pf-cover-edit" data-pf="cover" aria-haspopup="menu"><svg class="i"><use href="#i-camera"/></svg><span>${p.cover_path ? 'Edit cover' : 'Add cover'}</span></button>` : ''}
                 </div>
                 <div class="pf-id">
-                    <div class="pf-photo${online ? ' online' : ''}${vkind ? ' is-verified' : ''}">${avatar(p, 'xl')}${mine ? '<button type="button" class="pf-photo-edit" data-pf="photo" aria-label="Change profile photo"><svg class="i"><use href="#i-camera"/></svg></button>' : ''}</div>
+                    <div class="pf-photo${online ? ' online' : ''}${vkind ? ' is-verified' : ''}">${p.avatar_path ? `<button type="button" class="pf-photo-view" data-action="photo-view" data-name="${esc(p.display_name)}" aria-label="View ${esc(p.display_name)}’s profile photo">${avatar(p, 'xl')}</button>` : avatar(p, 'xl')}${mine ? '<button type="button" class="pf-photo-edit" data-pf="photo" aria-label="Change profile photo"><svg class="i"><use href="#i-camera"/></svg></button>' : ''}</div>
                     <div class="pf-names">
                         <h1>${esc(p.display_name)}${I.tick ? I.tick(p.id, vkind || undefined) : ''}</h1>
                         <p class="pf-handle">@${esc(p.username)}${status ? ` · <span class="pf-status${online ? ' on' : ''}" data-status="${esc(p.id)}">${esc(status)}</span>` : ''}</p>

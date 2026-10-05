@@ -4656,8 +4656,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function postPerson(o) {
-        const profile = o.profile || { username: 'unknown', display_name: 'Someone' };
-        return { profile, person: { id: o.author, display_name: profile.display_name, avatar_path: profile.avatar_path }, name: o.mine ? 'You' : esc(profile.display_name) };
+        let profile = o.profile || { username: 'unknown', display_name: 'Someone' };
+        if (o.mine && s.profile) profile = { ...profile, display_name: s.profile.display_name || profile.display_name, username: s.profile.username || profile.username, avatar_path: s.profile.avatar_path || null };
+        return { profile, person: { id: o.author, display_name: profile.display_name, avatar_path: profile.avatar_path }, name: esc(profile.display_name) };
     }
 
     function fullDate(iso) {
@@ -4983,7 +4984,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const me = s.profile.id;
         const loaded = thread && thread.open && !thread.loading;
         const total = loaded ? thread.items.length : count;
-        const who = c => `<button type="button" class="name-link" data-profile="${esc(c.author)}">${c.author === me ? 'You' : esc((c.author_profile && c.author_profile.display_name) || 'Someone')}</button>${tick(c.author)}`;
+        const who = c => `<button type="button" class="name-link" data-profile="${esc(c.author)}">${esc(c.author === me && s.profile ? s.profile.display_name : (c.author_profile && c.author_profile.display_name) || 'Someone')}</button>${tick(c.author)}`;
 
         if (mode === 'full' || mode === 'sheet') {
             const likes = (loaded && thread.likes) || new Map();
@@ -6406,6 +6407,44 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Profile photo when there is one, initials otherwise
+    function viewPhoto(av, name = '') {
+        const img = av && av.querySelector('img');
+        if (!img) return;
+        const src = img.currentSrc || img.src;
+        if (window.ZoomViewer) window.ZoomViewer.open([src], { origin: img, caption: name || undefined });
+        else if (window.Media && Media.lightbox) Media.lightbox(src);
+    }
+    app.actions['photo-view'] = el => viewPhoto(el.matches('.avatar') ? el : el.querySelector('.avatar'), el.dataset.name || '');
+    (() => {
+        // Chats, calls and games have their own long-press, so they're left alone
+        const SKIP = '.convo, .chat-thread, .msg, .gc-msg, .call-panel, .call-float, dialog.gm, .react-bar, .msg-menu-scrim';
+        let timer = null, fired = false, start = null;
+        document.addEventListener('pointerdown', e => {
+            const av = e.target.closest('.avatar.has-photo');
+            if (!av || av.closest(SKIP) || e.button > 0) return;
+            fired = false;
+            start = [e.clientX, e.clientY];
+            clearTimeout(timer);
+            timer = setTimeout(() => {
+                timer = null;
+                fired = true;
+                if (navigator.vibrate) { try { navigator.vibrate(12); } catch (err) { /* ignore */ } }
+                const named = av.closest('[aria-label]');
+                viewPhoto(av, named ? (named.getAttribute('aria-label') || '').replace(/[’']s profile.*$/i, '') : '');
+            }, 480);
+        }, true);
+        const cancel = e => {
+            if (!timer) return;
+            if (e.type === 'pointermove' && start && Math.hypot(e.clientX - start[0], e.clientY - start[1]) < 10) return;
+            clearTimeout(timer);
+            timer = null;
+        };
+        ['pointerup', 'pointercancel', 'pointermove'].forEach(ev => document.addEventListener(ev, cancel, true));
+        // The tap that ends a long press shouldn't also open the profile
+        window.addEventListener('click', e => { if (fired) { fired = false; e.preventDefault(); e.stopImmediatePropagation(); } }, true); // window capture runs before every page listener
+        document.addEventListener('contextmenu', e => { const av = e.target.closest('.avatar.has-photo'); if (av && !av.closest(SKIP)) e.preventDefault(); }, true);
+    })();
+
     function avatar(f, size = 'sm') {
         const face = f.avatar_path
             ? `<img src="${esc(avatarUrl(f.avatar_path))}" alt="" loading="lazy">`
@@ -6678,7 +6717,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <aside class="chat-info" aria-label="Contact details">
                 <button class="icon-btn close-info" data-action="toggle-info" aria-label="Close details"><svg class="i"><use href="#i-close"/></svg></button>
                 <div class="info-head">
-                    ${avatar(friend, 'lg')}
+                    ${friend.avatar_path ? `<button type="button" class="photo-view-btn" data-action="photo-view" data-name="${esc(friend.display_name)}" aria-label="View ${esc(friend.display_name)}’s profile photo">${avatar(friend, 'lg')}</button>` : avatar(friend, 'lg')}
                     <div><strong>${esc(friend.display_name)}</strong><small>@${esc(friend.username)}</small></div>
                 </div>
                 <div class="info-quick">

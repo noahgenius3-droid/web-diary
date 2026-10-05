@@ -1528,6 +1528,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function minimise() {
+        if (call && call.expanded) setExpanded(false);
         panel.classList.add('min');
         $('call-float').hidden = false;
         paintPanel();
@@ -1557,6 +1558,40 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Whose screen or video is shown big: someone sharing their screen, else the pinned person
+    // ---------- A shared screen, big: it fills the display, everyone else in a strip, controls that fade ----------
+    const expandBtnHTML = () => `<button type="button" class="call-expand" data-expand aria-pressed="${!!(call && call.expanded)}" aria-label="${call && call.expanded ? 'Minimise the shared screen' : 'Expand the shared screen'}" title="${call && call.expanded ? 'Minimise (Esc)' : 'Expand'}"><svg class="i"><use href="#${call && call.expanded ? 'i-shrink' : 'i-expand'}"/></svg><span>${call && call.expanded ? 'Minimise' : 'Expand'}</span></button>`;
+    function setExpanded(on) {
+        if (!call) return;
+        on = !!on;
+        if (!!call.expanded === on) return;
+        call.expanded = on;
+        panel.classList.toggle('share-full', on);
+        panel.classList.remove('ui-hide');
+        const b = $('call-stage').querySelector('[data-expand]');
+        if (b) b.outerHTML = expandBtnHTML();
+        if (on) {
+            // The real full screen where the browser allows it (desktop, Android); the large layout everywhere
+            if (panel.requestFullscreen && document.fullscreenEnabled && !document.fullscreenElement) panel.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+            uiWake();
+            $('call-stage').querySelector('[data-expand]')?.focus({ preventScroll: true });
+        } else {
+            clearTimeout(call.uiTimer);
+            if (document.fullscreenElement === panel && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+        }
+    }
+    // While it's expanded, the controls step aside after a few quiet seconds and come back on any touch
+    function uiWake() {
+        if (!call || !call.expanded) return;
+        panel.classList.remove('ui-hide');
+        clearTimeout(call.uiTimer);
+        call.uiTimer = setTimeout(() => {
+            if (call && call.expanded && !panel.querySelector('.call-controls:focus-within, .call-head:focus-within, .call-people:not([hidden])')) panel.classList.add('ui-hide');
+        }, 3200);
+    }
+    ['pointermove', 'pointerdown', 'keydown'].forEach(ev => panel.addEventListener(ev, uiWake, { passive: true }));
+    panel.addEventListener('keydown', e => { if (e.key === 'Escape' && call && call.expanded) { e.preventDefault(); setExpanded(false); } });
+    document.addEventListener('fullscreenchange', () => { if (call && call.expanded && document.fullscreenElement !== panel) setExpanded(false); });
+
     function featured() {
         if (!call) return null;
         if (call.focus) return { id: call.focus, kind: (call.focus === me() ? call.screen : (call.people.get(call.focus) || {}).screen) ? 'screen' : 'cam' };
@@ -1610,6 +1645,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="call-tile${big ? ' big' : ''}${showVideo ? ' has-video' : ''}${kind === 'screen' ? ' screen' : ''}${id === me() && kind === 'cam' ? ' self' : ''}" data-person="${esc(id)}" data-kind="${kind}" tabindex="0" role="button" aria-label="${esc(label)}">
                 <span class="call-video-slot" aria-hidden="true"></span>
                 ${showVideo ? '' : `<span class="call-ring">${avatar(person, 'xl')}</span>`}
+                ${big && kind === 'screen' && id !== me() ? expandBtnHTML() : ''}
                 <span class="call-tag">
                     ${meta.muted && kind === 'cam' ? '<svg class="i"><use href="#i-mic-off"/></svg>' : ''}${meta.hand && kind === 'cam' ? '<span aria-label="Hand raised">✋</span>' : ''}
                     <span class="call-tag-name">${esc(label)}</span>
@@ -1632,6 +1668,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (call.person && !others.length && !ids.includes(call.person.id)) ids.push(call.person.id);
         const anyVideo = ids.some(id => { const m = id === me() ? myMeta() : (call.people.get(id) || {}); return m.cam || m.screen; });
         const feat = featured();
+        if (call.expanded && !(feat && feat.kind === 'screen' && feat.id !== me())) {
+            setExpanded(false);
+            if (!feat || feat.kind !== 'screen') app.showToast('Screen sharing ended');
+        }
 
         panel.classList.toggle('video', anyVideo);
         panel.classList.toggle('sharing', !!feat && feat.kind === 'screen');
@@ -1833,8 +1873,14 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     $('call-add').addEventListener('click', e => addPeople(e.currentTarget));
     $('call-stage').addEventListener('click', e => {
+        if (e.target.closest('[data-expand]')) { e.stopPropagation(); return setExpanded(!(call && call.expanded)); }
         const tile = e.target.closest('[data-person]');
+        if (tile && call && call.expanded && tile.classList.contains('big')) return uiWake();
         if (tile) personMenu(tile, tile.dataset.person);
+    });
+    $('call-stage').addEventListener('dblclick', e => {
+        const tile = e.target.closest('.call-tile.big.screen');
+        if (tile && call && tile.dataset.person !== me()) { e.preventDefault(); setExpanded(!call.expanded); }
     });
     $('call-stage').addEventListener('keydown', e => {
         const tile = e.target.closest('[data-person]');
