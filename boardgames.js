@@ -921,7 +921,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Chat cards
     // ======================================================================
     function cardHTML(a, { mine } = {}) {
-        if (a.game === 'mafia') return window.diaryMafia ? window.diaryMafia.cardHTML(a) : '';
+        if (a.game === 'mafia') return '<p class="muted">🎭 This game is no longer available</p>'; // invites from the removed Cordial Mafia
         const k = KINDS[a.game];
         if (!k) return '';
         const rec = getRec(a.id);
@@ -958,7 +958,6 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="pn-rail matches bg-rail" role="list">
                 <button type="button" role="listitem" class="pn-match new bg-new" data-bg-new="chess"><span class="pn-new-ic bg-art">♞</span><strong>Chess</strong><small>A friend or the computer</small></button>
                 <button type="button" role="listitem" class="pn-match new bg-new" data-bg-new="ludo"><span class="pn-new-ic bg-art">🎲</span><strong>Ludo</strong><small>Two to four players</small></button>
-                ${window.diaryMafia ? '<button type="button" role="listitem" class="pn-match new bg-new mf-tile" data-mafia-new><span class="pn-new-ic bg-art">🎭</span><strong>Cordial Mafia</strong><small>4–16 players · secret roles</small></button>' : ''}
                 ${active.map(g => {
                     const others = g.players.filter(p => p !== me());
                     return `<button type="button" role="listitem" class="pn-match${myTurn(g) ? ' mine' : ''}" data-bg-game="${esc(g.id)}" aria-label="${esc(KINDS[g.kind].title)} with ${esc(others.map(p => who(p).display_name || 'Someone').join(', '))} — ${esc(statusLine(g))}">
@@ -1218,5 +1217,5 @@ document.addEventListener('DOMContentLoaded', () => {
         HT.dlg.querySelector('.ht-stage').append(end);
     }
 
-    window.diaryBoardGames = { KINDS, newGame, openGame, howTo, cardHTML, listHTML, waiting, preview: a => a.game === 'mafia' ? '🎭 Cordial Mafia — join the room' : `${(KINDS[a.game] || {}).art || '🎲'} ${(KINDS[a.game] || {}).title || 'Game'}${a.note === 'invite' ? ' — invite' : a.note === 'over' ? ' — game over' : ' — your move'}`, _engines: { CH, LU } };
+    window.diaryBoardGames = { KINDS, newGame, openGame, howTo, cardHTML, listHTML, waiting, preview: a => a.game === 'mafia' ? '🎭 Game no longer available' : `${(KINDS[a.game] || {}).art || '🎲'} ${(KINDS[a.game] || {}).title || 'Game'}${a.note === 'invite' ? ' — invite' : a.note === 'over' ? ' — game over' : ' — your move'}`, _engines: { CH, LU } };
 });

@@ -6581,10 +6581,6 @@ document.addEventListener('DOMContentLoaded', () => {
             items.push({ label: 'A game of Chess', icon: 'i-g-chess', onClick: () => window.diaryBoardGames.newGame('chess', friend) });
             items.push({ label: 'A game of Ludo', icon: 'i-g-ludo', onClick: () => window.diaryBoardGames.newGame('ludo', friend) });
         }
-        if (window.diaryMafia && s.activeFriend) {
-            const friend = s.activeFriend;
-            items.push({ label: 'Cordial Mafia', icon: 'i-users', onClick: () => window.diaryMafia.newRoom({ friend }) });
-        }
         app.openPopover(anchor, items);
     }
 

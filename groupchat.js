@@ -238,7 +238,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const voices = atts.filter(a => a.kind === 'audio' && a.path);
         const contacts = atts.filter(a => a.kind === 'contact' && a.id);
         const videos = atts.filter(a => a.kind === 'video' && a.path);
-        const games = atts.filter(a => a.kind === 'game');
         return `
             <div class="gc-msg${mine ? ' mine' : ''}${grouped ? ' grouped' : ''}${pinned ? ' is-pinned' : ''}${!mine && m.body && s.profile && new RegExp(`@(${s.profile.username}|everyone|all)\\b`, 'i').test(m.body) ? ' mentions-me' : ''}" data-mid="${m.id}">
                 ${!mine ? `<span class="gc-av">${grouped ? '' : `<button type="button" class="gc-who" data-profile="${esc(m.author)}" aria-label="View ${esc(p.display_name)}’s profile">${avatar(p, 'sm')}</button>`}</span>` : ''}
@@ -251,7 +250,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         ${photos.length ? `<div class="gc-photos n${Math.min(photos.length, 4)}">${photos.slice(0, 4).map(ph => `<button type="button" class="gc-photo" data-action="gc-view-photo" data-path="${esc(ph.path)}"><img data-path="${esc(ph.path)}" data-bucket="${BUCKET}" alt=""></button>`).join('')}</div>` : ''}
                         ${voices.map(a => I.voiceHTML(a, BUCKET)).join('')}
                         ${I.contactCardHTML ? contacts.map(I.contactCardHTML).join('') : ''}
-                        ${games.map(a => (a.game === 'mafia' ? (window.diaryMafia ? window.diaryMafia.cardHTML(a) : '') : window.diaryBoardGames ? window.diaryBoardGames.cardHTML(a, { mine }) : '')).join('')}
                         ${locations.map(a => window.LiveLocation ? window.LiveLocation.cardHTML(a, { mine, person: p }) : '<p>📍 Live location</p>').join('')}
                         ${m.body ? `<p class="gc-text">${withMentions(I.linkTags ? I.linkTags(esc(m.body)) : esc(m.body))}</p>` : ''}
                         <span class="gc-meta">${I.editedTag ? I.editedTag('gc', m) : ''}${pinned ? '<svg class="i"><use href="#i-pin-note"/></svg>' : ''}${time}</span>
@@ -878,8 +876,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 { label: 'Photo', icon: 'i-image', onClick: () => run('gc-photo') },
                 ...(I.videoOn && I.videoOn() ? [{ label: 'Video', icon: 'i-video', onClick: () => run('gc-video') }] : []),
                 window.LiveLocation && window.LiveLocation.supported ? { label: 'Live location', icon: 'i-pin', onClick: () => run('gc-location') } : null,
-                { label: 'Contact', icon: 'i-contact', onClick: () => run('gc-contact') },
-                window.diaryMafia ? { label: 'Cordial Mafia (game)', icon: 'i-users', onClick: () => window.diaryMafia.newRoom({ group: g.cid }) } : null
+                { label: 'Contact', icon: 'i-contact', onClick: () => run('gc-contact') }
             ].filter(Boolean));
         },
         'gc-head-more': el => {
