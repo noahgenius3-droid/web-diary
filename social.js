@@ -1436,9 +1436,48 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ---------- Pending attachments ----------
-    function addPending(files, extra = {}) {
+    // Photos arrive in whatever form the phone hands over: HEIC/HEIF (many Samsung and iPhone cameras), AVIF, BMP,
+    // TIFF, or with no type at all (some galleries and cloud photo pickers). They're turned into JPEG here when this
+    // browser can read them, and photos over the size limit are made smaller instead of being refused.
+    const PHOTO_EXT = { jpg: 'image/jpeg', jpeg: 'image/jpeg', jfif: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', heic: 'image/heic', heif: 'image/heif', avif: 'image/avif', bmp: 'image/bmp', tif: 'image/tiff', tiff: 'image/tiff' };
+    async function normalisePhoto(file) {
+        let type = (file.type || '').split(';')[0].toLowerCase();
+        const ext = ((file.name || '').split('.').pop() || '').toLowerCase();
+        if ((!type || type === 'application/octet-stream') && PHOTO_EXT[ext]) type = PHOTO_EXT[ext];
+        if (!type.startsWith('image/')) return { file, type };
+        if (ALLOWED_TYPES.includes(type) && file.size <= MAX_UPLOAD) return { file: file.type === type ? file : new File([file], file.name || 'photo.jpg', { type }), type };
+        if (type === 'image/gif') return { file, type }; // can't be shrunk without losing the animation
+        try {
+            const bmp = await createImageBitmap(file);
+            const k = Math.min(1, 2048 / Math.max(bmp.width, bmp.height));
+            const c = document.createElement('canvas');
+            c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k));
+            c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+            if (bmp.close) bmp.close();
+            const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.86));
+            if (!blob) throw new Error('no blob');
+            return { file: new File([blob], `${(file.name || 'photo').replace(/\.[^.]+$/, '')}.jpg`, { type: 'image/jpeg' }), type: 'image/jpeg' };
+        } catch (e) {
+            return { file, type, unreadable: true };
+        }
+    }
+    async function addPending(files, extra = {}) {
         const friendId = s.activeFriend;
-        if (!friendId || !files.length) return;
+        if (!friendId || !files || !files.length) return;
+        if (!extra.kind) {
+            const ready = [];
+            for (const file of files) {
+                const r = await normalisePhoto(file);
+                if (r.unreadable) {
+                    const fmt = (r.type.split('/')[1] || 'this').toUpperCase();
+                    app.showToast(`${file.name || 'That photo'} is a ${fmt} photo this browser can’t open — send a screenshot of it, or set your camera to “Most compatible” (JPEG)`);
+                    continue;
+                }
+                ready.push(r.file);
+            }
+            files = ready;
+            if (!files.length || s.activeFriend !== friendId) return;
+        }
         const list = s.pending[friendId] = s.pending[friendId] || [];
         for (const file of files) {
             const type = (file.type || '').split(';')[0];
@@ -7501,7 +7540,7 @@ document.addEventListener('DOMContentLoaded', () => {
             saveDraft();
         },
         'chat-add': el => app.openPopover(el, [
-            { label: 'Photo', icon: 'i-image', onClick: async () => addPending(await Media.pickFiles('image/png,image/jpeg,image/gif,image/webp')) },
+            { label: 'Photo', icon: 'i-image', onClick: async () => addPending(await Media.pickFiles('image/*')) },
             ...(videoOn() ? [{ label: 'Video', icon: 'i-video', onClick: async () => addPending(await Media.pickFiles('video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm')) }] : []),
             { label: 'Document', icon: 'i-file', onClick: async () => addPending(await Media.pickFiles(DOC_ACCEPT)) },
             { label: 'Voice note', icon: 'i-mic', onClick: () => startVoice(0, true) },
