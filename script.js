@@ -3244,6 +3244,7 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         openNote: id => openNote(notes.find(n => n.id === id)),
         addFilesToEditor(id, files) { if (!editing || !editor.open || editing.id !== id) return false; addFiles(files); return true; },
+        editingId: () => (editing && editor.open ? editing.id : null),
         updateNote(id, patch) {
             const n = notes.find(x => x.id === id);
             if (!n) return;
