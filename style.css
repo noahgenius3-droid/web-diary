@@ -18535,3 +18535,11 @@ mark.sc-q.done { padding: 0; background: none; box-shadow: none; outline: 0; cur
 .gc-stk { flex: none; }
 @media (min-width: 760px) { .stk-panel { left: auto; width: 380px; } }
 .msg.sticker-msg .msg-meta, .gc-msg.sticker-msg .gc-meta { width: max-content; margin-left: auto; }
+
+/* Inbox while your chats are loading (just after signing in) */
+.inbox-skel { display: grid; gap: 4px; padding: 6px 4px; }
+.inbox-skel span { display: flex; align-items: center; gap: 12px; padding: 10px 8px; }
+.inbox-skel i { flex: none; width: 46px; height: 46px; border-radius: 50%; background: color-mix(in srgb, var(--text) 8%, transparent); }
+.inbox-skel b { flex: 1; height: 30px; border-radius: 8px; background: linear-gradient(90deg, color-mix(in srgb, var(--text) 6%, transparent) 0 55%, transparent 55%), linear-gradient(90deg, color-mix(in srgb, var(--text) 5%, transparent) 0 80%, transparent 80%); background-size: 100% 12px, 100% 10px; background-position: 0 0, 0 100%; background-repeat: no-repeat; }
+@media (prefers-reduced-motion: no-preference) { .inbox-skel span { animation: inbox-skel 1.4s ease-in-out infinite; } }
+@keyframes inbox-skel { 50% { opacity: 0.55; } }

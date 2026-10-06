@@ -8,7 +8,7 @@
 // imported while the worker installs, so this happens here, once.
 try { self.window = self; importScripts('/config.js'); } catch (e) { /* calls can still be declined in the app */ }
 
-const CACHE = 'cordial-shell-v182';
+const CACHE = 'cordial-shell-v183';
 const SHELL = [
     '/', '/index.html', '/manifest.webmanifest',
     '/style.css', '/photoedit.css',
@@ -16,7 +16,7 @@ const SHELL = [
     '/community.js', '/live.js', '/explore.js', '/call.js', '/notify.js', '/settings.js', '/transcribe.js', '/ai.js',
     '/photoedit.js', '/sync.js', '/zoom.js', '/speak.js', '/zoom.css', '/speak.css', '/groupchat.js', '/location.js', '/location.css', '/wallpaper.js',
     '/icons/icon-180.png', '/icons/icon-192.png', '/icons/icon-512.png',
-    'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
+    'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.min.js',
     'https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js',
     'https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap'
 ];

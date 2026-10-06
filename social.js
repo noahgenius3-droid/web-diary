@@ -649,6 +649,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const submit = $('auth-submit');
         submit.disabled = true;
+        const label = submit.textContent;
+        if (authMode === 'signin') { submit.textContent = 'Signing in…'; submit.setAttribute('aria-busy', 'true'); }
         try {
             if (authMode === 'signin') {
                 const { error } = await client.auth.signInWithPassword({ email, password });
@@ -700,6 +702,8 @@ document.addEventListener('DOMContentLoaded', () => {
             showAuthMessage(friendlyAuthError(err), true);
         } finally {
             submit.disabled = false;
+            if (submit.textContent === 'Signing in…') submit.textContent = label; // (unless the form switched mode meanwhile)
+            submit.removeAttribute('aria-busy');
         }
     });
 
@@ -829,6 +833,25 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (e) { /* STUN only */ }
     }
 
+    // A snapshot of the account (profile, friends and the chat list) kept on this device, so reopening the app or
+    // signing in again shows everything at once while the fresh copy loads in the background. Disappearing and
+    // incognito messages are kept without their content. Removed when you sign out.
+    const BOOT_KEY = id => `cordialBoot:${id}`;
+    function saveBoot() {
+        if (!s.profile || !s.session) return;
+        const safe = m => (m && (m.vanish || m.expires_at) ? { ...m, body: '', attachments: [] } : m);
+        try {
+            localStorage.setItem(BOOT_KEY(s.profile.id), JSON.stringify({
+                at: Date.now(), profile: s.profile, friends: s.friends, incoming: s.incoming, outgoing: s.outgoing, unread: s.unread,
+                last: Object.fromEntries(Object.entries(s.last).map(([k, m]) => [k, safe(m)]))
+            }));
+        } catch (e) { /* storage full or private mode: the app just loads as before */ }
+    }
+    function readBoot(id) {
+        try { const b = JSON.parse(localStorage.getItem(BOOT_KEY(id)) || 'null'); return b && b.profile && b.profile.id === id ? b : null; } catch (e) { return null; }
+    }
+    const dropBoot = id => { try { if (id) localStorage.removeItem(BOOT_KEY(id)); } catch (e) { /* ignore */ } };
+
     async function handleSession(session, event) {
         const previousUser = s.session ? s.session.user.id : null;
         s.session = session;
@@ -836,6 +859,7 @@ document.addEventListener('DOMContentLoaded', () => {
         paintGuest();
         if (!session) {
             if (event === 'SIGNED_OUT') {
+                dropBoot(previousUser);
                 // Signing out: forget this account's picture links and the saved pictures on this device
                 try { Object.keys(localStorage).filter(k => k.startsWith('diaryUrls:')).forEach(k => localStorage.removeItem(k)); } catch (e) {}
                 urlsRestored = null;
@@ -854,15 +878,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Two-step verification: an account with an authenticator app needs its code before anything loads
         if (client.auth.mfa && !(await passMfa())) return;
-        s.profile = await ensureProfile(session.user);
+        const boot = readBoot(session.user.id);
+        if (boot) {
+            // Seen this account on this device before: show it now, refresh it below
+            Object.assign(s, { profile: boot.profile, friends: boot.friends || [], incoming: boot.incoming || [], outgoing: boot.outgoing || [], unread: boot.unread || {}, last: boot.last || {} });
+            s.drafts = load(`diaryChatDrafts:${s.profile.id}`, {});
+            hydrateCachedThreads();
+            updateBadge();
+            app.render();
+        }
+        let fresh = await ensureProfile(session.user);
+        if (fresh === undefined) fresh = (await ensureProfile(session.user)) || (boot && boot.profile) || null; // one more go; else the saved profile
+        if (!s.session || s.session.user.id !== session.user.id) return; // signed out meanwhile
+        if (!fresh) { s.profile = null; return app.render(); }
+        s.profile = fresh;
         client.from('diary_presence').select('status, status_until').maybeSingle().then(({ data }) => {
             s.myStatus = data && (!data.status_until || Date.parse(data.status_until) > Date.now()) ? data.status : null;
         }, () => {});
-        if (!s.profile) return app.render();
-
-        s.drafts = load(`diaryChatDrafts:${s.profile.id}`, {});
-        hydrateCachedThreads();
+        if (!boot) {
+            s.drafts = load(`diaryChatDrafts:${s.profile.id}`, {});
+            hydrateCachedThreads();
+            s.socialLoading = true;
+            app.render(); // the app is usable now; friends and chats fill in a moment later
+        }
         await Promise.all([loadFriends(), loadRecent(), loadRemoteIds(), loadSaved(), loadFollows(), loadIncognito()]);
+        s.socialLoading = false;
+        saveBoot();
         setTimeout(prefetchThreads, 2500);
         subscribe();
         emptyIncognitoTrash();
@@ -931,8 +972,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function ensureProfile(user) {
-        const { data: existing } = await client.from('diary_profiles').select('*').eq('id', user.id).maybeSingle();
+        const { data: existing, error: readError } = await client.from('diary_profiles').select('*').eq('id', user.id).maybeSingle();
         if (existing) return existing;
+        if (readError) return undefined; // couldn't check (a network hiccup): never start making a new profile on a guess
 
         const meta = user.user_metadata || {};
         const guestName = () => `guest_${Math.random().toString(36).slice(2, 8).padEnd(6, '0')}`;
@@ -1335,7 +1377,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (s.activeFriend && s.threads[s.activeFriend] && app.state.view === 'messages' && content.querySelector('.chat-skel')) paintThread(s.activeFriend);
     }
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'hidden') { s.hiddenAt = Date.now(); if (cacheDirty.size) flushThreadCache(); return; }
+        if (document.visibilityState === 'hidden') { s.hiddenAt = Date.now(); if (cacheDirty.size) flushThreadCache(); saveBoot(); return; }
         // Back after a while (the phone slept, the app was in the background): check the open chat again
         if (s.hiddenAt && Date.now() - s.hiddenAt > 60000 && s.profile) {
             s.fresh.clear();
@@ -6451,6 +6493,7 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>`;
     }
     function inboxEmpty(tabKey) {
+        if (s.socialLoading) return '<div class="inbox-skel" aria-busy="true" aria-label="Loading your chats">' + '<span><i></i><b></b></span>'.repeat(5) + '</div>';
         if (tabKey === 'unread') return '<p class="inbox-empty">You’re all caught up.</p>';
         if (tabKey === 'archived') return '<p class="inbox-empty">No archived chats. Swipe a chat left (or use its ⋯ menu) to archive it.</p>';
         if (tabKey === 'groups') return `<div class="chat-onboard"><strong>No group chats yet</strong><span>Start a group or join one to chat with more people.</span><div><button type="button" class="primary-btn" data-action="cm-create">New group</button><button type="button" class="ghost-btn" data-action="go-communities">Browse groups</button></div></div>`;
