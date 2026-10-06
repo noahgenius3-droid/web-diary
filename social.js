@@ -2044,7 +2044,9 @@ document.addEventListener('DOMContentLoaded', () => {
         repaintMessage(id);
     }
 
-    function startReply(id) {
+    // (Named apart from the comments' startReply further down — two functions with one name meant the later one won,
+    // so chat replies set up a comment reply instead)
+    function startMsgReply(id) {
         const m = findMessage(id);
         if (!m || m.deleted_at) return;
         s.replyTo[s.activeFriend] = m.id;
@@ -2334,7 +2336,62 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!e.target.closest('.react-bar') && !e.target.closest('[data-action="msg-menu"]')) closeReactBar();
     });
 
-    // Touch: long-press opens the bar, swipe right replies; anywhere: double-tap loves
+    // Swipe a message to the right to reply (phones and tablets). The bubble follows your finger, a reply arrow grows
+    // beside it, and past the mark there's a small haptic tick — let go there to reply. Up/down drags stay scrolls
+    // (the bubbles are touch-action: pan-y, so the browser no longer cancels the sideways drag).
+    const SWIPE_AT = 64;
+    function swipeToReply(root, cardSel, idOf, onReply) {
+        let p = null;
+        const finish = go => {
+            if (!p) return;
+            const { card, ic, id, mode } = p;
+            p = null;
+            card.style.transition = 'transform 220ms cubic-bezier(0.23, 1, 0.32, 1)';
+            card.style.transform = '';
+            setTimeout(() => { card.style.transition = ''; }, 240);
+            if (ic) { ic.classList.add('gone'); setTimeout(() => ic.remove(), 200); }
+            if (go && mode === 'swipe') onReply(id);
+        };
+        root.addEventListener('pointerdown', e => {
+            if (e.pointerType === 'mouse' || p) return;
+            const card = e.target.closest(cardSel);
+            if (!card || e.target.closest('button, a, input, textarea, video, audio, .vn, .react-bar, .leaflet-container, .ll-map, [data-no-swipe]')) return;
+            p = { card, id: idOf(card), x: e.clientX, y: e.clientY, dx: 0, mode: null, buzzed: false, ic: null };
+        });
+        root.addEventListener('pointermove', e => {
+            if (!p) return;
+            const dx = e.clientX - p.x, dy = e.clientY - p.y;
+            if (!p.mode) {
+                if (Math.abs(dy) > 10 && Math.abs(dy) >= Math.abs(dx)) { p = null; return; } // a scroll
+                if (dx < 10 || dx < Math.abs(dy) * 1.3) return;
+                p.mode = 'swipe';
+                const row = p.card.offsetParent || p.card.parentElement;
+                p.ic = document.createElement('span');
+                p.ic.className = 'swipe-ic';
+                p.ic.setAttribute('aria-hidden', 'true');
+                p.ic.innerHTML = '<svg class="i"><use href="#i-reply"/></svg>';
+                p.ic.style.left = `${p.card.offsetLeft - 4}px`;
+                p.ic.style.top = `${p.card.offsetTop + p.card.offsetHeight / 2 - 15}px`;
+                row.append(p.ic);
+            }
+            const raw = Math.max(0, dx);
+            p.dx = raw;
+            const shown = raw <= SWIPE_AT ? raw : SWIPE_AT + Math.min(40, (raw - SWIPE_AT) * 0.3); // resists past the mark
+            p.card.style.transform = `translateX(${shown}px)`;
+            const k = Math.min(1, raw / SWIPE_AT);
+            p.ic.style.opacity = String(k);
+            p.ic.style.transform = `translateX(${Math.min(shown, SWIPE_AT) - 30}px) scale(${0.5 + 0.5 * k})`;
+            const ready = raw >= SWIPE_AT;
+            p.ic.classList.toggle('ready', ready);
+            if (ready && !p.buzzed) { p.buzzed = true; try { navigator.vibrate && navigator.vibrate(10); } catch (err) { /* ignore */ } }
+            if (!ready) p.buzzed = false;
+        });
+        root.addEventListener('pointerup', () => finish(p && p.dx >= SWIPE_AT));
+        root.addEventListener('pointercancel', () => finish(false));
+    }
+    swipeToReply(content, '#chat-thread .msg:not(.unsent) .msg-card', card => card.closest('.msg').dataset.msg, id => startMsgReply(id));
+
+    // Touch: long-press opens the bar; anywhere: double-tap loves
     let press = null;
     content.addEventListener('pointerdown', e => {
         const card = e.target.closest('.msg:not(.unsent) .msg-card');
@@ -2356,18 +2413,10 @@ document.addEventListener('DOMContentLoaded', () => {
             press.moved = true;
             clearTimeout(press.timer);
         }
-        if (press.pointer === 'touch' && dx > 0 && Math.abs(dy) < 30) {
-            press.dx = Math.min(dx, 90);
-            press.card.style.transform = `translateX(${press.dx}px)`;
-            press.card.classList.toggle('will-reply', press.dx > 60);
-        }
     });
     const endPress = () => {
         if (!press) return;
         clearTimeout(press.timer);
-        press.card.style.transform = '';
-        press.card.classList.remove('will-reply');
-        if (press.dx > 60) startReply(press.id);
         press = null;
     };
     content.addEventListener('pointerup', endPress);
@@ -2609,6 +2658,27 @@ document.addEventListener('DOMContentLoaded', () => {
             label: f.display_name, icon: 'i-contact',
             onClick: () => done({ kind: 'contact', id: f.id, name: f.display_name, username: f.username })
         }))), 0);
+    }
+
+    // A sticker goes straight out (as a reply, if you were replying)
+    async function sendSticker(att) {
+        const friendId = s.activeFriend;
+        if (!friendId) return;
+        if (window.diarySafety && window.diarySafety.isBlocked(friendId)) return app.showToast('You can’t message this person');
+        const replyTo = s.replyTo[friendId] || null;
+        delete s.replyTo[friendId];
+        renderReplyBar();
+        const { data, error } = await client.from('diary_messages').insert({ recipient: friendId, body: '', attachments: [att], client_id: randomId(), ...(replyTo ? { reply_to: replyTo } : {}) }).select().single();
+        if (error) {
+            if (replyTo) { s.replyTo[friendId] = replyTo; renderReplyBar(); }
+            return app.showToast(/block/i.test(error.message || '') ? 'You can’t message this person' : 'Couldn’t send that sticker — check your connection');
+        }
+        alertMessage(data);
+        (s.threads[friendId] = s.threads[friendId] || []).push(data);
+        s.last[friendId] = data;
+        appendMessage(data);
+        updateConvoRow(friendId);
+        cacheThread(friendId);
     }
 
     async function sendAttachmentOnly(friendId, attachments) {
@@ -6153,7 +6223,7 @@ document.addEventListener('DOMContentLoaded', () => {
         startProgress: opts => startProgress(opts),
         soundOf, soundLineHTML, soundPlayer, soundRecord, openSound, useSound, ownAudio, openPostEditor,
         uploadWithProgress: (bucket, path, body, type, onProgress) => uploadWithProgress(bucket, path, body, type, onProgress),
-        probeVideo, VIDEO_TYPES, MAX_VIDEO, videoOn, videoHTML: a => attachmentHTML(a),
+        probeVideo, VIDEO_TYPES, MAX_VIDEO, videoOn, videoHTML: a => attachmentHTML(a), swipeToReply,
         openEntry(id, opts) {
             const p = findPost('entry', id);
             if (!p) {
@@ -6732,6 +6802,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (a.kind === 'location') return '📍 Live location';
         if (a.kind === 'game') return window.diaryBoardGames ? window.diaryBoardGames.preview(a) : '🎲 Game';
         if (a.kind === 'contact') return `👤 ${a.name || 'Contact'}`;
+        if (a.kind === 'sticker') return window.CordialStickers ? window.CordialStickers.preview(a) : '🎨 Sticker';
         if (a.kind === 'note') return a.once && !a.saved ? (a.opened_at ? '📝 Note · opened' : '📝 New note') : `📝 ${a.title || 'A note'}`;
         if (a.kind === 'image' || a.kind === 'drawing') return '📷 Photo';
         if (a.kind === 'video') return '🎥 Video';
@@ -6782,6 +6853,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="rich chat-input" id="chat-input" contenteditable="true" role="textbox" aria-multiline="true"
                             aria-label="${inc ? 'Incognito message to' : 'Message'} ${esc(friend.display_name)}" data-placeholder="${inc ? 'Incognito message…' : `Message ${esc(friend.display_name.split(' ')[0])}…`}"></div>
                         <div class="composer-tools">
+                            ${window.CordialStickers ? '<button type="button" class="tool-btn" data-action="chat-sticker" data-sticker-toggle title="Stickers" aria-label="Stickers"><svg class="i"><use href="#i-sticker"/></svg></button>' : ''}
                             <button type="button" class="tool-btn" data-action="chat-emoji" title="Emoji" aria-label="Emoji"><svg class="i"><use href="#i-smile"/></svg></button>
                         </div>
                         <div class="emoji-panel" id="emoji-panel" hidden>
@@ -6894,10 +6966,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const atts = (m.attachments || []).map(a => (a && a.kind === 'location'
             ? (window.LiveLocation ? window.LiveLocation.cardHTML(a, { mine, person: mine ? s.profile : friend }) : '<p>📍 Live location</p>')
             : attachmentHTML(a, mine, m.id))).join('');
+        const stickerOnly = !m.body && (m.attachments || []).length === 1 && m.attachments[0] && m.attachments[0].kind === 'sticker';
         const onlyEmoji = !atts && /^\p{Extended_Pictographic}(\u200d?\p{Extended_Pictographic}|\ufe0f|\s){0,6}$/u.test(Rich.toText(m.body || '').trim());
         const reactions = Object.entries(m.reactions || {}).filter(([, users]) => Array.isArray(users) && users.length);
         return `${sep}
-            <div class="msg ${mine ? 'out' : 'in'}${grouped ? ' grouped' : ''}${onlyEmoji ? ' jumbo' : ''}${reactions.length ? ' has-reacts' : ''}${m.vanish ? ' vanish' : ''}" data-msg="${id}">
+            <div class="msg ${mine ? 'out' : 'in'}${grouped ? ' grouped' : ''}${onlyEmoji ? ' jumbo' : ''}${stickerOnly ? ' sticker-msg' : ''}${reactions.length ? ' has-reacts' : ''}${m.vanish ? ' vanish' : ''}" data-msg="${id}">
                 ${mine || !friend ? '' : avatar(friend, 'xs')}
                 <div class="msg-card" title="${date.toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' })}">
                     ${m.forwarded ? '<span class="msg-forwarded"><svg class="i"><use href="#i-forward"/></svg>Forwarded</span>' : ''}
@@ -6917,6 +6990,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function attachmentHTML(a, mine = false, msgId = null) {
         if (a && a.kind === 'game') return window.diaryBoardGames ? window.diaryBoardGames.cardHTML(a, { mine, msgId }) : '<p>🎲 A game invite</p>';
         if (a && a.kind === 'contact') return contactCardHTML(a);
+        if (a && a.kind === 'sticker') return window.CordialStickers ? window.CordialStickers.html(a) : '<p>🎨 Sticker</p>';
         if (a && a.kind === 'note') return window.diaryNoteShare ? window.diaryNoteShare.cardHTML(a, { mine, msgId }) : `<p>📝 ${esc(a.title || 'A note')}</p>`;
         if (!a || typeof a.path !== 'string') return '';
         const path = esc(a.path);
@@ -7449,7 +7523,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (open) closeReactBar();
             else openReactBar(el.dataset.id);
         },
-        'msg-reply': el => startReply(el.dataset.id),
+        'msg-reply': el => startMsgReply(el.dataset.id),
         'msg-unsend': el => { closeReactBar(); unsend(el.dataset.id); },
         'msg-edit': el => startEdit(el.dataset.id),
         'msg-delete': el => deleteMessage(el.dataset.id, el.closest('.msg')?.querySelector('.msg-card') || el),
@@ -7530,7 +7604,12 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         'decline-request': el => respond(el.dataset.id, false),
         'cancel-request': el => removeFriendship(el.dataset.id),
+        'chat-sticker': el => {
+            $('emoji-panel').hidden = true;
+            window.CordialStickers.toggle(el, att => sendSticker(att));
+        },
         'chat-emoji': () => {
+            if (window.CordialStickers) window.CordialStickers.close();
             const panel = $('emoji-panel');
             panel.hidden = !panel.hidden;
         },

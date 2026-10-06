@@ -18494,3 +18494,44 @@ mark.sc-q.done { padding: 0; background: none; box-shadow: none; outline: 0; cur
 .pending-fail span { flex: 1; min-width: 0; }
 .pending-retry { flex: none; min-height: 34px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--danger, #dc2626); color: #fff; font: inherit; font-size: 0.82rem; font-weight: 700; cursor: pointer; }
 .pending-retry:active { transform: scale(0.97); }
+
+/* =====================================================================
+   Chat: swipe to reply, and stickers
+   ===================================================================== */
+/* Up/down drags scroll the chat; sideways drags belong to the swipe-to-reply gesture */
+#chat-thread .msg-card, #gc-thread .gc-bubble { touch-action: pan-y; }
+.swipe-ic { position: absolute; z-index: 0; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: color-mix(in srgb, var(--text) 10%, var(--surface)); color: var(--text-muted); opacity: 0; pointer-events: none; transition: background-color 120ms ease, color 120ms ease; }
+.swipe-ic .i { width: 16px; height: 16px; }
+.swipe-ic.ready { background: var(--accent); color: var(--on-accent, #fff); }
+.swipe-ic.gone { opacity: 0 !important; transition: opacity 160ms ease; }
+.msg-card.will-reply { box-shadow: none; }
+/* Sticker messages: no bubble, just the sticker */
+.sticker { display: block; width: 148px; height: 148px; filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.18)); }
+.sticker svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.msg.sticker-msg .msg-card { min-width: 0; padding: 0; background: none !important; border: 0 !important; box-shadow: none !important; }
+.msg.sticker-msg .msg-atts { margin: 0; }
+.msg.sticker-msg .msg-meta { align-self: flex-end; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--surface) 82%, transparent); }
+.gc-msg.sticker-msg .gc-bubble { padding: 0; background: none !important; border: 0 !important; box-shadow: none !important; }
+.gc-msg.sticker-msg .gc-meta { align-self: flex-end; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--surface) 82%, transparent); }
+.sticker-missing { margin: 0; }
+@media (prefers-reduced-motion: no-preference) {
+    .msg.sticker-msg:last-child .sticker, .gc-msg.sticker-msg:last-child .sticker { animation: stk-pop 380ms cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+}
+@keyframes stk-pop { from { transform: scale(0.6); opacity: 0; } }
+/* The picker */
+.composer, .gc-compose { position: relative; }
+.stk-panel { position: absolute; left: 10px; right: 10px; bottom: calc(100% + 6px); z-index: 20; display: flex; flex-direction: column; max-height: min(46dvh, 360px); border: 1px solid var(--border); border-radius: 18px; background: var(--surface); box-shadow: var(--shadow-lg); overflow: hidden; transform-origin: bottom right; animation: stk-in 180ms cubic-bezier(0.23, 1, 0.32, 1); }
+.stk-panel.closing { opacity: 0; transform: translateY(6px) scale(0.98); transition: opacity 140ms ease, transform 140ms ease; }
+@keyframes stk-in { from { opacity: 0; transform: translateY(8px) scale(0.97); } }
+.stk-tabs { flex: none; display: flex; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.stk-tabs button { width: 40px; height: 36px; border: 0; border-radius: 10px; background: none; font-size: 1.2rem; cursor: pointer; }
+.stk-tabs button[aria-selected="true"] { background: var(--accent-soft, color-mix(in srgb, var(--accent) 14%, transparent)); }
+.stk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 4px; padding: 8px; overflow-y: auto; overscroll-behavior: contain; }
+.stk-item { aspect-ratio: 1; padding: 4px; border: 0; border-radius: 12px; background: none; cursor: pointer; touch-action: manipulation; transition: transform 120ms ease-out, background-color 120ms ease; }
+.stk-item svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.stk-item:active { transform: scale(0.92); }
+@media (hover: hover) and (pointer: fine) { .stk-item:hover { background: color-mix(in srgb, var(--text) 6%, transparent); } }
+.stk-empty { grid-column: 1 / -1; margin: 18px 0; color: var(--text-muted); font-size: 0.86rem; text-align: center; }
+.gc-stk { flex: none; }
+@media (min-width: 760px) { .stk-panel { left: auto; width: 380px; } }
+.msg.sticker-msg .msg-meta, .gc-msg.sticker-msg .gc-meta { width: max-content; margin-left: auto; }

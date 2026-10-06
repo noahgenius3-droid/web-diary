@@ -204,6 +204,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <span class="rec-dot" aria-hidden="true"></span><span class="gc-rec-time" id="gc-rec-time">0:00</span>
                             <span class="gc-rec-wave" id="gc-rec-wave" aria-hidden="true"></span>
                         </div>
+                        ${window.CordialStickers ? '<button type="button" class="gc-tool gc-stk" data-action="gc-sticker" data-sticker-toggle aria-label="Stickers" title="Stickers"><svg class="i"><use href="#i-sticker"/></svg></button>' : ''}
                         <textarea id="gc-input" rows="1" maxlength="4000" placeholder="Message ${esc(community.name)}…" aria-label="Message" enterkeyhint="send"></textarea>
                         <button type="button" class="gc-tool gc-mic" id="gc-mic" data-action="gc-mic" aria-label="Record a voice note"><svg class="i"><use href="#i-mic"/></svg></button>
                         <button type="submit" class="gc-send" aria-label="Send"><svg class="i"><use href="#i-send"/></svg></button>
@@ -238,8 +239,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const voices = atts.filter(a => a.kind === 'audio' && a.path);
         const contacts = atts.filter(a => a.kind === 'contact' && a.id);
         const videos = atts.filter(a => a.kind === 'video' && a.path);
+        const stickers = atts.filter(a => a.kind === 'sticker');
+        const stickerOnly = !m.body && stickers.length === 1 && atts.length === 1;
         return `
-            <div class="gc-msg${mine ? ' mine' : ''}${grouped ? ' grouped' : ''}${pinned ? ' is-pinned' : ''}${!mine && m.body && s.profile && new RegExp(`@(${s.profile.username}|everyone|all)\\b`, 'i').test(m.body) ? ' mentions-me' : ''}" data-mid="${m.id}">
+            <div class="gc-msg${mine ? ' mine' : ''}${grouped ? ' grouped' : ''}${stickerOnly ? ' sticker-msg' : ''}${pinned ? ' is-pinned' : ''}${!mine && m.body && s.profile && new RegExp(`@(${s.profile.username}|everyone|all)\\b`, 'i').test(m.body) ? ' mentions-me' : ''}" data-mid="${m.id}">
                 ${!mine ? `<span class="gc-av">${grouped ? '' : `<button type="button" class="gc-who" data-profile="${esc(m.author)}" aria-label="View ${esc(p.display_name)}’s profile">${avatar(p, 'sm')}</button>`}</span>` : ''}
                 <div class="gc-col">
                     ${!mine && !grouped ? `<span class="gc-name"><button type="button" class="gc-who-name" data-profile="${esc(m.author)}">${esc(p.display_name)}</button>${ROLE[role] ? `<span class="gc-role role-${role}">${ROLE[role]}</span>` : ''}</span>` : ''}
@@ -248,6 +251,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         ${reply ? `<button type="button" class="gc-quote" data-action="gc-goto" data-id="${reply.id}"><strong>${esc(personOf(reply.author).display_name)}</strong><span>${esc(reply.deleted_at ? 'Message deleted' : (reply.body || (reply.attachments || []).length ? (reply.body || '📎 Attachment') : '')).slice(0, 120)}</span></button>` : ''}
                         ${videos.map(v => (I.videoHTML ? I.videoHTML(v) : '').replace(/data-src-path=/, `data-bucket="${BUCKET}" data-src-path=`).replace(/<img data-path=/, `<img data-bucket="${BUCKET}" data-path=`)).join('')}
                         ${photos.length ? `<div class="gc-photos n${Math.min(photos.length, 4)}">${photos.slice(0, 4).map(ph => `<button type="button" class="gc-photo" data-action="gc-view-photo" data-path="${esc(ph.path)}"><img data-path="${esc(ph.path)}" data-bucket="${BUCKET}" alt=""></button>`).join('')}</div>` : ''}
+                        ${window.CordialStickers ? stickers.map(window.CordialStickers.html).join('') : ''}
                         ${voices.map(a => I.voiceHTML(a, BUCKET)).join('')}
                         ${I.contactCardHTML ? contacts.map(I.contactCardHTML).join('') : ''}
                         ${locations.map(a => window.LiveLocation ? window.LiveLocation.cardHTML(a, { mine, person: p }) : '<p>📍 Live location</p>').join('')}
@@ -985,6 +989,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (window.ZoomViewer) window.ZoomViewer.open([entry.url], { origin: el.querySelector('img') });
             else Media.lightbox(entry.url);
         },
+        'gc-sticker': el => window.CordialStickers.toggle(el, att => send('', [att])),
         'gc-menu': el => {
             const m = g.messages.find(x => x.id === Number(el.dataset.id));
             if (!m) return;
@@ -1047,4 +1052,13 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     ['pointerup', 'pointercancel', 'pointermove'].forEach(t => content.addEventListener(t, () => clearTimeout(press)));
     content.addEventListener('contextmenu', e => { if (e.target.closest('.gc-bubble') && e.pointerType !== 'mouse') e.preventDefault(); });
+    // Swipe a message to the right to reply (same gesture as one-to-one chats)
+    if (I.swipeToReply) I.swipeToReply(content, '#gc-thread .gc-msg:not(.removed) .gc-bubble', b => b.closest('.gc-msg').dataset.mid, id => {
+        const m = g.messages.find(x => String(x.id) === String(id));
+        if (!m || m.deleted_at || g.editing) return;
+        g.reply = m;
+        paintReply();
+        const input = $('gc-input');
+        if (input) input.focus();
+    });
 });
