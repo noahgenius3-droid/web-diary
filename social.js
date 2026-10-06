@@ -64,6 +64,9 @@ document.addEventListener('DOMContentLoaded', () => {
         feedLoading: false,
         feedAuthor: null,
         threads: {},       // friend id -> messages, oldest first
+        fresh: new Set(),  // chats checked against the server since the app (re)connected
+        threadMore: {},    // friend id -> false once the oldest message is loaded
+        threadError: {},   // friend id -> true when the first load failed
         activeFriend: null,
         drafts: {},
         pending: {},       // friend id -> attachments waiting to send
@@ -772,6 +775,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }, true);
 
     async function signOut() {
+        ChatCache.clear();
         // This device stops getting the account's lock-screen alerts
         if (window.diaryNotify && window.diaryNotify.unsubscribePush) await window.diaryNotify.unsubscribePush();
         if (client) await client.auth.signOut();
@@ -833,7 +837,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!s.profile) return app.render();
 
         s.drafts = load(`diaryChatDrafts:${s.profile.id}`, {});
+        hydrateCachedThreads();
         await Promise.all([loadFriends(), loadRecent(), loadRemoteIds(), loadSaved(), loadFollows(), loadIncognito()]);
+        setTimeout(prefetchThreads, 2500);
         subscribe();
         emptyIncognitoTrash();
         loadPrefs().then(() => app.requestRender('messages'));
@@ -861,7 +867,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (s.presence) client.removeChannel(s.presence);
         Object.assign(s, {
             profile: null, friends: [], incoming: [], outgoing: [], unread: {}, last: {}, feed: null, feedAuthor: null,
-            threads: {}, activeFriend: null, drafts: {}, pending: {}, online: new Set(), urls: new Map(),
+            threads: {}, fresh: new Set(), threadMore: {}, threadError: {}, activeFriend: null, drafts: {}, pending: {}, online: new Set(), urls: new Map(),
             remoteIds: new Set(), channel: null, presence: null, comments: new Map(),
             saved: new Set(), savedReels: new Set(), savedExtra: [],
             previews: new Map(), rendered: new Map(), following: new Set(), followerCount: 0,
@@ -1159,23 +1165,158 @@ document.addEventListener('DOMContentLoaded', () => {
         $('messages-count-m').textContent = total ? String(total) : '';
     }
 
-    async function loadThread(friendId) {
-        const me = s.profile.id;
-        const { data, error } = await client.from('diary_messages')
-            .select('*')
-            .or(`and(sender.eq.${me},recipient.eq.${friendId}),and(sender.eq.${friendId},recipient.eq.${me})`)
-            .order('created_at', { ascending: false })
-            .limit(200);
-        const sig = list => (list || []).map(m => `${m.id}:${m.read_at || ''}:${m.deleted_at || ''}:${JSON.stringify(m.reactions || {})}:${m.expires_at || ''}`).join('|');
-        const before = sig(s.threads[friendId]);
-        if (error && s.threads[friendId]) return; // keep what's on screen if the network hiccups
-        s.threads[friendId] = error ? [] : data.reverse();
-        mergeOutbox(friendId);
-        queueDelivered(s.threads[friendId].filter(m => m.recipient === me && !m.delivered_at).map(m => m.id));
-        pruneVanished(friendId);
-        if (before === sig(s.threads[friendId])) return;
-        if (app.state.view === 'messages' && s.activeFriend === friendId) app.requestRender('messages');
+    // ---------- Conversations: instant from this device, fresh from the server, older pages on demand ----------
+    // Opening a chat shows what this device already has (kept in IndexedDB between visits) straight away, then fetches
+    // the newest page in the background and merges it in. Only the newest 50 messages are fetched; older ones load as
+    // you scroll up. One fetch per chat at a time — opening, refreshing and prefetching the same chat share it.
+    const PAGE = 50;
+    const threadLoads = new Map();
+    const pairFilter = friendId => { const me = s.profile.id; return `and(sender.eq.${me},recipient.eq.${friendId}),and(sender.eq.${friendId},recipient.eq.${me})`; };
+    function loadThread(friendId) {
+        if (threadLoads.has(friendId)) return threadLoads.get(friendId);
+        const p = fetchThread(friendId).catch(() => {}).finally(() => threadLoads.delete(friendId));
+        threadLoads.set(friendId, p);
+        return p;
     }
+    async function fetchThread(friendId) {
+        const who = s.profile.id;
+        const { data, error } = await client.from('diary_messages').select('*')
+            .or(pairFilter(friendId))
+            .order('created_at', { ascending: false })
+            .limit(PAGE);
+        if (!s.profile || s.profile.id !== who) return; // signed out or switched account meanwhile
+        const sig = list => (list || []).map(m => `${m.id}:${m.read_at || ''}:${m.deleted_at || ''}:${m.edited_at || ''}:${JSON.stringify(m.reactions || {})}:${m.expires_at || ''}`).join('|');
+        const before = sig(s.threads[friendId]);
+        if (error) {
+            if (s.threads[friendId]) return; // keep what's on screen if the network hiccups
+            s.threadError[friendId] = true;
+            if (s.activeFriend === friendId) paintThread(friendId);
+            return;
+        }
+        delete s.threadError[friendId];
+        const fresh = data.reverse();
+        const old = s.threads[friendId] || [];
+        let merged;
+        if (fresh.length < PAGE) { merged = fresh; s.threadMore[friendId] = false; }
+        else {
+            // Keep older messages already on this device; the fetched page replaces everything from its first message on
+            const from = fresh[0].created_at, ids = new Set(fresh.map(m => m.id));
+            merged = old.filter(m => !m.client_only && m.created_at < from && !ids.has(m.id) && !m.pending && !m.failed).concat(fresh);
+            if (s.threadMore[friendId] !== false) s.threadMore[friendId] = true;
+        }
+        // Messages that arrived live while this was loading
+        old.filter(m => (m.pending || m.failed) || (m.created_at > (fresh[fresh.length - 1] || {}).created_at && !merged.some(x => x.id === m.id))).forEach(m => { if (!merged.includes(m)) merged.push(m); });
+        s.threads[friendId] = merged;
+        s.fresh.add(friendId);
+        mergeOutbox(friendId);
+        queueDelivered(s.threads[friendId].filter(m => m.recipient === who && !m.delivered_at).map(m => m.id));
+        pruneVanished(friendId);
+        cacheThread(friendId);
+        if (before === sig(s.threads[friendId])) return;
+        if (app.state.view === 'messages' && s.activeFriend === friendId) paintThread(friendId);
+    }
+    // Scrolled near the top: the next 50 older messages, keeping your place
+    async function loadOlder(friendId) {
+        const thread = s.threads[friendId];
+        if (!thread || s.olderLoading || s.threadMore[friendId] === false) return;
+        const oldest = thread.find(m => typeof m.id === 'number' && m.created_at);
+        if (!oldest) return;
+        s.olderLoading = friendId;
+        const btn = $('chat-older-btn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Loading earlier messages…'; }
+        const { data, error } = await client.from('diary_messages').select('*')
+            .or(pairFilter(friendId))
+            .lt('created_at', oldest.created_at)
+            .order('created_at', { ascending: false })
+            .limit(PAGE);
+        s.olderLoading = null;
+        if (error) { const b2 = $('chat-older-btn'); if (b2) { b2.disabled = false; b2.textContent = 'Couldn’t load — tap to try again'; } return; }
+        const have = new Set((s.threads[friendId] || []).map(m => m.id));
+        s.threads[friendId] = data.reverse().filter(m => !have.has(m.id)).concat(s.threads[friendId] || []);
+        if (data.length < PAGE) s.threadMore[friendId] = false;
+        if (s.activeFriend === friendId && app.state.view === 'messages') paintThread(friendId, 'older');
+    }
+    // Repaint just the message list (not the whole inbox), keeping the reader where they were
+    function paintThread(friendId, mode = 'update') {
+        const el = $('chat-thread');
+        const friend = s.friends.find(f => f.id === friendId);
+        if (!el || !friend || s.activeFriend !== friendId) return app.requestRender('messages');
+        const first = !!el.querySelector('.chat-skel, .chat-load-err');
+        const fromBottom = el.scrollHeight - el.scrollTop;
+        const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+        const top = el.scrollTop;
+        el.innerHTML = threadBodyHTML(friend);
+        if (mode === 'older') el.scrollTop = el.scrollHeight - fromBottom;
+        else if (first) { const sep = $('unread-sep'); if (sep) sep.scrollIntoView({ block: 'start' }); else el.scrollTop = el.scrollHeight; }
+        else if (nearBottom) el.scrollTop = el.scrollHeight;
+        else el.scrollTop = top;
+        if (window.LiveLocation) window.LiveLocation.hydrate(el);
+        hydrateStorage(el);
+        if (s.typingFrom === friendId) showTyping(friendId);
+        if (first && s.pendingJump && s.pendingJump.friendId === friendId) { const j = s.pendingJump; s.pendingJump = null; setTimeout(() => jumpToMessage(j.friendId, j.id), 50); }
+    }
+    // The latest few chats are fetched quietly after start-up, so opening them is instant
+    async function prefetchThreads() {
+        if (!signedIn() || isGuest()) return;
+        const recent = Object.entries(s.last).sort((x, y) => String(y[1].created_at).localeCompare(String(x[1].created_at))).slice(0, 4).map(([id]) => id);
+        for (const id of recent) { if (!s.fresh.has(id) && s.friends.some(f => f.id === id)) await loadThread(id); }
+    }
+
+    // Conversations kept on this device (IndexedDB): the newest 50 messages of each chat, per account. Incognito chats
+    // and disappearing messages are never stored; signing out clears it all.
+    const ChatCache = (() => {
+        let dbp = null;
+        const open = () => dbp || (dbp = new Promise((res, rej) => {
+            const r = indexedDB.open('cordialChats', 1);
+            r.onupgradeneeded = () => r.result.createObjectStore('threads');
+            r.onsuccess = () => res(r.result);
+            r.onerror = () => rej(r.error);
+        }).catch(e => { dbp = null; throw e; }));
+        const run = async (mode, fn) => {
+            const db = await open();
+            return new Promise((res, rej) => { const t = db.transaction('threads', mode); const req = fn(t.objectStore('threads')); t.oncomplete = () => res(req && req.result); t.onerror = () => rej(t.error); });
+        };
+        const range = me => IDBKeyRange.bound(`${me}:`, `${me}:\uffff`);
+        return {
+            all: me => run('readonly', st => st.getAll(range(me))).catch(() => []),
+            put: (me, friendId, msgs) => run('readwrite', st => st.put({ friend: friendId, msgs, at: Date.now() }, `${me}:${friendId}`)).catch(() => {}),
+            del: (me, friendId) => run('readwrite', st => st.delete(`${me}:${friendId}`)).catch(() => {}),
+            clear: () => run('readwrite', st => st.clear()).catch(() => {})
+        };
+    })();
+    const cacheDirty = new Set();
+    function cacheThread(friendId) {
+        cacheDirty.add(friendId);
+        clearTimeout(cacheThread.timer);
+        cacheThread.timer = setTimeout(flushThreadCache, 1200);
+    }
+    function flushThreadCache() {
+        const me = s.profile && s.profile.id;
+        if (!me || !window.indexedDB) return cacheDirty.clear();
+        for (const id of cacheDirty) {
+            const list = s.threads[id];
+            if (!list) continue;
+            if (incognitoOf(id)) { ChatCache.del(me, id); continue; }
+            ChatCache.put(me, id, list.filter(m => typeof m.id === 'number' && !m.vanish && !m.expires_at && !m.pending && !m.failed).slice(-PAGE));
+        }
+        cacheDirty.clear();
+    }
+    async function hydrateCachedThreads() {
+        if (!window.indexedDB) return;
+        const me = s.profile.id;
+        const rows = await ChatCache.all(me);
+        if (!s.profile || s.profile.id !== me) return;
+        for (const r of rows) if (r && r.friend && Array.isArray(r.msgs) && !s.threads[r.friend] && !incognitoOf(r.friend)) s.threads[r.friend] = r.msgs;
+        if (s.activeFriend && s.threads[s.activeFriend] && app.state.view === 'messages' && content.querySelector('.chat-skel')) paintThread(s.activeFriend);
+    }
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') { s.hiddenAt = Date.now(); if (cacheDirty.size) flushThreadCache(); return; }
+        // Back after a while (the phone slept, the app was in the background): check the open chat again
+        if (s.hiddenAt && Date.now() - s.hiddenAt > 60000 && s.profile) {
+            s.fresh.clear();
+            if (s.activeFriend && app.state.view === 'messages') loadThread(s.activeFriend);
+        }
+    });
 
     // Refresh: fetch the chat list, requests and the open conversation again, and reconnect live updates
     // (handy after the phone slept or the network dropped)
@@ -1247,7 +1388,7 @@ document.addEventListener('DOMContentLoaded', () => {
         s.editing = null;
         s.chatOpenedAt[friendId] = Date.now();
         pruneVanished(friendId);
-        if (!s.threads[friendId]) loadThread(friendId);
+        if (!s.fresh.has(friendId)) loadThread(friendId);
         markRead(friendId);
         s.chatFocused = window.matchMedia('(hover: hover)').matches;
         app.render();
@@ -1342,7 +1483,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const list = s.pending[s.activeFriend] || [];
         box.hidden = !list.length;
         updateComposerButton();
-        box.innerHTML = list.map(p => `
+        const failed = s.sendFailed === s.activeFriend && list.length;
+        box.innerHTML = (failed ? `<div class="pending-fail" role="alert"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg><span>Not sent — your ${list.length === 1 ? 'attachment is' : 'attachments are'} still here.</span><button type="button" class="pending-retry" data-action="chat-retry">Retry</button></div>` : '') + list.map(p => `
             <div class="pending">
                 ${p.kind === 'video' && p.preview ? `<span class="pending-video"><video src="${p.preview}" muted playsinline preload="metadata"></video><svg class="i" aria-hidden="true"><use href="#i-play"/></svg></span>`
                     : p.preview ? `<img src="${p.preview}" alt="">` : `<svg class="i"><use href="#${p.kind === 'audio' ? 'i-mic' : 'i-file'}"/></svg>`}
@@ -1375,6 +1517,7 @@ document.addEventListener('DOMContentLoaded', () => {
         renderReplyBar();
         sendTyping(true);
 
+        s.sendFailed = null;
         const ok = await deliver(friendId, text ? html : '', pending, replyTo);
         if (!ok) {
             const current = $('chat-input');
@@ -1395,12 +1538,30 @@ document.addEventListener('DOMContentLoaded', () => {
         content.querySelector('.composer')?.classList.add('busy');
         const me = s.profile.id;
         const uploaded = [];
+        const photoCount = items.filter(p => p.kind === 'image').length;
+        let photoNo = 0;
         try {
             for (const p of items) {
-                const ext = (p.name.match(/\.[a-z0-9]{1,5}$/i) || [''])[0].toLowerCase() || extFor(p.type);
+                // Photos are resized (longest side 2048 px) before sending: a 5–12 MB phone photo becomes a few hundred KB,
+                // so it sends in seconds and opens quickly for the other person
+                let body = p.file, type = p.type, size = p.size;
+                if (p.kind === 'image' && type !== 'image/gif') {
+                    const bar0 = uploadBar(`Preparing photo${photoCount > 1 ? ` ${photoNo + 1} of ${photoCount}` : ''}…`);
+                    try { body = p.small || (p.small = await Media.compressImage(p.file, 2048, 0.86)); } catch (e) { body = p.file; }
+                    bar0.done();
+                    type = body.type || p.type; size = body.size;
+                }
+                const ext = body !== p.file && type === 'image/jpeg' ? '.jpg' : ((p.name.match(/\.[a-z0-9]{1,5}$/i) || [''])[0].toLowerCase() || extFor(type));
                 const path = `${me}/${friendId}/${incognitoOf(friendId) ? 'incognito/' : ''}${randomId()}${ext}`;
                 let poster = null;
-                if (p.kind === 'video') {
+                if (p.kind === 'image') {
+                    const label = `Sending photo${photoCount > 1 ? ` ${photoNo + 1} of ${photoCount}` : ''}`;
+                    photoNo++;
+                    const bar = uploadBar(`${label}… 0%`);
+                    const { error } = await uploadWithProgress(BUCKET, path, body, type, f => bar.set(`${label}… ${Math.round(f * 100)}%`, f));
+                    bar.done();
+                    if (error) throw new Error(`${p.name} wasn’t sent — check your connection and tap Retry`);
+                } else if (p.kind === 'video') {
                     const bar = uploadBar(`Uploading video… 0%`);
                     const { error } = await uploadWithProgress(BUCKET, path, p.file, p.type, f => bar.set(`Uploading video… ${Math.round(f * 100)}%`, f));
                     if (error) { bar.done(); throw new Error(`Upload failed — ${p.name} wasn’t sent. Tap send to try again.`); }
@@ -1416,7 +1577,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (error) throw new Error(`Couldn’t upload ${p.name}: ${error.message}`);
                 }
                 uploaded.push({
-                    path, name: p.name.slice(0, 120), type: p.type, size: p.size, kind: p.kind,
+                    path, name: p.name.slice(0, 120), type, size, kind: p.kind,
                     ...(p.duration ? { duration: Math.round(p.duration) } : {}),
                     ...(p.waveform ? { waveform: p.waveform.slice(0, 40) } : {}),
                     ...(poster ? { poster } : {}),
@@ -1433,9 +1594,11 @@ document.addEventListener('DOMContentLoaded', () => {
             s.last[friendId] = data;
             appendMessage(data);
             updateConvoRow(friendId);
+            cacheThread(friendId);
             return true;
         } catch (err) {
             app.showToast(err.message || 'Message not sent');
+            s.sendFailed = friendId;
             if (uploaded.length) client.storage.from(BUCKET).remove(uploaded.flatMap(u => (u.poster ? [u.path, u.poster] : [u.path])));
             return false;
         } finally {
@@ -1721,7 +1884,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function onIncomingMessage(m) {
         if (s.typingFrom === m.sender) hideTyping();
         const thread = s.threads[m.sender];
-        if (thread && !thread.some(x => x.id === m.id)) thread.push(m);
+        if (thread && !thread.some(x => x.id === m.id)) { thread.push(m); cacheThread(m.sender); }
         s.last[m.sender] = m;
 
         const viewing = app.state.view === 'messages' && s.activeFriend === m.sender && document.visibilityState === 'visible';
@@ -1750,6 +1913,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const thread = s.threads[other];
         const local = thread && thread.find(x => x.id === m.id);
         if (local) {
+            cacheThread(other);
             const changed = local.deleted_at !== m.deleted_at || local.body !== m.body || local.edited_at !== m.edited_at || local.restored_at !== m.restored_at
                 || JSON.stringify(local.reactions || {}) !== JSON.stringify(m.reactions || {})
                 || JSON.stringify(local.attachments || []) !== JSON.stringify(m.attachments || []);
@@ -2185,6 +2349,7 @@ document.addEventListener('DOMContentLoaded', () => {
     content.addEventListener('scroll', e => {
         if (e.target.id !== 'chat-thread') return;
         const t = e.target;
+        if (t.scrollTop < 300 && s.activeFriend && s.threadMore[s.activeFriend] !== false && !s.olderLoading && t.querySelector('.chat-older')) loadOlder(s.activeFriend);
         const away = t.scrollHeight - t.scrollTop - t.clientHeight > 400;
         const btn = $('chat-jump');
         if (!btn) return;
@@ -6534,17 +6699,25 @@ document.addEventListener('DOMContentLoaded', () => {
         return `📎 ${a.name}`;
     }
 
-    function chatPane(friend) {
+    function threadBodyHTML(friend) {
         const thread = s.threads[friend.id];
-        const inc = incognitoOf(friend.id);
         let body;
-        if (!thread) body = '<div class="chat-skel" aria-busy="true" aria-label="Loading messages"><i class="in w60"></i><i class="in w40"></i><i class="out w55"></i><i class="in w70"></i><i class="out w35"></i></div>';
+        if (!thread && s.threadError[friend.id]) body = `<div class="chat-load-err" role="alert"><p>Couldn’t load your messages with ${esc(friend.display_name)}.</p><button type="button" class="ghost-btn" data-action="thread-retry">Try again</button></div>`;
+        else if (!thread) body = '<div class="chat-skel" aria-busy="true" aria-label="Loading messages"><i class="in w60"></i><i class="in w40"></i><i class="out w55"></i><i class="in w70"></i><i class="out w35"></i></div>';
         else if (!thread.length) body = `<p class="chat-empty">This is the start of your chat with ${esc(friend.display_name)}. Say hi 👋</p>`;
         else {
             const firstUnread = unreadDividerBefore(thread);
             body = thread.map((m, i) => `${m.id === firstUnread ? `<div class="unread-sep" id="unread-sep"><span>${s.unreadMark.count} unread ${s.unreadMark.count === 1 ? 'message' : 'messages'}</span></div>` : ''}${messageHTML(m, thread[i - 1] || null)}`).join('');
         }
 
+        const older = thread && thread.length && s.threadMore[friend.id] !== false
+            ? `<div class="chat-older"><button type="button" class="chat-older-btn" id="chat-older-btn" data-action="chat-older">Load earlier messages</button></div>` : '';
+        return older + body;
+    }
+
+    function chatPane(friend) {
+        const inc = incognitoOf(friend.id);
+        const body = threadBodyHTML(friend);
         return `
             <header class="chat-head">
                 <button class="icon-btn back-chat" data-action="close-chat" aria-label="Back to inbox" title="Back to inbox"><svg class="i"><use href="#i-chevron-left"/></svg></button>
@@ -6710,7 +6883,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const path = esc(a.path);
         const name = esc(a.name || 'attachment');
         if (a.kind === 'image' || a.kind === 'drawing') {
-            return `<button type="button" class="msg-img" data-action="chat-view-image" data-img="${path}" aria-label="View ${name}"><img data-path="${path}" alt="${name}"></button>`;
+            return `<button type="button" class="msg-img" data-action="chat-view-image" data-img="${path}" aria-label="View ${name}"><img data-path="${path}" alt="${name}" loading="lazy" decoding="async"></button>`;
         }
         if (a.kind === 'audio') return voiceHTML(a);
         if (a.kind === 'video') {
@@ -6718,7 +6891,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return `<div class="msg-video" style="aspect-ratio:${ratio.toFixed(3)}">
                 <video data-src-path="${path}" controls playsinline preload="none" aria-label="${name}"></video>
                 <button type="button" class="msg-video-cover" data-action="chat-play-video" aria-label="Play video${a.duration ? `, ${Media.formatDuration(a.duration)}` : ''}">
-                    ${a.poster ? `<img data-path="${esc(a.poster)}" alt="">` : ''}
+                    ${a.poster ? `<img data-path="${esc(a.poster)}" alt="" loading="lazy" decoding="async">` : ''}
                     <span class="msg-video-play" aria-hidden="true"><svg class="i"><use href="#i-play"/></svg></span>
                     ${a.duration ? `<small>${Media.formatDuration(a.duration)}</small>` : ''}
                 </button>
@@ -7088,6 +7261,9 @@ document.addEventListener('DOMContentLoaded', () => {
         'go-notes': () => app.setView('home'),
         'tag-insert': el => insertTag(el),
         'chat-refresh': () => refreshChat(),
+        'chat-older': () => s.activeFriend && loadOlder(s.activeFriend),
+        'thread-retry': () => { if (!s.activeFriend) return; delete s.threadError[s.activeFriend]; paintThread(s.activeFriend); loadThread(s.activeFriend); },
+        'chat-retry': () => sendMessage(),
         'chat-wallpaper': () => {
             const friend = s.friends.find(f => f.id === s.activeFriend);
             if (!friend || !window.ChatWallpaper) return;
@@ -7361,6 +7537,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const item = list.find(p => p.id === el.dataset.id);
             if (item && item.preview) URL.revokeObjectURL(item.preview);
             s.pending[s.activeFriend] = list.filter(p => p.id !== el.dataset.id);
+            if (!s.pending[s.activeFriend].length) s.sendFailed = null;
             renderPending();
         },
         'chat-view-image': el => {

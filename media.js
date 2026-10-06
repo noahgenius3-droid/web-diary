@@ -176,17 +176,45 @@ window.Media = (() => {
         return blob;
     }
 
+    // The file picker. The input is put in the page (inside the open dialog, if any) for as long as the picker is up:
+    // a detached input can be garbage-collected on iPhone/iPad Safari before it reports the chosen photo — which is
+    // why the very first pick sometimes did nothing. It must be opened straight from the tap (no await before it).
+    // A second tap while the picker is already opening doesn't open another one.
+    let picking = null;
     function pickFiles(accept, multiple = true, capture = null) {
-        return new Promise(resolve => {
-            const input = document.createElement('input');
+        if (picking && Date.now() - picking.at < 1500) return picking.promise;
+        let input;
+        const promise = new Promise(resolve => {
+            input = document.createElement('input');
             input.type = 'file';
             input.accept = accept;
             input.multiple = multiple;
             if (capture) input.setAttribute('capture', capture);
-            input.addEventListener('change', () => resolve([...input.files]));
-            input.addEventListener('cancel', () => resolve([]));
+            input.tabIndex = -1;
+            input.setAttribute('aria-hidden', 'true');
+            input.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0;pointer-events:none';
+            const dialogs = [...document.querySelectorAll('dialog[open]')];
+            (dialogs[dialogs.length - 1] || document.body).append(input);
+            let done = false;
+            const finish = files => {
+                if (done) return;
+                done = true;
+                if (picking && picking.promise === promise) picking = null;
+                setTimeout(() => input.remove(), 0);
+                resolve(files);
+            };
+            input.addEventListener('change', () => finish([...(input.files || [])]));
+            input.addEventListener('cancel', () => finish([]));
+            // Browsers without a cancel event: once the page has focus again and nothing was chosen, tidy up
+            // (generously late — iPhone can take a few seconds to hand over a large photo)
+            window.addEventListener('focus', function back() {
+                window.removeEventListener('focus', back);
+                setTimeout(() => { if (!done && !(input.files && input.files.length)) { if (picking && picking.promise === promise) picking = null; } }, 1000);
+            });
             input.click();
         });
+        picking = { promise, at: Date.now() };
+        return promise;
     }
 
     // ---------- Voice notes ----------
