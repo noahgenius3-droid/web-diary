@@ -21,10 +21,34 @@ document.addEventListener('DOMContentLoaded', () => {
     ];
     const DOC_ACCEPT = '.pdf,.txt,.csv,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip';
     // Videos in chats (MP4, MOV, WebM up to 100 MB). The storage bucket enforces the same types and size on the
-    // server; this switch stays off until that's in place (window.DIARY_CONFIG.chatVideo).
+    // server, and videos switch themselves on as soon as the bucket accepts them (or with window.DIARY_CONFIG.chatVideo).
     const VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/webm'];
     const MAX_VIDEO = 100 * 1048576;
-    const videoOn = () => !!(window.DIARY_CONFIG || {}).chatVideo;
+    // The check: a tiny upload with only the public key. It's always refused, but a bucket that doesn't take video
+    // refuses it for its type (415) before anything else, while one that does gets as far as the access rules (403).
+    // Nothing is ever stored. Remembered for a week once on, re-checked hourly while off.
+    let videoReady = (() => {
+        try { const v = JSON.parse(localStorage.getItem('cordialChatVideo') || 'null'); if (v && Date.now() - v.at < (v.ok ? 7 * 86400000 : 3600000)) return v.ok; } catch (e) { /* private mode */ }
+        return null;
+    })();
+    const videoOn = () => !!(window.DIARY_CONFIG || {}).chatVideo || videoReady === true;
+    async function checkVideo() {
+        if (videoReady !== null || !cfg || !cfg.supabaseUrl || !navigator.onLine) return;
+        try {
+            const r = await fetch(`${cfg.supabaseUrl}/storage/v1/object/${BUCKET}/capability-check/${Date.now().toString(36)}.mp4`, {
+                method: 'POST',
+                headers: { apikey: cfg.supabaseKey, Authorization: `Bearer ${cfg.supabaseKey}`, 'Content-Type': 'video/mp4' },
+                body: new Blob([new Uint8Array(16)], { type: 'video/mp4' })
+            });
+            const j = await r.json().catch(() => ({}));
+            const code = String(j.statusCode || r.status);
+            const wrongType = code === '415' || j.error === 'invalid_mime_type';
+            const pastType = code === '403' || /row-level security/i.test(j.message || '');
+            if (!wrongType && !pastType) return; // something else (a hiccup): ask again next time
+            videoReady = pastType;
+            try { localStorage.setItem('cordialChatVideo', JSON.stringify({ ok: videoReady, at: Date.now() })); } catch (e) { /* private mode */ }
+        } catch (e) { /* offline: try again next time */ }
+    }
     // A still frame, the length and the size of a video, read on this device before anything is uploaded
     function probeVideo(file) {
         return new Promise(resolve => {
@@ -846,6 +870,7 @@ document.addEventListener('DOMContentLoaded', () => {
         loadRelays();
         registerDevice();
         setTimeout(flushOutbox, 1500);
+        setTimeout(checkVideo, 3000);
         if (s.pendingRoute) { const r = s.pendingRoute; s.pendingRoute = null; setTimeout(() => routeTo(r), 300); }
         // Anything you tapped before you were signed in (a game invite, a group message…)
         let pendingLink = null;
