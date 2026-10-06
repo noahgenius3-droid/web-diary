@@ -617,6 +617,34 @@ document.addEventListener('DOMContentLoaded', () => {
             dlg.showModal();
         });
     }
+    // Upload a video to the group: progress with Cancel; a failure keeps the video for Retry (no picking it again)
+    async function sendGroupVideo(file, type, caption, info = null) {
+        const cid = g.cid;
+        const bar = progressPill('Preparing video…');
+        info = info || await I.probeVideo(file);
+        const base = `${cid}/${me()}/${randomId()}`;
+        const ext = { 'video/mp4': '.mp4', 'video/quicktime': '.mov', 'video/webm': '.webm' }[type] || '.mp4';
+        let xhr = null;
+        bar.cancel(() => { if (xhr) xhr.abort(); });
+        const { error } = await I.uploadWithProgress(BUCKET, base + ext, file, type, f => bar.set(`Uploading video… ${Math.round(f * 100)}%`, f), x => { xhr = x; });
+        if (error) {
+            if (error.cancelled) { bar.done(); return app.showToast('Video upload cancelled'); }
+            bar.fail('Video upload failed', () => sendGroupVideo(file, type, caption, info));
+            return;
+        }
+        bar.set('Sending…', 1);
+        let poster = null;
+        if (info.poster) {
+            const r = await client.storage.from(BUCKET).upload(base + '-poster.jpg', info.poster, { contentType: 'image/jpeg', upsert: false });
+            if (!r.error) poster = base + '-poster.jpg';
+        }
+        const att = { kind: 'video', path: base + ext, type, size: file.size, ...(poster ? { poster } : {}),
+            ...(info.duration ? { duration: Math.round(info.duration) } : {}), ...(info.width ? { width: info.width, height: info.height } : {}) };
+        if (g.cid !== cid) { bar.done(); return app.showToast('Video not sent — you left the group chat'); }
+        const sent = await send(caption, [att]);
+        if (sent) bar.done();
+        else bar.fail('Video not sent', () => sendGroupVideo(file, type, caption, info));
+    }
     function progressPill(text) {
         const el = document.createElement('div');
         el.className = 'up-pill';
@@ -627,6 +655,12 @@ document.addEventListener('DOMContentLoaded', () => {
         set(text, 0);
         return {
             set,
+            cancel: onCancel => {
+                const b = document.createElement('button');
+                b.type = 'button'; b.textContent = 'Cancel';
+                b.addEventListener('click', onCancel);
+                el.append(b);
+            },
             done: () => el.remove(),
             fail: (t, retry) => {
                 el.classList.add('failed');
@@ -953,30 +987,12 @@ document.addEventListener('DOMContentLoaded', () => {
         'gc-video': async () => {
             const [file] = await Media.pickFiles('video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm', false);
             if (!file) return;
-            const type = (file.type || '').split(';')[0];
+            const type = I.videoTypeOf ? I.videoTypeOf(file) : (file.type || '').split(';')[0];
             if (!I.VIDEO_TYPES.includes(type)) return app.showToast('That video isn’t supported — use MP4, MOV or WebM');
             if (file.size > I.MAX_VIDEO) return app.showToast('That video is larger than 100 MB — try a shorter clip');
             const ok = await previewVideo(file);
             if (!ok) return;
-            const info = await I.probeVideo(file);
-            const base = `${g.cid}/${me()}/${randomId()}`;
-            const ext = { 'video/mp4': '.mp4', 'video/quicktime': '.mov', 'video/webm': '.webm' }[type];
-            const bar = progressPill('Uploading video… 0%');
-            const { error } = await I.uploadWithProgress(BUCKET, base + ext, file, type, f => bar.set(`Uploading video… ${Math.round(f * 100)}%`, f));
-            if (error) {
-                bar.fail('Upload failed', () => run('gc-video'));
-                return;
-            }
-            bar.set('Sending…', 1);
-            let poster = null;
-            if (info.poster) {
-                const r = await client.storage.from(BUCKET).upload(base + '-poster.jpg', info.poster, { contentType: 'image/jpeg', upsert: false });
-                if (!r.error) poster = base + '-poster.jpg';
-            }
-            const att = { kind: 'video', path: base + ext, type, size: file.size, ...(poster ? { poster } : {}),
-                ...(info.duration ? { duration: Math.round(info.duration) } : {}), ...(info.width ? { width: info.width, height: info.height } : {}) };
-            await send(ok.caption || '', [att]);
-            bar.done();
+            sendGroupVideo(file, type, ok.caption || '');
         },
         'gc-location': async () => {
             if (!window.LiveLocation) return;

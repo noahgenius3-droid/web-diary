@@ -50,6 +50,13 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (e) { /* offline: try again next time */ }
     }
     // A still frame, the length and the size of a video, read on this device before anything is uploaded
+    // Some galleries hand over a video with no type: tell it from the name
+    const VIDEO_EXT = { mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', qt: 'video/quicktime', webm: 'video/webm' };
+    const videoTypeOf = file => {
+        const t = String(file.type || '').split(';')[0].toLowerCase();
+        if (t && t !== 'application/octet-stream') return t;
+        return VIDEO_EXT[String(file.name || '').split('.').pop().toLowerCase()] || t;
+    };
     function probeVideo(file) {
         return new Promise(resolve => {
             const url = URL.createObjectURL(file);
@@ -64,7 +71,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const c = document.createElement('canvas');
                 c.width = Math.round(w * scale); c.height = Math.round(h * scale);
                 try { c.getContext('2d').drawImage(v, 0, 0, c.width, c.height); } catch (e) { /* no frame */ }
-                c.toBlob(b => finish({ duration: v.duration || 0, poster: b, width: w, height: h }), 'image/jpeg', 0.78);
+                c.toBlob(b => finish({ duration: Number.isFinite(v.duration) ? v.duration : 0, poster: b, width: w, height: h }), 'image/jpeg', 0.78);
             };
             v.onerror = () => finish({ duration: 0, poster: null, width: 0, height: 0, error: true });
             v.src = url;
@@ -1547,7 +1554,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         const list = s.pending[friendId] = s.pending[friendId] || [];
         for (const file of files) {
-            const type = (file.type || '').split(';')[0];
+            const type = videoTypeOf(file);
             const isVideo = videoOn() && VIDEO_TYPES.includes(type);
             if (!isVideo && !ALLOWED_TYPES.includes(type)) {
                 app.showToast(type.startsWith('video/') ? `${file.name || 'That video'} isn’t a supported video — use MP4, MOV or WebM` : `${file.name || 'That file'} isn’t a supported type`);
@@ -1573,9 +1580,10 @@ document.addEventListener('DOMContentLoaded', () => {
             // Videos: read the length and a still frame for the bubble (in the background; the chat stays responsive)
             if (type.startsWith('video/')) {
                 const item = list[list.length - 1];
-                probeVideo(file).then(info => {
-                    if (info.error) { app.showToast(`Couldn’t read ${item.name} — it may be in a format this device can’t play`); }
-                    Object.assign(item, { duration: info.duration, posterBlob: info.poster, width: info.width, height: info.height });
+                item.probing = probeVideo(file).then(info => {
+                    if (info.error) app.showToast(`${item.name} can’t be previewed on this device — it can still be sent`);
+                    Object.assign(item, { duration: info.duration, posterBlob: info.poster, width: info.width, height: info.height, probing: null });
+                    if (info.poster) item.posterUrl = URL.createObjectURL(info.poster);
                     renderPending();
                 });
             }
@@ -1592,9 +1600,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const failed = s.sendFailed === s.activeFriend && list.length;
         box.innerHTML = (failed ? `<div class="pending-fail" role="alert"><svg class="i" aria-hidden="true"><use href="#i-info"/></svg><span>Not sent — your ${list.length === 1 ? 'attachment is' : 'attachments are'} still here.</span><button type="button" class="pending-retry" data-action="chat-retry">Retry</button></div>` : '') + list.map(p => `
             <div class="pending">
-                ${p.kind === 'video' && p.preview ? `<span class="pending-video"><video src="${p.preview}" muted playsinline preload="metadata"></video><svg class="i" aria-hidden="true"><use href="#i-play"/></svg></span>`
+                ${p.kind === 'video' ? `<span class="pending-video${p.probing ? ' preparing' : ''}">${p.posterUrl ? `<img src="${p.posterUrl}" alt="">` : p.preview ? `<video src="${p.preview}#t=0.1" muted playsinline preload="metadata"></video>` : ''}<svg class="i" aria-hidden="true"><use href="#i-play"/></svg></span>`
                     : p.preview ? `<img src="${p.preview}" alt="">` : `<svg class="i"><use href="#${p.kind === 'audio' ? 'i-mic' : 'i-file'}"/></svg>`}
-                <span class="pending-name">${esc(p.name)}<small>${p.kind === 'audio' || (p.kind === 'video' && p.duration) ? `${p.kind === 'video' ? 'Video · ' : ''}${Media.formatDuration(p.duration)}${p.kind === 'video' ? ` · ${Media.formatSize(p.size)}` : ''}` : Media.formatSize(p.size)}</small></span>
+                <span class="pending-name">${esc(p.name)}<small>${p.kind === 'video' && p.probing ? `Preparing video… · ${Media.formatSize(p.size)}` : p.kind === 'audio' || (p.kind === 'video' && p.duration) ? `${p.kind === 'video' ? 'Video · ' : ''}${Media.formatDuration(p.duration)}${p.kind === 'video' ? ` · ${Media.formatSize(p.size)}` : ''}` : Media.formatSize(p.size)}</small></span>
                 <button type="button" class="att-remove" data-action="remove-pending" data-id="${p.id}" aria-label="Remove ${esc(p.name)}"><svg class="i"><use href="#i-close"/></svg></button>
             </div>`).join('');
     }
@@ -1668,9 +1676,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     bar.done();
                     if (error) throw new Error(`${p.name} wasn’t sent — check your connection and tap Retry`);
                 } else if (p.kind === 'video') {
-                    const bar = uploadBar(`Uploading video… 0%`);
-                    const { error } = await uploadWithProgress(BUCKET, path, p.file, p.type, f => bar.set(`Uploading video… ${Math.round(f * 100)}%`, f));
-                    if (error) { bar.done(); throw new Error(`Upload failed — ${p.name} wasn’t sent. Tap send to try again.`); }
+                    if (p.probing) { const wait = uploadBar('Preparing video…'); await p.probing; wait.done(); }
+                    let xhr = null;
+                    const bar = uploadBar(`Uploading video… 0%`, () => { if (xhr) xhr.abort(); });
+                    const { error } = await uploadWithProgress(BUCKET, path, p.file, p.type, f => bar.set(`Uploading video… ${Math.round(f * 100)}%${f < 1 ? ` · ${Media.formatSize(p.size * f)} of ${Media.formatSize(p.size)}` : ''}`, f), x => { xhr = x; });
+                    if (error) { bar.done(); throw new Error(error.cancelled ? 'Upload cancelled — your video is still here' : `Video upload failed — ${p.name} wasn’t sent. Tap Retry.`); }
                     bar.set('Sending…', 1);
                     if (p.posterBlob) {
                         const pp = path.replace(/\.[a-z0-9]+$/i, '') + '-poster.jpg';
@@ -1695,7 +1705,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 .select().single();
             if (error) throw error;
             alertMessage(data);
-            items.forEach(p => p.preview && URL.revokeObjectURL(p.preview));
+            items.forEach(p => { if (p.preview) URL.revokeObjectURL(p.preview); if (p.posterUrl) URL.revokeObjectURL(p.posterUrl); });
             (s.threads[friendId] = s.threads[friendId] || []).push(data);
             s.last[friendId] = data;
             appendMessage(data);
@@ -1714,10 +1724,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // A thin progress line over the message box while a video uploads
-    function uploadBar(text) {
+    function uploadBar(text, onCancel = null) {
         const comp = content.querySelector('.composer');
         let el = comp && comp.querySelector('.up-bar');
         if (comp && !el) { el = document.createElement('div'); el.className = 'up-bar'; el.setAttribute('role', 'status'); el.innerHTML = '<i></i><span></span>'; comp.prepend(el); }
+        if (el) {
+            el.querySelector('.up-cancel')?.remove();
+            if (onCancel) {
+                const x = document.createElement('button');
+                x.type = 'button'; x.className = 'up-cancel'; x.textContent = 'Cancel';
+                x.addEventListener('click', onCancel);
+                el.append(x);
+            }
+        }
         const set = (t, f) => { if (!el) return; el.querySelector('span').textContent = t; el.querySelector('i').style.width = `${Math.round((f || 0) * 100)}%`; };
         set(text, 0);
         return { set, done: () => { if (el) el.remove(); } };
@@ -3099,7 +3118,92 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 400);
     }
 
+    // ---------- Videos in chats ----------
+    // Each video gets its private link ahead of time (signed in one batch with the chat's other files, nothing is
+    // downloaded until you press play), and its still frame as the poster — so it's never a black box, and on
+    // iPhone the tap on Play starts it straight away (Safari only allows play() inside the tap itself).
+    // An expired link is renewed once; a file that still can't play says so, with a way to download it.
+    async function signVideos(root) {
+        const vids = [...root.querySelectorAll('video[data-src-path]:not([data-signed])')];
+        if (!vids.length || !client) return;
+        const byBucket = new Map();
+        vids.forEach(v => { v.dataset.signed = '1'; const b = v.dataset.bucket || BUCKET; if (!byBucket.has(b)) byBucket.set(b, []); byBucket.get(b).push(v); });
+        await Promise.all([...byBucket.entries()].map(async ([bucket, list]) => {
+            const { data } = await client.storage.from(bucket).createSignedUrls([...new Set(list.map(v => v.dataset.srcPath))], URL_TTL).catch(() => ({ data: null }));
+            const urls = new Map((data || []).filter(d => d.signedUrl).map(d => [d.path, d.signedUrl]));
+            list.forEach(v => {
+                const url = urls.get(v.dataset.srcPath);
+                if (url) v.src = url; else delete v.dataset.signed; // try again on the next paint
+                const cover = v.parentElement.querySelector('.msg-video-cover img');
+                if (cover && cover.src && !v.poster) v.poster = cover.src;
+                else if (cover) cover.addEventListener('load', () => { if (!v.poster) v.poster = cover.src; }, { once: true });
+                watchVideo(v);
+            });
+        }));
+    }
+    function watchVideo(v) {
+        if (v.dataset.watched) return;
+        v.dataset.watched = '1';
+        const box = v.closest('.msg-video');
+        const cover = box && box.querySelector('.msg-video-cover');
+        v.addEventListener('playing', () => { if (cover) { cover.hidden = true; cover.classList.remove('loading'); } box && box.classList.remove('failed'); });
+        v.addEventListener('waiting', () => box && box.classList.add('buffering'));
+        v.addEventListener('canplay', () => box && box.classList.remove('buffering'));
+        v.addEventListener('error', async () => {
+            if (!v.getAttribute('src')) return;
+            if (!v.dataset.renewed) {
+                // Most often an expired link: get a fresh one and carry on from the same spot
+                v.dataset.renewed = '1';
+                const at = v.currentTime || 0;
+                const { data } = await client.storage.from(v.dataset.bucket || BUCKET).createSignedUrl(v.dataset.srcPath, URL_TTL).catch(() => ({ data: null }));
+                if (data && data.signedUrl) {
+                    v.src = data.signedUrl;
+                    if (at) v.addEventListener('loadedmetadata', () => { try { v.currentTime = at; } catch (e) { /* ignore */ } }, { once: true });
+                    v.load(); // check the new link now (a file that's really gone fails again, and says so)
+                    if (v.dataset.wantPlay) v.play().catch(() => {});
+                    return;
+                }
+            }
+            videoFailed(v);
+        });
+    }
+    function videoFailed(v) {
+        const box = v.closest('.msg-video');
+        if (!box || box.classList.contains('failed')) return;
+        box.classList.add('failed');
+        const cover = box.querySelector('.msg-video-cover');
+        if (cover) { cover.hidden = false; cover.classList.remove('loading'); }
+        const note = document.createElement('div');
+        note.className = 'msg-video-err';
+        note.setAttribute('role', 'status');
+        note.innerHTML = `<span>Unable to play this video here</span>${v.getAttribute('src') ? `<a href="${esc(v.getAttribute('src'))}" target="_blank" rel="noopener" download>Download</a>` : ''}`;
+        box.append(note);
+    }
+    async function playVideo(btn) {
+        const box = btn.closest('.msg-video');
+        const v = box && box.querySelector('video');
+        if (!v) return;
+        btn.classList.add('loading');
+        watchVideo(v);
+        if (!v.getAttribute('src')) {
+            // Not signed yet (it was only just sent): sign it now, then play
+            delete v.dataset.signed;
+            await signVideos(box);
+            if (!v.getAttribute('src')) { btn.classList.remove('loading'); return app.showToast('Unable to load this video — check your connection'); }
+        }
+        document.querySelectorAll('.msg-video video').forEach(o => { if (o !== v && !o.paused) o.pause(); });
+        const p = v.play();
+        v.dataset.wantPlay = '1';
+        if (p && p.catch) p.catch(err => {
+            if (!err || err.name !== 'NotAllowedError') return; // a file that won't load: the error handler takes it from here
+            // The browser wants a tap on the video itself (e.g. iPhone after a delay): show it with its controls
+            btn.hidden = true;
+            btn.classList.remove('loading');
+        });
+    }
+
     async function hydrateStorage(root) {
+        signVideos(root);
         const els = [...root.querySelectorAll('[data-path]:not([data-hydrated])')];
         if (!els.length || !client) return;
         restoreUrls();
@@ -3983,7 +4087,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Big or unusual formats (e.g. HEIC) are converted to JPEG first. Returns the stored path or null.
     // Upload with progress: the storage REST endpoint via XHR, so the posting strip can show real bytes.
     // Falls back to the client library when XHR isn't possible.
-    function uploadWithProgress(bucket, path, body, contentType, onProgress) {
+    function uploadWithProgress(bucket, path, body, contentType, onProgress, onXhr) {
         const token = s.session && s.session.access_token;
         if (!token || !window.XMLHttpRequest) {
             return client.storage.from(bucket).upload(path, body, { contentType, upsert: false }).then(r => { if (onProgress) onProgress(1); return r; });
@@ -3997,6 +4101,8 @@ document.addEventListener('DOMContentLoaded', () => {
             xhr.setRequestHeader('x-upsert', 'false');
             xhr.setRequestHeader('cache-control', 'max-age=3600');
             if (xhr.upload && onProgress) xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+            xhr.onabort = () => resolve({ data: null, error: { message: 'Cancelled', cancelled: true } });
+            if (onXhr) onXhr(xhr);
             xhr.onload = () => {
                 if (xhr.status >= 200 && xhr.status < 300) { if (onProgress) onProgress(1); return resolve({ data: { path }, error: null }); }
                 let message = `Upload failed (${xhr.status})`;
@@ -6290,7 +6396,7 @@ document.addEventListener('DOMContentLoaded', () => {
         startProgress: opts => startProgress(opts),
         soundOf, soundLineHTML, soundPlayer, soundRecord, openSound, useSound, ownAudio, openPostEditor,
         uploadWithProgress: (bucket, path, body, type, onProgress) => uploadWithProgress(bucket, path, body, type, onProgress),
-        probeVideo, VIDEO_TYPES, MAX_VIDEO, videoOn, videoHTML: a => attachmentHTML(a), swipeToReply,
+        probeVideo, VIDEO_TYPES, MAX_VIDEO, videoOn, videoTypeOf, videoHTML: a => attachmentHTML(a), swipeToReply,
         openEntry(id, opts) {
             const p = findPost('entry', id);
             if (!p) {
@@ -7070,8 +7176,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (a.kind === 'video') {
             const ratio = a.width && a.height ? Math.max(0.56, Math.min(1.78, a.width / a.height)) : 16 / 9;
             return `<div class="msg-video" style="aspect-ratio:${ratio.toFixed(3)}">
-                <video data-src-path="${path}" controls playsinline preload="none" aria-label="${name}"></video>
-                <button type="button" class="msg-video-cover" data-action="chat-play-video" aria-label="Play video${a.duration ? `, ${Media.formatDuration(a.duration)}` : ''}">
+                <video data-src-path="${path}"${a.poster ? ` data-poster-path="${esc(a.poster)}"` : ''}${a.type ? ` data-type="${esc(a.type)}"` : ''} controls playsinline webkit-playsinline preload="none" aria-label="${name}"></video>
+                <button type="button" class="msg-video-cover${a.poster ? '' : ' no-poster'}" data-action="chat-play-video" aria-label="Play video${a.duration ? `, ${Media.formatDuration(a.duration)}` : ''}">
                     ${a.poster ? `<img data-path="${esc(a.poster)}" alt="" loading="lazy" decoding="async">` : ''}
                     <span class="msg-video-play" aria-hidden="true"><svg class="i"><use href="#i-play"/></svg></span>
                     ${a.duration ? `<small>${Media.formatDuration(a.duration)}</small>` : ''}
@@ -7410,20 +7516,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!p.archived) app.showToast('Chat archived', () => setPref(kind, id, { archived: false }));
             }
         },
-        'chat-play-video': async el => {
-            const box = el.closest('.msg-video');
-            const v = box && box.querySelector('video');
-            if (!v) return;
-            el.classList.add('loading');
-            if (!v.src) {
-                const path = v.dataset.srcPath;
-                const { data } = await client.storage.from(v.dataset.bucket || BUCKET).createSignedUrl(path, URL_TTL);
-                if (!data || !data.signedUrl) { el.classList.remove('loading'); return app.showToast('That video isn’t available any more'); }
-                v.src = data.signedUrl;
-            }
-            el.hidden = true;
-            v.play().catch(() => {});
-        },
+        'chat-play-video': el => playVideo(el),
         'feed-photo': el => {
             const entry = s.urls.get(`${FEED_BUCKET}:${el.dataset.img}`);
             if (entry) Media.lightbox(entry.url);
@@ -7722,6 +7815,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const list = s.pending[s.activeFriend] || [];
             const item = list.find(p => p.id === el.dataset.id);
             if (item && item.preview) URL.revokeObjectURL(item.preview);
+            if (item && item.posterUrl) URL.revokeObjectURL(item.posterUrl);
             s.pending[s.activeFriend] = list.filter(p => p.id !== el.dataset.id);
             if (!s.pending[s.activeFriend].length) s.sendFailed = null;
             renderPending();
