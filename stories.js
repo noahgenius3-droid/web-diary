@@ -1097,7 +1097,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 </header>
                 <div class="reel-post-media">
                     ${r.poster_path ? `<img class="reel-poster" data-path="${esc(r.poster_path)}" data-bucket="${REEL_BUCKET}" alt="">` : ''}
-                    <video class="feed-reel-video" data-path="${esc(r.video_path)}" data-bucket="${REEL_BUCKET}" playsinline muted loop preload="metadata"></video>
+                    ${r.poster_path ? '' : `<video class="feed-reel-video" data-path="${esc(r.video_path)}" data-bucket="${REEL_BUCKET}" playsinline muted preload="metadata"></video>`}
+                    <span class="reel-post-play" aria-hidden="true"><svg class="i"><use href="#i-play"/></svg></span>
                     <button type="button" class="reel-post-open" data-action="reel-open" data-id="${esc(r.id)}" aria-label="Watch in Reels"></button>
                     <span class="reel-spinner" aria-hidden="true"></span>
                     <p class="reel-failed">This video can’t play in this browser.</p>
@@ -1119,42 +1120,12 @@ document.addEventListener('DOMContentLoaded', () => {
             </article>`;
     }
 
-    // Feed reels play muted while mostly on screen, like Instagram
+    // Feed reels show their cover and a play mark; the video loads only when someone opens it (Reels). Playing every
+    // reel that scrolled past used a lot of data — for viewers and for Cordial's storage bandwidth.
     let feedObserver = null;
     function watchFeedReels() {
         if (feedObserver) feedObserver.disconnect();
-        const cards = [...content.querySelectorAll('.reel-post')];
-        if (!cards.length) return;
-        const ready = hydrateStorage(content);
-        feedObserver = new IntersectionObserver(entries => {
-            entries.forEach(entry => {
-                const video = entry.target.querySelector('.feed-reel-video');
-                const visible = entry.isIntersecting && entry.intersectionRatio > 0.6;
-                entry.target.dataset.visible = visible ? '1' : '';
-                if (!visible) return video.pause();
-                ready.then(() => {
-                    if (!entry.target.dataset.visible || !video.src || entry.target.classList.contains('failed')) return;
-                    video.muted = st.muted;
-                    video.play().catch(err => {
-                        if (err && err.name === 'AbortError') return;
-                        video.muted = true;
-                        video.play().catch(() => {});
-                    });
-                });
-            });
-        }, { threshold: [0, 0.6, 1] });
-        cards.forEach(card => {
-            const video = card.querySelector('.feed-reel-video');
-            if (!video.dataset.watched) {
-                video.dataset.watched = '1';
-                video.defaultMuted = true;
-                video.addEventListener('waiting', () => card.classList.add('buffering'));
-                video.addEventListener('playing', () => card.classList.remove('buffering'));
-                video.addEventListener('playing', () => card.classList.add('started'));
-                video.addEventListener('error', () => { if (video.getAttribute('src')) card.classList.add('failed'); });
-            }
-            feedObserver.observe(card);
-        });
+        hydrateStorage(content);
     }
 
     const count = r => (Array.isArray(r.comments) && r.comments[0] ? r.comments[0].count : 0);

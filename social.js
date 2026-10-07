@@ -81,7 +81,45 @@ document.addEventListener('DOMContentLoaded', () => {
         '🎉', '✨', '🔥', '❤️', '💙', '💚', '💛', '🌸', '🌞', '🌙', '☕', '📚', '✍️', '🎧', '🏃', '✅'];
 
     const available = !!(window.supabase && cfg);
-    const client = available ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey) : null;
+    // When Cordial's server is unavailable (e.g. the hosting plan's limits are reached, HTTP 402/503), every screen
+    // would keep asking and failing. The guard notices it once, shows one calm notice, and holds further requests for
+    // a minute instead of hammering the server; "Try again" lifts the hold. The technical reason goes to the console.
+    const service = { downUntil: 0, reason: '', told: false };
+    const serviceDownResponse = () => new Response(JSON.stringify({ message: 'Service temporarily unavailable', code: 'service_unavailable' }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+    async function guardedFetch(input, init) {
+        if (Date.now() < service.downUntil) return serviceDownResponse();
+        const res = await fetch(input, init);
+        if (res.status === 402 || res.status === 503 || res.status === 540) {
+            let body = '';
+            try { body = await res.clone().text(); } catch (e) { /* ignore */ }
+            if (res.status !== 503 || /restricted|paused|unavailable|quota/i.test(body)) {
+                service.downUntil = Date.now() + 60000;
+                if (service.reason !== body) { service.reason = body; console.error('[Cordial] The server is refusing requests:', res.status, body); }
+                window.dispatchEvent(new CustomEvent('cordial-service-down', { detail: { status: res.status } }));
+            }
+        } else if (res.ok && service.told) {
+            service.told = false;
+            window.dispatchEvent(new CustomEvent('cordial-service-up'));
+        }
+        return res;
+    }
+    const client = available ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey, { global: { fetch: guardedFetch } }) : null;
+    window.cordialService = { isDown: () => Date.now() < service.downUntil, retry: () => { service.downUntil = 0; } };
+    // Signed in when the server goes away: one calm line at the top (not an error on every screen). Notes stay usable.
+    window.addEventListener('cordial-service-down', () => {
+        if (service.told || !s.session || document.getElementById('service-note')) return;
+        service.told = true;
+        const el = document.createElement('div');
+        el.id = 'service-note';
+        el.className = 'service-note';
+        el.setAttribute('role', 'status');
+        el.innerHTML = '<span>Cordial can’t reach its server right now. Your notes on this device are safe — chats and the feed will be back shortly.</span><button type="button">Try again</button><button type="button" class="sn-x" aria-label="Dismiss">✕</button>';
+        const [again, x] = el.querySelectorAll('button');
+        again.addEventListener('click', () => { window.cordialService.retry(); el.remove(); service.told = false; location.reload(); });
+        x.addEventListener('click', () => el.remove());
+        document.body.append(el);
+    });
+    window.addEventListener('cordial-service-up', () => { const el = document.getElementById('service-note'); if (el) el.remove(); });
 
     const s = {
         session: null,
@@ -495,9 +533,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function showAuthMessage(text, isError = false) {
         const el = $('auth-message');
+        const retry = !!(text && typeof text === 'object' && text.retry);
+        if (text && typeof text === 'object') text = text.text;
         el.textContent = text;
         el.hidden = !text;
-        el.classList.toggle('error', isError);
+        // "Try again later" problems aren't the person's mistake: a calm notice with a retry, not a red block
+        el.classList.toggle('error', isError && !retry);
+        el.classList.toggle('notice', isError && retry);
+        if (retry) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'auth-retry';
+            b.textContent = 'Try again';
+            b.addEventListener('click', () => {
+                if (window.cordialService) window.cordialService.retry();
+                showAuthMessage('');
+                if ($('auth-form').requestSubmit) $('auth-form').requestSubmit(); else $('auth-submit').click();
+            });
+            el.append(' ', b);
+        }
     }
 
     // Waiting on an email: show where it went, offer the code box and "send again"
@@ -617,6 +671,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function friendlyAuthError(err) {
         const m = String((err && err.message) || '');
+        const status = Number(err && err.status) || 0;
+        if (status === 402 || status === 503 || status === 540 || /restricted|egress|quota|spend cap|service.*unavailable|paused/i.test(m)) {
+            console.error('[Cordial] Sign-in unavailable:', status, m);
+            return { text: 'We’re temporarily unable to sign you in. Please try again shortly.', retry: true };
+        }
+        if (/failed to fetch|network|load failed|networkerror|timed? ?out/i.test(m) || (err && err.name === 'AuthRetryableFetchError')) {
+            return { text: 'Couldn’t reach Cordial — check your internet connection and try again.', retry: true };
+        }
         if (/anonymous sign-ins are disabled/i.test(m)) return 'Guest access isn’t switched on yet — create a free account instead.';
         if (/invalid login credentials/i.test(m)) return 'That email and password don’t match. Check them, or tap “Forgot password?”.';
         if (/already registered|already been registered|already exists/i.test(m)) return 'There’s already an account with that email — sign in instead.';
@@ -624,7 +686,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if ((err && err.code === 'over_email_send_rate_limit') || /email rate limit/i.test(m)) return 'So many people are joining right now that our confirmation emails are paused for a little while. Your details are fine — please try again in about an hour.';
         if (/rate|too many|seconds/i.test(m)) return 'Too many tries — please wait a minute and try again.';
         if (/token has expired|invalid.*(otp|token)|otp.*(expired|invalid)/i.test(m)) return 'That code didn’t work — it may have expired. Tap “Send the email again” for a new one.';
-        return m || 'Something went wrong. Please try again.';
+        if (/password should be|password.*(at least|characters)/i.test(m)) return 'Choose a password with at least 6 characters.';
+        if (/invalid.*email|email.*invalid/i.test(m)) return 'That email address doesn’t look right — check it and try again.';
+        // Anything else: a plain message for people, the details for whoever is fixing it
+        console.error('[Cordial] Sign-in error:', status, err);
+        return 'Something went wrong. Please try again.';
     }
 
     $('auth-form').addEventListener('submit', async e => {
@@ -636,6 +702,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const username = $('auth-username').value.trim();
 
         if ((authMode === 'signin' || authMode === 'signup') && (!email || !password)) return showAuthMessage('Enter your email and password.', true);
+        if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return showAuthMessage('That email address doesn’t look right — check it and try again.', true);
+        if ($('auth-submit').disabled) return; // already signing in
         if (authMode === 'signup') {
             if (!name) return showAuthMessage('Tell us your name.', true);
         }
@@ -714,28 +782,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    $('auth-google').addEventListener('click', async () => {
-        const btn = $('auth-google');
-        btn.disabled = true;
-        showAuthMessage('');
-        try {
-            const settings = await fetch(`${cfg.supabaseUrl}/auth/v1/settings`, { headers: { apikey: cfg.supabaseKey } })
-                .then(r => r.json()).catch(() => null);
-            if (settings && settings.external && settings.external.google === false) throw new Error('google-off');
-            const { error } = await client.auth.signInWithOAuth({
-                provider: 'google',
-                options: { redirectTo: location.origin + location.pathname, queryParams: { prompt: 'select_account' } }
-            });
-            if (error) throw error;
-            showAuthMessage('Opening Google…');
-        } catch (err) {
-            btn.disabled = false;
-            showAuthMessage(err.message === 'google-off'
-                ? 'Google sign-in isn’t switched on yet. Use your email for now.'
-                : friendlyAuthError(err), true);
-            $('auth-message').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-        }
-    });
+    // (Sign-in is by email only — the "Continue with Google" button was removed. Accounts made with Google can set a
+    // password with "Forgot password?".)
 
     // Coming back from an email link that didn't work (expired, already used, opened by a mail scanner…)
     (() => {

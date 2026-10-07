@@ -18558,3 +18558,16 @@ mark.sc-q.done { padding: 0; background: none; box-shadow: none; outline: 0; cur
 .composer.busy .up-bar { pointer-events: auto; }
 .up-cancel, .up-pill button { position: relative; margin-left: auto; padding: 3px 10px; border: 0; border-radius: 999px; background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); font: inherit; font-size: 0.76rem; font-weight: 700; cursor: pointer; }
 @media (prefers-reduced-motion: reduce) { .msg-video.buffering::after, .pending-video.preparing::after { animation: none; } }
+
+/* Sign-in: "try again later" problems are a calm notice with a retry, not a red block */
+.auth-message.notice { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); color: var(--text); }
+.auth-retry { flex: none; min-height: 34px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--accent); color: var(--on-accent, #fff); font: inherit; font-size: 0.86rem; font-weight: 700; cursor: pointer; }
+.auth-retry:active { transform: scale(0.97); }
+/* Signed in while the server is unavailable */
+.service-note { position: fixed; z-index: 900; left: 50%; top: calc(10px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); display: flex; align-items: center; gap: 10px; width: min(560px, calc(100% - 24px)); padding: 10px 10px 10px 14px; border-radius: 16px; background: var(--surface); color: var(--text); box-shadow: var(--shadow-lg), 0 0 0 1px var(--border); font-size: 0.84rem; line-height: 1.4; }
+.service-note span { flex: 1; }
+.service-note button { flex: none; min-height: 32px; padding: 0 12px; border: 0; border-radius: 999px; background: var(--accent); color: var(--on-accent, #fff); font: inherit; font-weight: 700; cursor: pointer; }
+.service-note .sn-x { width: 32px; padding: 0; background: none; color: var(--text-muted); }
+/* Feed reels: a cover and a play mark (tap opens Reels) */
+.reel-post-play { position: absolute; left: 50%; top: 50%; z-index: 1; display: grid; place-items: center; width: 58px; height: 58px; margin: -29px 0 0 -29px; border-radius: 50%; background: rgba(0, 0, 0, 0.5); color: #fff; pointer-events: none; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+.reel-post-play .i { width: 26px; height: 26px; margin-left: 3px; }

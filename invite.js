@@ -34,14 +34,21 @@ document.addEventListener('DOMContentLoaded', () => {
     })();
 
     // ---------- Claiming it once you're in ----------
-    let claiming = false;
+    let claiming = false, claimTries = 0, claimWait = 0;
     setInterval(async () => {
         const code = store.get();
         if (!code || claiming || !(social.isSignedIn && social.isSignedIn()) || (social.isGuest && social.isGuest())) return;
+        if (Date.now() < claimWait) return;
         claiming = true;
         const { data, error } = await client.rpc('diary_claim_referral', { p_code: code });
         claiming = false;
-        if (error) return; // try again on the next tick (e.g. offline)
+        if (error) {
+            // Try again later (offline, server busy) — waiting longer each time — and give up after a few goes
+            claimTries++;
+            if (claimTries >= 6) { store.set(''); claimWait = Infinity; return; }
+            claimWait = Date.now() + Math.min(10 * 60000, 5000 * 2 ** claimTries);
+            return;
+        }
         store.set('');
         if (data && data.ok) {
             if (I.loadFriends) await I.loadFriends();
