@@ -1,0 +1,18 @@
+{
+    // Live Server ("Go Live" in the status bar): serves Cordial from this folder at http://127.0.0.1:5500
+    "liveServer.settings.port": 5500,
+    "liveServer.settings.root": "/",
+    "liveServer.settings.file": "index.html",
+    "liveServer.settings.CustomBrowser": "default",
+    // Don't reload the page for files the browser never loads
+    "liveServer.settings.ignoreFiles": [
+        ".vscode/**",
+        ".agents/**",
+        ".claude/**",
+        "api/**",
+        "supabase/**",
+        "**/*.md",
+        "skills-lock.json",
+        "vercel.json"
+    ]
+}
