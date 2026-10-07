@@ -10,6 +10,9 @@ window.DIARY_CONFIG = {
     //   { urls: 'turn:your.turn.server:3478', username: '…', credential: '…' }
     // Videos in chats: switched on once the storage buckets accept video (migration 20261004090000_diary_chat_video)
     chatVideo: false,
+    // Sign-in paused (while the Supabase project is restricted): no sign-in screen or buttons anywhere; everyone uses
+    // Cordial on their device (notes, templates, scan, podcast, games on this device…). Set to false to bring it back.
+    signInPaused: true,
     iceServers: [
         { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }
     ]

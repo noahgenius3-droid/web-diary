@@ -526,7 +526,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const dataPage = () => card('', `
                 ${window.diaryBackup ? (signedIn()
                     ? row('i-refresh', 'Backup', `<span id="st-backup-sub">${esc(backupText())}</span>`, go('st-backup', 'Back up now'))
-                    : row('i-lock', 'Back up your notes', 'Sign in to keep them on every device', go('sign-in', 'Sign in'))) : ''}
+                    : (window.DIARY_CONFIG || {}).signInPaused ? '' : row('i-lock', 'Back up your notes', 'Sign in to keep them on every device', go('sign-in', 'Sign in'))) : ''}
                 ${row('i-download', 'Export your notes', '', go('st-export', 'Export'))}
                 ${signedIn() ? row('i-lock', 'Chat backup', 'A passphrase-locked copy', `<span class="st-two">${go('st-chat-backup', 'Back up')}${go('st-chat-open', 'Open')}</span>`) : ''}`)
             + card('This device', `
@@ -567,8 +567,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
                         <button type="button" class="st-btn" data-action="st-rename">Edit</button>
                     </section>` : `<section class="st-card st-me st-guest">
-                        <div class="st-who"><strong>You’re not signed in</strong><small>Your notes stay on this device.</small></div>
-                        <button class="primary-btn" data-action="sign-in">Sign in</button>
+                        <div class="st-who"><strong>${(window.DIARY_CONFIG || {}).signInPaused ? 'Using Cordial on this device' : 'You’re not signed in'}</strong><small>Your notes stay on this device.</small></div>
+                        ${(window.DIARY_CONFIG || {}).signInPaused ? '' : '<button class="primary-btn" data-action="sign-in">Sign in</button>'}
                     </section>`}
                 <label class="st-search">
                     <svg class="i" aria-hidden="true"><use href="#i-search"/></svg>

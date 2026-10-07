@@ -98,7 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function newsBody(entry, { compact = false } = {}) {
         if (!entry.items && entry.loading) return `<div class="ex-row ex-news-row">${'<span class="ex-news skel"></span>'.repeat(compact ? 4 : 5)}</div>`;
         if (!entry.items || !entry.items.length) {
-            if (entry.error === 'signin') return '<div class="ex-empty small"><strong>Sign in to see the news</strong><span>World and local headlines appear once you’re signed in.</span></div>';
+            if (entry.error === 'signin') return (window.DIARY_CONFIG || {}).signInPaused ? '<div class="ex-empty small"><strong>News is taking a short break</strong><span>Headlines will be back shortly.</span></div>' : '<div class="ex-empty small"><strong>Sign in to see the news</strong><span>World and local headlines appear once you’re signed in.</span></div>';
             return `<div class="ex-empty small"><strong>${!navigator.onLine ? 'You’re offline' : 'Couldn’t load the news'}</strong><span>${!navigator.onLine ? 'Headlines will load when you’re back online.' : 'Try again in a moment.'}</span><button type="button" class="chip" data-action="ex-news-retry">Try again</button></div>`;
         }
         if (compact) return `<div class="ex-row ex-news-row">${entry.items.slice(0, 8).map(i => newsCard(i)).join('')}</div>`;

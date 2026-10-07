@@ -2615,8 +2615,7 @@ document.addEventListener('DOMContentLoaded', () => {
             rows.push(`
                 <div class="share-warn">
                     <svg class="i"><use href="#i-user"/></svg>
-                    <span><strong>Sign in to share</strong><small>Share notes with friends and your groups.</small></span>
-                    <button class="chip accent" data-share="signin">Sign in</button>
+                    ${(window.DIARY_CONFIG || {}).signInPaused ? '<span><strong>Sharing is paused</strong><small>Sharing with friends will be back shortly. Your note is saved on this device.</small></span>' : '<span><strong>Sign in to share</strong><small>Share notes with friends and your groups.</small></span>\n                    <button class="chip accent" data-share="signin">Sign in</button>'}
                 </div>`);
         }
 

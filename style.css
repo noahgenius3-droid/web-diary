@@ -18571,3 +18571,6 @@ mark.sc-q.done { padding: 0; background: none; box-shadow: none; outline: 0; cur
 /* Feed reels: a cover and a play mark (tap opens Reels) */
 .reel-post-play { position: absolute; left: 50%; top: 50%; z-index: 1; display: grid; place-items: center; width: 58px; height: 58px; margin: -29px 0 0 -29px; border-radius: 50%; background: rgba(0, 0, 0, 0.5); color: #fff; pointer-events: none; -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
 .reel-post-play .i { width: 26px; height: 26px; margin-left: 3px; }
+
+/* Sign-in paused: no sign-in buttons anywhere */
+body.signin-paused [data-action="sign-in"], body.signin-paused [data-share="signin"], body.signin-paused .guest-card { display: none !important; }

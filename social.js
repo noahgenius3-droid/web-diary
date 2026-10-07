@@ -205,6 +205,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
+    // ---------- Sign-in paused (config.signInPaused) ----------
+    const PAUSED = !!(cfg && cfg.signInPaused);
+    const PAUSED_NOTE = 'That needs a Cordial account — sign-in is paused for a little while. Everything on this device works as usual.';
+    if (PAUSED) {
+        document.body.classList.add('signin-paused');
+        const toast = app.showToast;
+        app.showToast = (msg, ...rest) => toast(/^sign in\b/i.test(String(msg || '')) ? PAUSED_NOTE : msg, ...rest);
+    }
+
     // ---------- Hooks into the diary ----------
     app.hooks.displayName = () => (s.profile ? s.profile.display_name : null);
 
@@ -235,7 +244,7 @@ document.addEventListener('DOMContentLoaded', () => {
     app.hooks.profileClick = anchor => {
         if (!signedIn()) {
             app.openPopover(anchor, [
-                { label: 'Sign in / create account', icon: 'i-user', onClick: () => openAuth() },
+                ...(PAUSED ? [] : [{ label: 'Sign in / create account', icon: 'i-user', onClick: () => openAuth() }]),
                 { label: 'Change name', icon: 'i-pencil', onClick: () => app.renameUser() },
                 { label: 'Settings', icon: 'i-settings', onClick: () => app.setView('settings') }
             ]);
@@ -295,7 +304,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Profile photo and Sign out are in Settings; the menu only offers Sign in when you're signed out
-    app.hooks.menuItems = () => signedIn() ? [] : [{ label: 'Sign in', icon: 'i-user', onClick: () => openAuth() }];
+    app.hooks.menuItems = () => signedIn() || PAUSED ? [] : [{ label: 'Sign in', icon: 'i-user', onClick: () => openAuth() }];
 
     // Friend avatars on the Notes page header
     app.hooks.friendAvatars = () => {
@@ -495,6 +504,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const isGuest = () => !!(s.session && s.session.user && s.session.user.is_anonymous);
 
     function openAuth(reason = '', mode = 'signin') {
+        if (PAUSED) { app.showToast(PAUSED_NOTE); return; }
         setAuthMode(mode);
         $('auth-reason').textContent = reason;
         $('auth-reason').hidden = !reason;
@@ -4445,6 +4455,13 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!available) {
             return `<div class="empty"><p class="empty-title">Can’t connect right now</p>
                 <p>Friends, messages and the feed need an internet connection. Reload the page to try again.</p></div>`;
+        }
+        if (!signedIn() && PAUSED) {
+            return `<div class="empty">
+                <p class="empty-title">Taking a short break</p>
+                <p>Friends, chats and the feed are paused for a little while. Your notes, templates, calendar, Scan → Note and games on this device all work as usual.</p>
+                <button class="primary-btn" style="margin-top:18px" data-action="go-notes">Go to my notes</button>
+            </div>`;
         }
         if (!signedIn()) {
             return `<div class="empty">
